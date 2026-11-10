@@ -9,7 +9,7 @@ import { LAUNCHER_BROWSER_IDLE_URL, LAUNCHER_BROWSER_HOST_KIND } from "../src/la
 const paths: string[] = [];
 afterEach(() => { for (const root of paths.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-async function fixture(stub: (turn: any, reused: boolean, call: number) => Promise<string>, endReply: Record<string, unknown> = {}) {
+async function fixture(stub: (turn: any, reused: boolean, call: number) => Promise<string>, endReply: Record<string, unknown> = {}, startFailure?: { status: number; code: string }) {
   const root = mkdtempSync(join(tmpdir(), "codex-runexclusive-repair-"));
   paths.push(root);
   const requests: Array<{ phase?: string; status?: string }> = [];
@@ -18,9 +18,10 @@ async function fixture(stub: (turn: any, reused: boolean, call: number) => Promi
     async fetch(request) {
       const body = await request.json() as {phase?: string;status?: string};
       requests.push(body);
-      if (body.phase === "start") return Response.json({
-        ok: true, surfaceId: "launcher_surface_id_0123456789AB", reused: false, connectorBound: true,
-      });
+      if (body.phase === "start") {
+        if (startFailure) return Response.json({code:startFailure.code,error:"private gateway details"}, {status:startFailure.status});
+        return Response.json({ok: true, surfaceId: "launcher_surface_id_0123456789AB", reused: false, connectorBound: true});
+      }
       return Response.json({ ok: true, cancelledByUser: false, ...(body.phase === "end" ? endReply : {}) });
     },
   });
@@ -167,5 +168,19 @@ test("successful repair is not journaled as recovered if launcher release requir
     const incident=JSON.parse(await Bun.file(join(f.root,"runtime-incidents","dd44ee55ff66.json")).text());
     expect(incident).toMatchObject({outcome:"failed", classification:"authentication_or_session",
       autoRepairAttempts:1, recovery:"await_authoritative_reconciliation"});
+  } finally {await f.server.stop(true)}
+});
+
+test("launcher ownership loss before browser lease persists a safe pre-send incident", async()=>{
+  const f=await fixture(async()=>"must not run", {}, {status:409,code:"turn_owner_lost"});
+  try {
+    const t=turn({traceId:"ee55ff667788",incidentJournalDirectory:join(f.root,"runtime-incidents")});
+    await expect(f.worker.runExclusive(t.base)).rejects.toThrow("private gateway details");
+    expect(f.count()).toBe(0);
+    expect(f.requests.map(request=>request.phase)).toEqual(["start"]);
+    const raw=await Bun.file(join(f.root,"runtime-incidents","ee55ff667788.json")).text();
+    expect(JSON.parse(raw)).toMatchObject({phase:"before_send",classification:"browser_owner_lost",
+      currentAttemptSubmitted:false, priorToolEffects:"unknown",outcome:"failed",autoRepairAttempts:0});
+    expect(raw).not.toContain("private gateway details");
   } finally {await f.server.stop(true)}
 });

@@ -5468,39 +5468,6 @@ export class ChatGptBrowserWorker {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if (this.config.browserHost !== "launcher") return this.runBrowserTurn(turn);
 
-    const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
-      phase: "start",
-      traceId: turn.traceId,
-      helperPid: process.pid,
-      ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
-      ...((turn.conversationKey
-        && (turn.nativeConnector || turn.capabilities.localToolsEnabled || turn.requireRetainedConversation))
-        ? { connectorIdentity: this.config.appName }
-        : {}),
-      ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
-    }, undefined, turn.abortSignal).catch(error => {
-      if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
-      if (error instanceof LauncherRetainedConversationUnavailableError) {
-        throw chatGptRetainedConversationUnavailableError();
-      }
-      if (error instanceof LauncherBrowserTurnOwnerLostError) {
-        throw new ChatGptWebAdapterError(error.message, {
-          status: 409, errorType: "invalid_request_error", code: "browser_turn_owner_lost", retryable: false,
-        });
-      }
-      throw error;
-    });
-    const surfaceId = lease.surfaceId;
-    const reused = lease.reused === true;
-    let terminal: "completed" | "failed" | "aborted" = "completed";
-    let terminalMessage: string | undefined;
-    let originalError: unknown;
-    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-    let heartbeatInFlight = false;
-    let heartbeatPending = false;
-    let activityFinished = false;
-    let lastHeartbeatFailureAt = 0;
-    let activityStage: "preparing" | "sending" | "chatgpt" = "preparing";
     let acceptedSubmission = false;
     let sendActivated = false;
     let autoRepairAttempts: 0 | 1 = 0;
@@ -5528,6 +5495,44 @@ export class ChatGptBrowserWorker {
         console.error(`[chatgpt-web] runtime_incident_journal_failed type=${journalError instanceof Error ? journalError.name : "unknown"}`);
       }
     };
+    const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+      phase: "start",
+      traceId: turn.traceId,
+      helperPid: process.pid,
+      ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
+      ...((turn.conversationKey
+        && (turn.nativeConnector || turn.capabilities.localToolsEnabled || turn.requireRetainedConversation))
+        ? { connectorIdentity: this.config.appName }
+        : {}),
+      ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
+    }, undefined, turn.abortSignal).catch(error => {
+      if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
+      if (error instanceof LauncherRetainedConversationUnavailableError) {
+        const terminalError = chatGptRetainedConversationUnavailableError();
+        recordIncident(terminalError, "failed");
+        throw terminalError;
+      }
+      if (error instanceof LauncherBrowserTurnOwnerLostError) {
+        const terminalError = new ChatGptWebAdapterError(error.message, {
+          status: 409, errorType: "invalid_request_error", code: "browser_turn_owner_lost", retryable: false,
+        });
+        recordIncident(terminalError, "failed");
+        throw terminalError;
+      }
+      if (!(error instanceof DOMException && error.name === "AbortError")) recordIncident(error, "failed");
+      throw error;
+    });
+    const surfaceId = lease.surfaceId;
+    const reused = lease.reused === true;
+    let terminal: "completed" | "failed" | "aborted" = "completed";
+    let terminalMessage: string | undefined;
+    let originalError: unknown;
+    let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let heartbeatInFlight = false;
+    let heartbeatPending = false;
+    let activityFinished = false;
+    let lastHeartbeatFailureAt = 0;
+    let activityStage: "preparing" | "sending" | "chatgpt" = "preparing";
     const sendHeartbeat = () => {
       if (activityFinished) return;
       if (heartbeatInFlight) { heartbeatPending = true; return; }
