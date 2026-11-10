@@ -213,6 +213,7 @@ export class ChatGptThreadEnvironmentStore {
       }
       const currentClaim = initialClaim ?? (currentCompaction
         ? extractChatGptContinuationEnvironmentClaim(parsed) : steeringClaim ?? nativeCompaction?.claim);
+      const resolvedCalendarDelta = calendarDelta ?? currentClaim?.calendarDelta;
       const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
       // Automatic compaction has a current turn_context; standalone compaction has only its
       // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
@@ -246,10 +247,10 @@ export class ChatGptThreadEnvironmentStore {
               writableRoots: [...currentClaim.environment.roots],
             };
           }
-          if (calendarDelta) {
+          if (resolvedCalendarDelta) {
             const nativeRoots = new Set(rolloutEnvironment.roots.map(pathIdentity));
-            if (calendarDelta.filesystemProfiles.some(profile => profile !== rollout.filesystemProfileXml)
-              || calendarDelta.workspaceRoots.some(roots => roots.length !== nativeRoots.size
+            if (resolvedCalendarDelta.filesystemProfiles.some(profile => profile !== rollout.filesystemProfileXml)
+              || resolvedCalendarDelta.workspaceRoots.some(roots => roots.length !== nativeRoots.size
                 || roots.some(root => !nativeRoots.has(root)))) {
               throw new Error("Calendar environment delta conflicts with its current Codex rollout");
             }

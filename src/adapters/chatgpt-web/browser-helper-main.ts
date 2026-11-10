@@ -30,6 +30,7 @@ interface RunMessage {
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
     resumeAvailable?: boolean;
+    recoveryAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
     conversationKey?: string;
@@ -62,16 +63,24 @@ interface SmokeMessage {
   config: VerifyMessage["config"];
 }
 
+interface RepairMessage {
+  type: "repair";
+  id: string;
+  config: VerifyMessage["config"];
+  prompt: string;
+}
+
 interface LimitsMessage {
   type: "limits";
   id: string;
   config: VerifyMessage["config"];
 }
 
-type MaintenanceMessage = VerifyMessage | InspectMessage | SmokeMessage | LimitsMessage;
+type MaintenanceMessage = VerifyMessage | InspectMessage | SmokeMessage | LimitsMessage | RepairMessage;
 type InputMessage = RunMessage
   | MaintenanceMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
+  | { type: "prepared_recovery_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activation_ack"; id: string }
   | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
@@ -100,6 +109,7 @@ console.error = diagnostic;
 const abortControllers = new Map<string, AbortController>();
 const turnProgress = new Map<string, ChatGptMirroredTurnProgress>();
 const preparedSelections = new Map<string, ReturnType<typeof createBrowserHelperPromptSelection>>();
+const recoverySelections = new Map<string, ReturnType<typeof createBrowserHelperPromptSelection>>();
 const sendActivationWaiters = new Map<string, {
   resolve: () => void;
   reject: (error: Error) => void;
@@ -130,6 +140,8 @@ function requestShutdown(): Promise<void> {
   for (const controller of abortControllers.values()) controller.abort();
   for (const selection of preparedSelections.values()) selection.cancel();
   preparedSelections.clear();
+  for (const selection of recoverySelections.values()) selection.cancel();
+  recoverySelections.clear();
   for (const waiter of sendActivationWaiters.values()) {
     waiter.reject(new DOMException("Browser helper is shutting down", "AbortError"));
   }
@@ -164,6 +176,9 @@ async function run(message: RunMessage): Promise<void> {
   if (abortControllers.has(message.id)) throw new Error(`Browser helper turn already exists: ${message.id}`);
   if (message.turn.resumeAvailable !== undefined && typeof message.turn.resumeAvailable !== "boolean") {
     throw new Error("Browser helper resume availability is invalid");
+  }
+  if (message.turn.recoveryAvailable !== undefined && typeof message.turn.recoveryAvailable !== "boolean") {
+    throw new Error("Browser helper recovery availability is invalid");
   }
   if (message.turn.nativeConnector !== undefined && typeof message.turn.nativeConnector !== "boolean") {
     throw new Error("Browser helper native connector flag is invalid");
@@ -216,6 +231,8 @@ async function run(message: RunMessage): Promise<void> {
   if (progress) turnProgress.set(message.id, progress);
   const promptSelection = createBrowserHelperPromptSelection();
   preparedSelections.set(message.id, promptSelection);
+  const repairSelection = message.turn.recoveryAvailable ? createBrowserHelperPromptSelection() : undefined;
+  if (repairSelection) recoverySelections.set(message.id, repairSelection);
   const prepareSelected = async () => ({ ...await promptSelection.wait(), release: () => {} });
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
@@ -226,6 +243,17 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
+    ...(repairSelection ? {
+      prepareRecovery: async (failure: { traceId: string; code: string; error: string }) => {
+        if (!writeProtocol({
+          type: "event", id: message.id, event: "repair_prepare_requested",
+          code: failure.code, error: failure.error.slice(0, 700),
+        })) {
+          throw new Error("Browser helper could not request a recovery prompt");
+        }
+        return { ...await repairSelection.wait(), release: () => {} };
+      },
+    } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
@@ -329,6 +357,8 @@ async function run(message: RunMessage): Promise<void> {
   } finally {
     preparedSelections.get(message.id)?.cancel();
     preparedSelections.delete(message.id);
+    recoverySelections.get(message.id)?.cancel();
+    recoverySelections.delete(message.id);
     const sendWaiter = sendActivationWaiters.get(message.id);
     sendActivationWaiters.delete(message.id);
     sendWaiter?.reject(new DOMException("Browser helper turn ended before Send acknowledgement", "AbortError"));
@@ -375,16 +405,17 @@ function maintenanceWorker(message: MaintenanceMessage): ChatGptBrowserWorker {
   return ChatGptBrowserWorker.forProvider(provider);
 }
 
-async function maintain(message: InspectMessage | SmokeMessage | LimitsMessage): Promise<void> {
+async function maintain(message: InspectMessage | SmokeMessage | LimitsMessage | RepairMessage): Promise<void> {
   if (abortControllers.has(message.id)) throw new Error(`Browser helper maintenance operation already exists: ${message.id}`);
   const abortController = new AbortController();
   abortControllers.set(message.id, abortController);
   try {
     const worker = maintenanceWorker(message);
+    if (message.type === "repair" && (typeof message.prompt !== "string" || message.prompt.length < 1 || message.prompt.length > 12000)) throw new Error("Repair diagnostic prompt is invalid");
     const value = message.type === "inspect"
       ? await worker.inspectSession(message.detectCapabilities)
       : message.type === "limits" ? await worker.inspectLimitsPlan()
-      : await worker.smokeTest(abortController.signal);
+      : await worker.smokeTest(abortController.signal, message.type === "repair" ? message.prompt : undefined);
     writeProtocol({ type: "result", id: message.id, value });
   } catch (error) {
     writeProtocol({
@@ -407,7 +438,7 @@ input.on("line", line => {
     writeProtocol({ type: "error", id: "protocol", message: "Browser helper received invalid JSON" });
     return;
   }
-  if (message.type === "prepared_selected_ack") {
+  if (message.type === "prepared_selected_ack" || message.type === "prepared_recovery_ack") {
     const prepared = message.prepared;
     if (!prepared || typeof prepared.text !== "string" || !Array.isArray(prepared.images)) {
       writeProtocol({ type: "error", id: message.id, message: "Browser helper prompt selection is invalid" });
@@ -431,9 +462,17 @@ input.on("line", line => {
         return;
       }
     }
-    const selection = preparedSelections.get(message.id);
+    const selection = message.type === "prepared_recovery_ack"
+      ? recoverySelections.get(message.id)
+      : preparedSelections.get(message.id);
     if (!selection) {
       writeProtocol({ type: "error", id: message.id, message: "Browser helper has no pending prompt selection" });
+      return;
+    }
+    if (message.type === "prepared_recovery_ack"
+      && (prepared.images.length > 0 || !prepared.turnToken || prepared.multipart !== undefined)) {
+      writeProtocol({ type: "error", id: message.id, message: "Repair prompt must be inline and tool-bound" });
+      abortControllers.get(message.id)?.abort();
       return;
     }
     selection.select(prepared);
@@ -506,7 +545,7 @@ input.on("line", line => {
       id: message.id,
       message: error instanceof Error ? error.message : String(error),
     }));
-  } else if (message.type === "inspect" || message.type === "smoke" || message.type === "limits") {
+  } else if (message.type === "inspect" || message.type === "smoke" || message.type === "limits" || message.type === "repair") {
     void maintain(message).catch(error => writeProtocol({
       type: "error",
       id: message.id,

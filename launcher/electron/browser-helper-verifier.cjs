@@ -55,7 +55,7 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, useS
     || typeof useSavedChats !== "boolean") {
     throw new Error("Browser helper verification config is invalid");
   }
-  if (!["verify", "inspect", "smoke", "limits"].includes(operation)) {
+  if (!["verify", "inspect", "smoke", "limits", "repair"].includes(operation)) {
     throw new Error(`Unsupported browser helper operation: ${String(operation)}`);
   }
   const id = `${operation}-${randomBytes(12).toString("hex")}`;

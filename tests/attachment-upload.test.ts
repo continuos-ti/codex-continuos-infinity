@@ -138,3 +138,44 @@ test.skipIf(!executable)('file-ready without terminal completion fails when the 
   }finally{await observer.dispose();}
  },()=>new Response(JSON.stringify({event:'file.processing.file_ready'})+'\n',{headers:{'content-type':'application/x-ndjson'}}));
 },10000);
+
+test.skipIf(!executable)("disabled ChatGPT file uploads show the real quota and reject without repeated attempts", async () => {
+  let requests = 0;
+  const quotaHtml = html
+    .replace('type="file" multiple>', 'type="file" multiple disabled>')
+    .replace('<button data-testid="send-button"',
+      '<button type="button" aria-label="Adicionar arquivos e mais" onclick="const m=document.createElement('
+      + "'div');m.textContent='Limite de upload atingido. Aguarde 15 minutos';document.body.append(m)"
+      + '">Menu</button><button data-testid="send-button"');
+  await fixture(async (browser, base) => {
+    const page = await browser.newPage();
+    await page.goto(base);
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const failure = await worker.attachFiles(page, prompt, AbortSignal.timeout(4_000)).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(ChatGptWebAdapterError);
+    expect(failure.code).toBe("upload_quota_exceeded");
+    expect(failure.status).toBe(429);
+    expect(failure.retryable).toBe(false);
+    expect(requests).toBe(0);
+    expect(await page.evaluate(() => (window as any).sends)).toBe(0);
+    expect(await page.locator("#prompt-textarea").textContent()).toBe("original message");
+  }, () => { requests++; return new Response("{}"); }, quotaHtml);
+}, 15000);
+
+test.skipIf(!executable)("a disabled file input without quota indication is never mistaken for a rate limit", async () => {
+  const document = html.replace('type="file" multiple>', 'type="file" multiple disabled>');
+  let uploaded = 0;
+  await fixture(async (browser, base) => {
+    const page = await browser.newPage();
+    await page.goto(base);
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    await worker.attachFiles(page, prompt, AbortSignal.timeout(6_000));
+    expect(uploaded).toBe(1);
+    expect(await page.getByRole("group", { name: "codex-input-image-1.png" }).count()).toBe(1);
+  }, () => {
+    uploaded += 1;
+    return new Response(JSON.stringify({ event: "file.processing.completed" }) + "\n", {
+      headers: { "content-type": "application/x-ndjson" },
+    });
+  }, document);
+}, 15000);

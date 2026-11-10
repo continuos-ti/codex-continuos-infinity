@@ -366,12 +366,8 @@ function LauncherShell({
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
-  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(
-    snapshot.state.browserInteractionMode === "automatic"
-      && snapshot.state.coreSetupComplete === true
-      && snapshot.state.biggerContextAvailable === true
-      && !snapshot.state.experimentalBiggerContext,
-  );
+  // No unsolicited startup modal. Experimental feature remains available in Settings.
+  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser"
@@ -1339,15 +1335,23 @@ function McpSurface({
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const verified = !configuringInactiveMode && snapshot.state.mcpSetupComplete === true;
   const manualInteraction = interactionMode === "manual";
+  const cloudflareAutomatic = !manualInteraction && !devProfile
+    && snapshot.connectorNames.automatic === "ContinuosWebIntegracao";
   const steps = useMemo(() => [
-    { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
-    { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
+    cloudflareAutomatic
+      ? { title: "Cloudflare route", body: "Cloudflare publishes https://codex-native2.continuos.com.br/mcp; the persistent local gateway listens on 127.0.0.1:28765. No OpenAI tunnel or API key is needed." }
+      : { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
+    cloudflareAutomatic
+      ? { title: "Verify Cloudflare gateway", body: "The cloudflared tunnel and OAuth gateway run independently of the Codex launcher. Restarting Codex must not stop the shared Windows Local tunnel." }
+      : { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
     {
       title: copy.mcpStepThree,
-      body: manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
+      body: cloudflareAutomatic
+        ? "In ChatGPT, connect the existing ContinuosWebIntegracao plugin with OAuth to https://codex-native2.continuos.com.br/mcp. The launcher uses this exact connector name."
+        : manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
     },
-  ], [copy, manualInteraction]);
-  const guideMedia = MCP_GUIDE_MEDIA[step];
+  ], [copy, manualInteraction, cloudflareAutomatic]);
+  const guideMedia = cloudflareAutomatic ? null : MCP_GUIDE_MEDIA[step];
 
   const move = async (next: number) => {
     setStep(next);
@@ -1411,7 +1415,7 @@ function McpSurface({
   return (
     <ContentSurface
       fit
-      subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
+      subtitle={cloudflareAutomatic ? "ChatGPT uses the ContinuosWebIntegracao OAuth plugin through Cloudflare." : devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : "MCP"}
     >
       {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
@@ -1460,6 +1464,12 @@ function McpSurface({
             </header>
 
             {step === 0 ? (
+              cloudflareAutomatic ? (
+                <div className="inline-actions">
+                  <SecondaryButton icon="external" onClick={() => void openExternal("https://one.dash.cloudflare.com/")}>Cloudflare One</SecondaryButton>
+                  <SecondaryButton icon="external" onClick={() => void openExternal("https://codex-native2.continuos.com.br/health")}>Gateway health</SecondaryButton>
+                </div>
+              ) : (
               <div className="inline-actions">
                 <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>
                   {copy.openTunnels}
@@ -1468,9 +1478,12 @@ function McpSurface({
                   {copy.openKeys}
                 </SecondaryButton>
               </div>
+              )
             ) : null}
             {step === 1 ? (
-              credentialsConfigured && !replacingCredentials ? (
+              cloudflareAutomatic ? (
+                <NoticeRow icon="check" tone="success">Cloudflare Tunnel and OAuth gateway are managed outside this launcher. No OpenAI Tunnel ID or API key is needed.</NoticeRow>
+              ) : credentialsConfigured && !replacingCredentials ? (
                 <div className="saved-credentials">
                   <NoticeRow icon="check" tone="success">
                     <span>
@@ -1527,7 +1540,7 @@ function McpSurface({
                 </div>
               )
             ) : null}
-            {step === 1 ? (
+            {step === 1 && !cloudflareAutomatic ? (
               <p className="mcp-step-two-hint">
                 {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
                   ? copy.mcpStepTwoHint
@@ -1537,9 +1550,11 @@ function McpSurface({
             {step === 2 ? (
               <div className="connector-actions">
                 <NoticeRow icon="alert" tone="warning">
-                  {manualInteraction
-                    ? copy.manualConnectorNotice
-                    : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
+                  {cloudflareAutomatic
+                    ? "Automatic mode uses ContinuosWebIntegracao exclusively. Other ChatGPT plugins are ignored; verify the new connector is authorized."
+                    : manualInteraction
+                      ? copy.manualConnectorNotice
+                      : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
                 </NoticeRow>
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>
@@ -1575,13 +1590,13 @@ function McpSurface({
         {step === 1 ? (
           <PrimaryButton
             disabled={
-              busy
+              !cloudflareAutomatic && (busy
               || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
-              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
+              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey)))
             }
-            onClick={() => void install()}
+            onClick={() => void (cloudflareAutomatic ? safeMove(2) : install())}
           >
-            {busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
+            {cloudflareAutomatic ? copy.next : busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
           </PrimaryButton>
         ) : null}
         {step === 2 ? (

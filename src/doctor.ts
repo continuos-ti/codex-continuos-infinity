@@ -176,7 +176,32 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
   checks.push(await proxyCheck(config));
 
-  if (config.mode === "full") {
+  if (config.mode === "full" && config.browserInteractionMode === "automatic"
+      && config.appName === "ContinuosWebIntegracao") {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6_000);
+    try {
+      const response = await fetch("https://codex-native2.continuos.com.br/health", {
+        signal: controller.signal,
+        redirect: "error",
+      });
+      if (!response.ok) throw new Error("Gateway returned HTTP " + response.status);
+      const data = await response.json() as Record<string, unknown>;
+      if (data.status !== "ok" || data.service !== "ContinuosWebIntegracao") {
+        throw new Error("Unexpected Cloudflare gateway identity");
+      }
+      checks.push({id:"cloudflare-gateway",status:"ok",
+        message:"Cloudflare OAuth MCP gateway is healthy at codex-native2.continuos.com.br"});
+    } catch (error) {
+      checks.push({id:"cloudflare-gateway",status:"error",
+        message:"Cloudflare OAuth MCP gateway is not reachable",
+        detail: error instanceof Error ? error.message : String(error)});
+    } finally {
+      clearTimeout(timer);
+    }
+    checks.push({id:"connector",status:"warning",
+      message:"Connector ContinuosWebIntegracao requires a live ChatGPT turn to confirm task execution"});
+  } else if (config.mode === "full") {
     const settings = config.tunnel!;
     if (!existsSync(settings.binaryPath)) {
       checks.push({ id: "tunnel-binary", status: "error", message: `tunnel-client is missing: ${settings.binaryPath}` });

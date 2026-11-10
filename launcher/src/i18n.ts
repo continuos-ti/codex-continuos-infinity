@@ -19,7 +19,7 @@ const en = {
   devMcpTitle: "Simulated tools over MCP",
   devMcpSubtitle: "Connect this separate ChatGPT account to the isolated repository harness.",
   devMcpBody: "The DEV launcher keeps its isolated MCP tunnel ready. Named repository chats attach to it and return explicit simulated receipts for tool actions.",
-  devConnectorIsolationNotice: "Create a separate connector with the exact DEV name below. Keep Codex Native2 unchanged so production and repository development can run side by side.",
+  devConnectorIsolationNotice: "Create a separate connector with the exact DEV name below. Keep ContinuosWebIntegracao unchanged so production and repository development can run side by side.",
   devSettingsTitle: "DEV profile settings",
   devKeepRunningBody: "Keep the isolated browser session and DEV MCP tunnel available when this window closes.",
   biggerContext: "Bigger Context (experimental)",
@@ -151,7 +151,7 @@ const en = {
   mcpStepThree: "Attach the ChatGPT connector",
   mcpStepThreeBody: "Before creating the connector, enable Developer Mode in ChatGPT Settings. In ChatGPT Plugins, create a new connector, choose Tunnel, select the tunnel you created, set Authentication to None, and use the exact connector name shown below. Open Permissions and choose Allow all actions; Allow low-risk actions blocks command and patch calls before they reach this runtime. The outer Codex harness still enforces its sandbox and approvals. Then verify the runtime.",
   manualMcpStepThreeBody: "Create the separate connector shown below with the exact name Codex Zero Risk and select it yourself in every Zero Risk turn. Zero Risk requires its own tunnel and credentials, separate from Automatic mode. The launcher never inspects the ChatGPT DOM in this mode.",
-  connectorMigrationNotice: "Upgrading from Codex Native? Leave the old connector untouched and create Codex Native2 as a new connector. Do not rename or refresh Codex Native. Verify runtime rejects a legacy-only setup.",
+  connectorMigrationNotice: "Upgrading from Codex Native? Leave the old connector untouched and create ContinuosWebIntegracao as a new connector. Do not rename or refresh Codex Native. Verify runtime rejects a legacy-only setup.",
   manualConnectorNotice: "Codex Zero Risk is a separate connector. Select it yourself before sending every Zero Risk prompt; the launcher intentionally does not inspect ChatGPT to verify that choice.",
   openConnectors: "Open ChatGPT Plugins",
   connectorName: "Connector name",
@@ -255,7 +255,7 @@ const zh: Record<keyof typeof en, string> = {
   devMcpTitle: "通过 MCP 使用模拟工具",
   devMcpSubtitle: "将这个独立 ChatGPT 账户连接到隔离的仓库 Harness。",
   devMcpBody: "DEV 启动器会保持隔离的 MCP Tunnel 就绪。命名仓库聊天连接到该 Tunnel，并为工具动作返回明确的模拟回执。",
-  devConnectorIsolationNotice: "请使用下方准确的 DEV 名称新建独立连接器。保留 Codex Native2 不变，让生产使用和仓库开发可以同时运行。",
+  devConnectorIsolationNotice: "请使用下方准确的 DEV 名称新建独立连接器。保留 ContinuosWebIntegracao 不变，让生产使用和仓库开发可以同时运行。",
   devSettingsTitle: "DEV 配置设置",
   devKeepRunningBody: "窗口关闭后保持隔离的浏览器会话和 DEV MCP Tunnel 可用。",
   biggerContext: "更大上下文（实验性）",
@@ -387,7 +387,7 @@ const zh: Record<keyof typeof en, string> = {
   mcpStepThree: "连接 ChatGPT 插件",
   mcpStepThreeBody: "创建连接器前，先在 ChatGPT 设置中启用开发者模式。然后在 ChatGPT Plugins 中新建连接器，选择 Tunnel，选中刚创建的 Tunnel，将身份验证设为无，并使用下方显示的准确连接器名称。打开权限并选择“允许所有操作”；“允许低风险操作”会在命令和补丁调用到达本地运行时之前将其拦截。外层 Codex harness 仍会执行沙箱与审批规则。最后验证运行时。",
   manualMcpStepThreeBody: "请使用下方显示的准确名称 Codex Zero Risk 创建独立连接器，并在每次引导式手动回合中自行选择它。Zero Risk 必须使用与自动模式分开的 Tunnel 和凭据。此模式不会执行 DOM 检查。",
-  connectorMigrationNotice: "从 Codex Native 升级？请保留旧连接器不变，并新建名为 Codex Native2 的连接器。不要重命名或刷新 Codex Native。仅有旧连接器时，运行时验证会明确失败。",
+  connectorMigrationNotice: "从 Codex Native 升级？请保留旧连接器不变，并新建名为 ContinuosWebIntegracao 的连接器。不要重命名或刷新 Codex Native。仅有旧连接器时，运行时验证会明确失败。",
   manualConnectorNotice: "Codex Zero Risk 是独立连接器。每次发送引导式提示前都需要自行选择它；启动器有意不检查 ChatGPT DOM 来验证该选择。",
   openConnectors: "打开 ChatGPT Plugins",
   connectorName: "连接器名称",
@@ -491,7 +491,7 @@ const ja: Record<keyof typeof en, string> = {
   devMcpTitle: "MCP 経由のシミュレーションツール",
   devMcpSubtitle: "この個別の ChatGPT アカウントを隔離されたリポジトリハーネスに接続します。",
   devMcpBody: "DEV ランチャーは隔離された MCP トンネルを使用可能な状態に保ちます。名前付きリポジトリチャットはこのトンネルに接続し、ツール操作ごとに明示的なシミュレーション結果を返します。",
-  devConnectorIsolationNotice: "下記の正確な DEV 名で個別のコネクタを作成してください。Codex Native2 は変更せず、本番利用とリポジトリ開発を並行して実行できる状態を保ちます。",
+  devConnectorIsolationNotice: "下記の正確な DEV 名で個別のコネクタを作成してください。ContinuosWebIntegracao は変更せず、本番利用とリポジトリ開発を並行して実行できる状態を保ちます。",
   devSettingsTitle: "DEV プロファイル設定",
   devKeepRunningBody: "ウィンドウを閉じても、隔離されたブラウザーセッションと DEV MCP トンネルを使用可能な状態に保ちます。",
   biggerContext: "Bigger Context（試験的）",
@@ -623,7 +623,7 @@ const ja: Record<keyof typeof en, string> = {
   mcpStepThree: "ChatGPT コネクタを接続",
   mcpStepThreeBody: "コネクタを作成する前に、ChatGPT の設定で Developer Mode を有効にしてください。ChatGPT Plugins で新しいコネクタを作成し、Tunnel を選択して、作成したトンネルを指定します。Authentication は None に設定し、下記のコネクタ名を正確に使用してください。Permissions を開き、Allow all actions を選択します。Allow low-risk actions では、コマンドやパッチ呼び出しがこのランタイムに到達する前にブロックされます。外側の Codex ハーネスでは引き続きサンドボックスと承認が適用されます。最後にランタイムを検証します。",
   manualMcpStepThreeBody: "下に表示される正確な名前 Codex Zero Risk で専用コネクタを作成し、ガイド付き手動ターンごとに自分で選択してください。Zero Risk では、自動モードとは別の Tunnel と認証情報が必要です。このモードでは DOM 検査を行いません。",
-  connectorMigrationNotice: "Codex Native からアップグレードする場合は、古いコネクタを変更せず、新しい Codex Native2 コネクタを作成してください。Codex Native の名前変更や更新は行わないでください。古いコネクタしかない場合、ランタイム検証は明示的に失敗します。",
+  connectorMigrationNotice: "Codex Native からアップグレードする場合は、古いコネクタを変更せず、新しい ContinuosWebIntegracao コネクタを作成してください。Codex Native の名前変更や更新は行わないでください。古いコネクタしかない場合、ランタイム検証は明示的に失敗します。",
   manualConnectorNotice: "Codex Zero Risk は専用コネクタです。ガイド付きプロンプトを送信する前に毎回自分で選択してください。ランチャーはその選択を確認するための ChatGPT DOM 検査を意図的に行いません。",
   openConnectors: "ChatGPT Plugins を開く",
   connectorName: "コネクタ名",
@@ -727,7 +727,7 @@ const ko: Record<keyof typeof en, string> = {
   devMcpTitle: "MCP를 통한 시뮬레이션 도구",
   devMcpSubtitle: "이 별도의 ChatGPT 계정을 격리된 저장소 하네스에 연결합니다.",
   devMcpBody: "DEV 런처는 격리된 MCP 터널을 사용 가능한 상태로 유지합니다. 이름이 지정된 저장소 채팅은 이 터널에 연결되며 도구 작업에 대한 명시적인 시뮬레이션 결과를 반환합니다.",
-  devConnectorIsolationNotice: "아래의 정확한 DEV 이름으로 별도의 커넥터를 만드세요. Codex Native2는 변경하지 않아 프로덕션 환경과 저장소 개발 환경을 동시에 사용할 수 있도록 유지하세요.",
+  devConnectorIsolationNotice: "아래의 정확한 DEV 이름으로 별도의 커넥터를 만드세요. ContinuosWebIntegracao는 변경하지 않아 프로덕션 환경과 저장소 개발 환경을 동시에 사용할 수 있도록 유지하세요.",
   devSettingsTitle: "DEV 프로필 설정",
   devKeepRunningBody: "창을 닫아도 격리된 브라우저 세션과 DEV MCP 터널을 계속 사용할 수 있도록 유지합니다.",
   biggerContext: "Bigger Context (실험적)",
@@ -859,7 +859,7 @@ const ko: Record<keyof typeof en, string> = {
   mcpStepThree: "ChatGPT 커넥터 연결",
   mcpStepThreeBody: "커넥터를 만들기 전에 ChatGPT 설정에서 Developer Mode를 활성화하세요. ChatGPT Plugins에서 새 커넥터를 만들고 Tunnel을 선택한 다음 생성한 터널을 선택하세요. Authentication을 None으로 설정하고 아래에 표시된 커넥터 이름을 정확히 사용하세요. Permissions를 열고 Allow all actions를 선택하세요. Allow low-risk actions를 선택하면 명령 및 패치 호출이 이 런타임에 도달하기 전에 차단됩니다. 외부 Codex 하네스에서는 계속해서 샌드박스와 승인이 적용됩니다. 마지막으로 런타임을 검증하세요.",
   manualMcpStepThreeBody: "아래에 표시된 정확한 이름인 Codex Zero Risk로 별도의 커넥터를 만들고, 모든 Zero Risk 턴에서 직접 선택하세요. Zero Risk는 자동 모드와 별도의 터널 및 인증 정보가 필요합니다. 이 모드에서는 런처가 ChatGPT DOM을 검사하지 않습니다.",
-  connectorMigrationNotice: "Codex Native에서 업그레이드하는 경우 기존 커넥터는 그대로 두고 Codex Native2라는 새 커넥터를 만드세요. Codex Native의 이름을 변경하거나 새로고침하지 마세요. 기존 커넥터만 있는 구성은 런타임 검증에서 거부됩니다.",
+  connectorMigrationNotice: "Codex Native에서 업그레이드하는 경우 기존 커넥터는 그대로 두고 ContinuosWebIntegracao라는 새 커넥터를 만드세요. Codex Native의 이름을 변경하거나 새로고침하지 마세요. 기존 커넥터만 있는 구성은 런타임 검증에서 거부됩니다.",
   manualConnectorNotice: "Codex Zero Risk는 별도의 커넥터입니다. 각 Zero Risk 프롬프트를 보내기 전에 직접 선택하세요. 런처는 해당 선택을 확인하기 위해 ChatGPT DOM을 의도적으로 검사하지 않습니다.",
   openConnectors: "ChatGPT Plugins 열기",
   connectorName: "커넥터 이름",
@@ -963,7 +963,7 @@ const zhTW: Record<keyof typeof en, string> = {
   devMcpTitle: "透過 MCP 使用模擬工具",
   devMcpSubtitle: "將這個獨立 ChatGPT 帳戶連線到隔離的儲存庫 Harness。",
   devMcpBody: "DEV 啟動器會保持隔離的 MCP Tunnel 就緒。具名儲存庫聊天會連上該 Tunnel，並為工具動作回傳明確的模擬回條。",
-  devConnectorIsolationNotice: "請使用下方正確的 DEV 名稱新增獨立連接器。保留 Codex Native2 不變，讓正式環境與儲存庫開發可以同時執行。",
+  devConnectorIsolationNotice: "請使用下方正確的 DEV 名稱新增獨立連接器。保留 ContinuosWebIntegracao 不變，讓正式環境與儲存庫開發可以同時執行。",
   devSettingsTitle: "DEV 設定檔設定",
   devKeepRunningBody: "視窗關閉後仍保持隔離的瀏覽器工作階段與 DEV MCP Tunnel 可用。",
   biggerContext: "更大上下文（實驗性）",
@@ -1095,7 +1095,7 @@ const zhTW: Record<keyof typeof en, string> = {
   mcpStepThree: "連線 ChatGPT 外掛",
   mcpStepThreeBody: "建立連接器前，先在 ChatGPT 設定中啟用開發人員模式。然後在 ChatGPT Plugins 中新增連接器，選擇 Tunnel，選取剛建立的 Tunnel，將驗證設為無，並使用下方顯示的正確連接器名稱。開啟權限並選擇「允許所有動作」；「允許低風險動作」會在命令與修補呼叫到達本機執行階段之前將其攔截。外層 Codex harness 仍會執行沙箱與核准規則。最後驗證執行階段。",
   manualMcpStepThreeBody: "請使用下方顯示的正確名稱 Codex Zero Risk 建立獨立連接器，並在每次引導式手動回合中自行選擇它。Zero Risk 必須使用與自動模式分開的 Tunnel 與憑證。此模式不會執行 DOM 檢查。",
-  connectorMigrationNotice: "從 Codex Native 升級？請保留舊連接器不變，並新增名為 Codex Native2 的連接器。不要重新命名或重新整理 Codex Native。僅有舊連接器時，執行階段驗證會明確失敗。",
+  connectorMigrationNotice: "從 Codex Native 升級？請保留舊連接器不變，並新增名為 ContinuosWebIntegracao 的連接器。不要重新命名或重新整理 Codex Native。僅有舊連接器時，執行階段驗證會明確失敗。",
   manualConnectorNotice: "Codex Zero Risk 是獨立連接器。每次傳送引導式提示前都需要自行選擇它；啟動器有意不檢查 ChatGPT DOM 來驗證該選擇。",
   openConnectors: "開啟 ChatGPT Plugins",
   connectorName: "連接器名稱",
@@ -1189,7 +1189,8 @@ export function copyFor(language: Language, names?: { automatic: string; manual:
   for (const key of ["manualMcpStepThreeBody", "manualConnectorNotice", "manualPromptInstruction", "manualPromptWaiting"] as const) {
     localized[key] = copy[key].replaceAll("Codex Zero Risk", () => names.manual);
   }
-  localized.connectorMigrationNotice = copy.connectorMigrationNotice.replaceAll("Codex Native2", () => names.automatic);
+  localized.devConnectorIsolationNotice = copy.devConnectorIsolationNotice.replaceAll("ContinuosWebIntegracao", () => names.automatic);
+  localized.connectorMigrationNotice = copy.connectorMigrationNotice.replaceAll("ContinuosWebIntegracao", () => names.automatic);
   return localized;
 }
 

@@ -46,6 +46,11 @@ const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly 
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
 export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+/** Keep long native tools alive across short MCP polling requests, without replaying effects. */
+export const CHATGPT_NATIVE_DEFER_AFTER_MS = 40_000;
+export const CHATGPT_NATIVE_DEFER_POLL_MS = 20_000;
+export const CHATGPT_NATIVE_DEFER_MAX_MS = 8 * 60_000;
+export const CHATGPT_NATIVE_PENDING_WIRE_NAME = "codex_pending_result";
 
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
@@ -460,6 +465,20 @@ export async function runChatGptMcpServer(options: {
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
   );
 
+  type DeferredNativeOutcome =
+    | { ok: true; value: ReturnType<typeof asMcpResult> | ReturnType<typeof result> }
+    | { ok: false; error: unknown };
+  const pendingNativeCalls = new Map<string, {
+    bindingId: string;
+    token: string;
+    outcome: Promise<DeferredNativeOutcome>;
+    createdAt: number;
+  }>();
+  const pendingNativeResponse = (id: string) => result({
+    code: "codex_tool_in_progress",
+    job_id: id,
+    message: "The original native tool is still running. Do not repeat it. Call codex_tool_call with wire_name=codex_pending_result and arguments={job_id: this job_id} to retrieve the result. Poll again if still running.",
+  });
   const claimTurn = async (
     toolName: string,
     turnToken: string,
@@ -558,8 +577,9 @@ export async function runChatGptMcpServer(options: {
     tool: CodexTool,
     payload: { arguments?: Record<string, unknown>; input?: string },
     signal?: AbortSignal,
+    timeoutOverrideMs?: number,
   ) => {
-    const timeoutMs = chatGptMcpInvocationTimeout(bound);
+    const timeoutMs = timeoutOverrideMs ?? chatGptMcpInvocationTimeout(bound);
     try {
       const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
         method: "invoke",
@@ -606,6 +626,62 @@ export async function runChatGptMcpServer(options: {
       }
       throw error;
     }
+  };
+
+  /** The broker owns this one native invocation; later polls never execute it a second time. */
+  const invokeOrDefer = async (
+    token: string,
+    bindingId: string,
+    bound: ChatGptTurnEnvironment & { expiresAt?: number },
+    tool: CodexTool,
+    payload: { arguments?: Record<string, unknown>; input?: string },
+  ) => {
+    const jobId = "native_" + randomBytes(18).toString("base64url");
+    const maxMs = Math.min(CHATGPT_NATIVE_DEFER_MAX_MS,
+      bound.expiresAt === undefined ? CHATGPT_NATIVE_DEFER_MAX_MS : Math.max(1, bound.expiresAt - Date.now()));
+    const outcome: Promise<DeferredNativeOutcome> = invoke(
+      bindingId, bound, tool, payload, undefined, maxMs,
+    ).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+    const entry = { bindingId, token, outcome, createdAt: Date.now() };
+    pendingNativeCalls.set(jobId, entry);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), CHATGPT_NATIVE_DEFER_AFTER_MS);
+    });
+    const first = await Promise.race([outcome, deadline]);
+    if (timer) clearTimeout(timer);
+    if (first !== null) {
+      pendingNativeCalls.delete(jobId);
+      if (!first.ok) throw first.error;
+      return first.value;
+    }
+    console.error("[chatgpt-web-mcp] deferred native tool=" + wireName(tool) + " job_id=" + jobId + " after=" + CHATGPT_NATIVE_DEFER_AFTER_MS + "ms; original invocation remains in flight");
+    const gc = setTimeout(() => pendingNativeCalls.delete(jobId), CHATGPT_NATIVE_DEFER_MAX_MS + 60_000);
+    gc.unref?.();
+    return pendingNativeResponse(jobId);
+  };
+
+  const pollDeferredNative = async (token: string, claimed: ClaimedTurn, jobId: unknown) => {
+    if (typeof jobId !== "string" || !/^native_[A-Za-z0-9_-]{24}$/.test(jobId)) {
+      throw new Error("Invalid native tool job_id");
+    }
+    const job = pendingNativeCalls.get(jobId);
+    if (!job || job.token !== token || job.bindingId !== claimed.bindingId) {
+      return result({
+        code: "codex_pending_result_unavailable", job_id: jobId,
+        message: "No matching pending tool result exists in this active turn. Execution state is unknown: do not invoke the original tool again without checking its side effects.",
+      }, true);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), CHATGPT_NATIVE_DEFER_POLL_MS);
+    });
+    const state = await Promise.race([job.outcome, timeout]);
+    if (timer) clearTimeout(timer);
+    if (state === null) return pendingNativeResponse(jobId);
+    pendingNativeCalls.delete(jobId);
+    if (!state.ok) throw state.error;
+    return state.value;
   };
 
   const invokeNestedNative = (
@@ -699,12 +775,12 @@ export async function runChatGptMcpServer(options: {
     "codex_write_stdin",
     {
       title: "Continue a native Codex command session",
-      description: afterSafeStart(contract, "Write characters to, or poll, a session_id returned by codex_exec."),
+      description: afterSafeStart(contract, "Write characters to, or poll, a session_id returned by codex_exec. Each poll must be at most 60 seconds; when a command is still running, poll the same session_id again instead of repeating codex_exec. The command keeps running independently between polls."),
       inputSchema: {
         ...turnReferenceInput(contract),
         session_id: z.number().int().nonnegative(),
         chars: z.string().max(1_000_000).optional(),
-        yield_time_ms: z.number().int().min(250).max(300_000).optional(),
+        yield_time_ms: z.number().int().min(250).max(60_000).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
@@ -904,6 +980,11 @@ export async function runChatGptMcpServer(options: {
     async (toolInput, extra) => {
       const { wire_name, arguments: args, input } = toolInput;
       const requestId = turnReference(contract, toolInput);
+      if (wire_name === CHATGPT_NATIVE_PENDING_WIRE_NAME) {
+        if (input !== undefined) throw new Error("Pending native tool polling does not accept freeform input");
+        return withClaimedTurn("codex_tool_call", requestId, extra, async claimed =>
+          pollDeferredNative(requestId, claimed, args?.job_id));
+      }
       if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
         if (input !== undefined) {
           throw new Error("Compaction control handoff does not accept freeform input");
@@ -942,23 +1023,23 @@ export async function runChatGptMcpServer(options: {
           }
           const invocationArguments = args ?? {};
           assertGatewayToolArguments(wire_name, invocationArguments);
-          return invoke(claimed.bindingId, bound, gateway, {
+          return invokeOrDefer(requestId, claimed.bindingId, bound, gateway, {
             input: execGatewayProgram(wire_name, input !== undefined, {
               ...(input !== undefined ? { input } : { arguments: invocationArguments }),
             }, bound.tools.map(wireName)),
-          }, extra.signal);
+          });
         }
         if (tool.freeform) {
           if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
           if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
-          return invoke(claimed.bindingId, bound, tool, {
+          return invokeOrDefer(requestId, claimed.bindingId, bound, tool, {
             input: tool === execGateway(bound) ? transportBoundRawExecProgram(input, wireName(tool)) : input,
-          }, extra.signal);
+          });
         }
         if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
         const invocationArguments = args ?? {};
         assertBrowserToolArguments(tool, invocationArguments);
-        return invoke(claimed.bindingId, bound, tool, { arguments: invocationArguments }, extra.signal);
+        return invokeOrDefer(requestId, claimed.bindingId, bound, tool, { arguments: invocationArguments });
       });
     },
   );

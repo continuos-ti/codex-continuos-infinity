@@ -31,6 +31,7 @@ type HelperMessage =
   | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
   | { type: "event"; id: string; event: "completion_fence_commit"; requestId: number; revision: number }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
+  | { type: "event"; id: string; event: "repair_prepare_requested"; code: string; error: string }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
   | { type: "result"; id: string; text: string }
   | {
@@ -113,6 +114,13 @@ function parseHelperMessage(line: string): HelperMessage {
         throw new Error("Launcher browser helper prompt selection is invalid");
       }
       return { type: "event", id: message.id, event, reused: message.reused };
+    }
+    if (event === "repair_prepare_requested") {
+      if (typeof message.code !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(message.code)
+        || typeof message.error !== "string" || message.error.length > 700) {
+        throw new Error("Launcher browser helper recovery failure evidence is invalid");
+      }
+      return { type: "event", id: message.id, event, code: message.code, error: message.error };
     }
     if (!["heartbeat", "generation_progress", "send_activated", "submitted", "reasoning", "commentary", "text"].includes(String(event))) {
       throw new Error("Launcher browser helper emitted an unknown event");
@@ -287,6 +295,7 @@ export class LauncherBrowserHelperClient {
             capabilities: turn.capabilities,
             ...(turn.nativeConnector ? { nativeConnector: true } : {}),
             ...(turn.prepareResume ? { resumeAvailable: true } : {}),
+            ...(turn.prepareRecovery ? { recoveryAvailable: true } : {}),
             ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
             ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
@@ -511,6 +520,35 @@ export class LauncherBrowserHelperClient {
             error instanceof Error ? error : new Error(String(error)),
             pending,
           ));
+      }
+      else if (message.event === "repair_prepare_requested") {
+        const prepare = pending.turn.prepareRecovery;
+        void Promise.resolve().then(() => prepare?.({
+          traceId: message.id, code: message.code, error: message.error,
+        })).then(prepared => {
+          if (!prepared) throw new Error("Launcher browser helper requested an unavailable repair prompt");
+          if (this.pending.get(message.id) !== pending) {
+            prepared.release();
+            return;
+          }
+          if (!prepared.turnToken || prepared.images.length > 0 || prepared.multipart
+            || prepared.skillFiles?.length) {
+            throw new Error("In-band repair prompt must be a single inline message with an active tool token");
+          }
+          return this.send({
+            type: "prepared_recovery_ack",
+            id: message.id,
+            prepared: {
+              text: prepared.text,
+              images: prepared.images,
+              turnToken: prepared.turnToken,
+            } satisfies CompiledChatGptWebPrompt,
+          }).finally(() => prepared.release());
+        }).catch(error => this.abortWithLocalFailure(
+          message.id,
+          error instanceof Error ? error : new Error(String(error)),
+          pending,
+        ));
       }
       else if (message.event === "prepared_selected") {
         const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;

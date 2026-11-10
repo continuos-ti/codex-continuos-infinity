@@ -29,6 +29,55 @@ const BOOT_TIME_CLOCK_TOLERANCE_MS = 5_000;
 const CURRENT_BOOT_STARTED_AT_MS = Date.now() - (os.uptime() * 1_000);
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const EXTERNAL_CLOUDFLARE_HEALTH = "https://codex-native2.continuos.com.br/health";
+function usesExternalCloudflareGateway(config) {
+  return config?.mode === "full"
+    && config.browserInteractionMode === "automatic"
+    && config.appName === "ContinuosWebIntegracao";
+}
+async function cloudflareHealth() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(EXTERNAL_CLOUDFLARE_HEALTH, {signal: controller.signal, redirect: "error"});
+    if (!response.ok) throw new Error("Gateway returned unhealthy HTTP status");
+    const data = await response.json();
+    if (data?.status !== "ok" || data?.service !== "ContinuosWebIntegracao")
+      throw new Error("Unexpected Cloudflare gateway identity");
+    return {
+      ready: true, pid: null, state: "ready", processRunning: undefined,
+      healthy: true, absent: false, statusKnown: true,
+      detail: "Cloudflare gateway healthy; shared tunnel is externally managed",
+    };
+  } catch {
+    return {
+      ready: false, pid: null, state: "starting", processRunning: undefined,
+      healthy: false, absent: false, statusKnown: true,
+      detail: "Cloudflare gateway unreachable or unhealthy",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Public Cloudflare DNS/tunnel and the local OAuth gateway have independent
+ * boot schedules. A single early failed fetch must not tear down the Codex route.
+ * This remains bounded and still requires the exact gateway identity.
+ */
+async function waitForExternalCloudflareGatewayReady({
+  healthCheck = cloudflareHealth,
+  pause = sleep,
+  timeoutMs = 60_000,
+  pollMs = 2_000,
+} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await healthCheck();
+    if (status.ready || Date.now() >= deadline) return status;
+    await pause(Math.max(1, Math.min(pollMs, deadline - Date.now())));
+  }
+}
 
 function collectLines(stream, onLine, onError) {
   let buffered = "";
@@ -566,6 +615,7 @@ class RuntimeSupervisor {
   }
 
   assertTunnelClientReady(config) {
+    if (usesExternalCloudflareGateway(config)) return;
     const tunnel = config.tunnel;
     if (!tunnel || !fs.existsSync(tunnel.binaryPath)) {
       throw new Error(`Tunnel client is missing: ${tunnel?.binaryPath || "not configured"}`);
@@ -619,6 +669,7 @@ class RuntimeSupervisor {
   }
 
   async readTunnelHealth(config) {
+    if (usesExternalCloudflareGateway(config)) return await cloudflareHealth();
     const tunnel = config.tunnel;
     // `runtimes status` performs an optional control-plane lookup when the saved runtime key is
     // available. The cleanup dry run is the official local-only inventory and never removes
@@ -901,6 +952,7 @@ class RuntimeSupervisor {
   }
 
   async observeTunnelForMonitor(config) {
+    if (usesExternalCloudflareGateway(config)) return await cloudflareHealth();
     const local = await this.readLocalTunnelHealth();
     if (local.statusKnown) return local;
     try {
@@ -990,6 +1042,14 @@ class RuntimeSupervisor {
 
   async startTunnel(config, operationName = "runtime-start", { forceRestart = false } = {}) {
     if (config.mode !== "full") return;
+    if (usesExternalCloudflareGateway(config)) {
+      const status = await waitForExternalCloudflareGatewayReady();
+      if (!status.ready) throw new Error(status.detail);
+      this.tunnel = { pid: null, exitCode: null, signalCode: null, managed: false };
+      this.startTunnelMonitor(config);
+      this.logger.info("runtime.cloudflare_gateway_adopted", {health: status.detail});
+      return;
+    }
     this.assertTunnelClientReady(config);
     // Every acquisition binds diagnostics to this runtime, including adoption of an existing alias.
     this.tunnelHealthBaseUrl = null;
@@ -1074,6 +1134,7 @@ class RuntimeSupervisor {
     this.stopTunnelMonitor();
     this.tunnelMonitorFailures = 0;
     this.tunnelMonitorObservationUnavailable = false;
+    this.externalCloudflareUnreachable = false;
     const generation = this.tunnelMonitorGeneration;
     const recordFailure = (message, immediate = false) => {
       if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
@@ -1115,6 +1176,10 @@ class RuntimeSupervisor {
           });
         }
         if (health.ready) {
+          if (this.externalCloudflareUnreachable) {
+            this.logger.info("runtime.cloudflare_gateway_restored", { detail: health.detail });
+            this.externalCloudflareUnreachable = false;
+          }
           this.tunnelMonitorFailures = 0;
           if (this.tunnel?.pid !== health.pid) {
             this.tunnel = {
@@ -1124,6 +1189,15 @@ class RuntimeSupervisor {
               managed: true,
             };
             this.tryWriteState("ready");
+          }
+          return;
+        }
+        if (usesExternalCloudflareGateway(config)) {
+          // External tunnel outages are not failures of the launcher-owned daemon.
+          // Preserve active turns and re-observe Cloudflare at the next interval.
+          if (!this.externalCloudflareUnreachable) {
+            this.logger.warn("runtime.cloudflare_gateway_unreachable", { detail: health.detail });
+            this.externalCloudflareUnreachable = true;
           }
           return;
         }
@@ -1142,6 +1216,7 @@ class RuntimeSupervisor {
     this.tunnelMonitorTimer = null;
     this.tunnelMonitorFailures = 0;
     this.tunnelMonitorObservationUnavailable = false;
+    this.externalCloudflareUnreachable = false;
     this.tunnelMonitorGeneration += 1;
   }
 
@@ -1493,6 +1568,12 @@ class RuntimeSupervisor {
   }
 
   async waitForTunnelStopped(config, timeoutMs = 10_000) {
+    if (usesExternalCloudflareGateway(config)) {
+      // Only the launcher-owned tunnel lifecycle is considered stopped.
+      // The shared Cloudflare connector must stay online.
+      return { ready: false, state: "stopped", processRunning: false,
+        absent: true, statusKnown: true, detail: "No launcher-owned tunnel to stop" };
+    }
     const deadline = Date.now() + timeoutMs;
     let lastDetail = "tunnel stop status has not been observed";
     while (Date.now() < deadline) {
@@ -1544,6 +1625,12 @@ class RuntimeSupervisor {
   }
 
   async stopTunnelGracefully(config, timeoutMs = 10_000) {
+    if (usesExternalCloudflareGateway(config)) {
+      // Never stop the shared Cloudflare Tunnel or the Windows Local service.
+      this.stopTunnelMonitor();
+      this.tunnel = null;
+      return;
+    }
     const managed = this.tunnel;
     if (!managed) {
       this.stopTunnelMonitor();
@@ -1576,6 +1663,7 @@ class RuntimeSupervisor {
   }
 
   async adoptConfiguredTunnelForStop(config) {
+    if (usesExternalCloudflareGateway(config)) return;
     if (config.mode !== "full" || this.tunnel) return;
     const health = await this.waitForKnownTunnelStatus(config);
     if (tunnelRuntimeStopped(health)) {
@@ -1599,6 +1687,7 @@ class RuntimeSupervisor {
   }
 
   async runTunnelStopCommand(config) {
+    if (usesExternalCloudflareGateway(config)) return {code: 0, output: "Shared Cloudflare Tunnel left running"};
     const tunnel = config.tunnel;
     if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
     return await this.runTunnelCommand(
@@ -2124,4 +2213,7 @@ module.exports = {
   RuntimeSupervisor,
   managedTunnelConnectArgs,
   validateConfig,
+  usesExternalCloudflareGateway,
+  cloudflareHealth,
+  waitForExternalCloudflareGatewayReady,
 };

@@ -148,7 +148,7 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    appName: "Codex Native",
+    appName: CHATGPT_CONNECTOR_NAME,
     chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     storageStatePath: join(root, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(root),
@@ -378,7 +378,7 @@ test("the whole name after Codex is editable and only the selected mode changes"
     const manual = resolveInteractionConnectorIdentities("manual", "production", names, "Manual");
     expect(manual.automaticAppName).toBe(names.automaticAppName);
     expect(manual.appName).toBe("Codex Manual");
-    expect(resolveInteractionConnectorIdentities("automatic", "production", manual).appName).toBe(names.automaticAppName);
+    expect(resolveInteractionConnectorIdentities("automatic", "production", manual).appName).toBe(manual.automaticAppName);
   }
   for (const suffix of [null, 5, "", "x".repeat(75), " Work", "Work ", "x\ny", "x`y", "x@y", "--flag"]) {
     expect(() => validateConnectorNameSuffix(suffix)).toThrow("part after Codex");

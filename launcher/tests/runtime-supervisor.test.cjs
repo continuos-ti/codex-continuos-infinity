@@ -13,7 +13,34 @@ const {
   RuntimeSupervisor,
   managedTunnelConnectArgs,
   validateConfig,
+  waitForExternalCloudflareGatewayReady,
 } = require("../electron/runtime-supervisor.cjs");
+
+test("Cloudflare startup waits for a gateway that becomes ready without resetting the route", async () => {
+  let checks = 0;
+  let delays = 0;
+  const result = await waitForExternalCloudflareGatewayReady({
+    healthCheck: async () => (++checks < 3
+      ? { ready: false, detail: "Booting" }
+      : { ready: true, detail: "ContinuosWebIntegracao healthy" }),
+    pause: async () => { delays++; },
+    timeoutMs: 30_000,
+    pollMs: 1,
+  });
+  assert.equal(result.ready, true);
+  assert.equal(checks, 3);
+  assert.equal(delays, 2);
+});
+
+test("Cloudflare startup still refuses a gateway that never passed identity verification", async () => {
+  const result = await waitForExternalCloudflareGatewayReady({
+    healthCheck: async () => ({ ready: false, detail: "Incorrect gateway identity" }),
+    pause: async () => {},
+    timeoutMs: 0,
+  });
+  assert.equal(result.ready, false);
+  assert.equal(result.detail, "Incorrect gateway identity");
+});
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
