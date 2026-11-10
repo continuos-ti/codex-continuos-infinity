@@ -19,22 +19,9 @@ export type SubagentProtocol = "compatibility-v1" | "native";
  * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
  * contract therefore has a new identity instead of mutating the retired connector in place.
  */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
+export const CHATGPT_CONNECTOR_NAME = "ContinuosWebIntegracao";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
 export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk";
-export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native"] as const;
-
-export function isLegacyChatGptConnectorName(value: string): boolean {
-  return (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value);
-}
-
-export function legacyChatGptConnectorMigrationMessage(legacyName: string): string {
-  return `Legacy ChatGPT connector ${JSON.stringify(legacyName)} was found, but this release requires`
-    + ` a newly created connector named ${JSON.stringify(CHATGPT_CONNECTOR_NAME)}. Create`
-    + ` ${JSON.stringify(CHATGPT_CONNECTOR_NAME)} against the same tunnel with Authentication set to None;`
-    + ` do not rename or refresh ${JSON.stringify(legacyName)}.`;
-}
-
 export function validateConnectorNameSuffix(value: unknown): string {
   if (typeof value !== "string" || value.length > 74
     || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(value)
@@ -46,6 +33,7 @@ export function validateConnectorNameSuffix(value: unknown): string {
 }
 
 function validateCurrentConnectorName(value: unknown): string {
+  if (value === CHATGPT_CONNECTOR_NAME || value === DEV_CHATGPT_CONNECTOR_NAME) return value;
   if (typeof value !== "string" || !value.startsWith("Codex ")) {
     throw new Error("Plugin names must start with Codex followed by a space");
   }
@@ -68,7 +56,6 @@ export function resolveInteractionConnectorIdentities(
   const defaultAutomatic = profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
   let automaticAppName = existing.automaticAppName ?? defaultAutomatic;
   let manualAppName = existing.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  if (isLegacyChatGptConnectorName(automaticAppName)) automaticAppName = defaultAutomatic;
   if (suffix !== undefined) {
     const name = `Codex ${validateConnectorNameSuffix(suffix)}`;
     if (interactionMode === "manual") manualAppName = name;
@@ -154,8 +141,9 @@ export function expandUserPath(value: string): string {
 }
 
 export function getConfigDir(): string {
-  const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
-  return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
+  const configured = process.env.CODEX_CONTINUOS_INFINITY_HOME?.trim()
+    || process.env.CODEX_CHATGPT_WEB_HOME?.trim();
+  return resolve(expandUserPath(configured || join(homedir(), ".codex-continuos-infinity")));
 }
 
 export function getConfigPath(): string {
@@ -458,7 +446,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
     throw new Error(`Invalid automaticAppName in ${path}`);
   }
-  if (!isLegacyChatGptConnectorName(automaticAppName)) validateCurrentConnectorName(automaticAppName);
+  validateCurrentConnectorName(automaticAppName);
   validateCurrentConnectorName(manualAppName);
   if (automaticAppName === manualAppName) {
     throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);

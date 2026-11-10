@@ -1,20 +1,20 @@
 {
-  "name": "codex-chatgpt-web",
-  "version": "6.1.18",
+  "name": "codex-continuos-infinity",
+  "version": "6.1.18-continuos.1",
   "private": true,
   "description": "A focused local Responses bridge that runs Codex tasks through a user-authenticated ChatGPT web session.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/miuuyy/codex-chatgpt-web.git"
+    "url": "git+https://github.com/continuos-ti/codex-continuos-infinity.git"
   },
-  "homepage": "https://github.com/miuuyy/codex-chatgpt-web#readme",
+  "homepage": "https://github.com/continuos-ti/codex-continuos-infinity#readme",
   "bugs": {
-    "url": "https://github.com/miuuyy/codex-chatgpt-web/issues"
+    "url": "https://github.com/continuos-ti/codex-continuos-infinity/issues"
   },
   "packageManager": "bun@1.4.0",
   "type": "module",
   "bin": {
-    "codex-chatgpt-web": "./src/cli.ts"
+    "codex-chatgpt-web": "./src/cli.ts", "codex-continuos-infinity": "./src/cli.ts"
   },
   "files": [
     "dist",

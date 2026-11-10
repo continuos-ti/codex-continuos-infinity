@@ -20,6 +20,7 @@ import {
 import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexToolResultMessage, type CodexUsage } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
+import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
 import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
@@ -325,6 +326,14 @@ function submittedTurnFailure(session: ChatGptTurnSession, error: unknown, parse
     }
   }
   if (normalized instanceof ChatGptWebAdapterError) return normalized;
+  if (normalized.name === "AbortError") {
+    // Do not disguise a cancellation as an upstream silence timeout. Its cause is
+    // observable in the retained browser diagnostics and must not trigger replay.
+    return new ChatGptWebAdapterError(
+      "The browser turn or Codex request was cancelled before final delivery. Earlier native tool actions may already have completed. Inspect the original ChatGPT tab before resuming; this turn was not resent.",
+      { status: 499, errorType: "client_closed_request", code: "client_cancelled", retryable: false, cause: normalized },
+    );
+  }
   const phase = session.runtime.submission?.phase;
   if (!phase || phase === "prepared") return normalized;
   const ambiguous = phase === "send_activated";
@@ -809,6 +818,30 @@ export function createChatGptWebAdapter(
       capabilities: turnCapabilities,
       prepare: () => prepareWith(checkpointInput.parsed),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
+      ...(retainConversation && !parsed._compactionRequest ? {
+        prepareRecovery: async (failure: { traceId: string; code: string; error: string }) => {
+          if (!activeToken) throw new Error("In-band repair has no still-active Codex tool binding");
+          const recoveryParsed: CodexParsedRequest = {
+            ...checkpointInput.parsed,
+            context: {
+              ...checkpointInput.parsed.context,
+              messages: [{
+                role: "user",
+                timestamp: Date.now(),
+                content: inBandRepairTaskPrompt({
+                  ...failure,
+                  diagnosticsDirectory: resolve(expandUserPath("~/.codex-chatgpt-web/diagnostics/browser-turns")),
+                }),
+              }],
+            },
+          };
+          const compiled = compileChatGptWebPrompt(
+            recoveryParsed, turnCapabilities, activeToken,
+            { ...compileOptionsFor(recoveryParsed), experimentalSkillAttachments: false },
+          );
+          return { ...compiled, release: () => {} };
+        },
+      } : {}),
       ...(retainConversation ? { retainConversation: true, conversationKey } : {}),
       abortSignal: browserAbort.signal,
       ...(parsed._compactionRequest ? { compaction: true } : {}),

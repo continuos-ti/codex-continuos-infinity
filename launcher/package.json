@@ -1,9 +1,9 @@
 {
-  "name": "codex-web-gpt-launcher",
-  "version": "6.1.18",
+  "name": "codex-continuos-infinity-launcher",
+  "version": "6.1.18-continuos.1",
   "private": true,
-  "description": "Desktop control center for Codex ChatGPT Web",
-  "author": "miuuyy",
+  "description": "Codex Continuos Infinity - native ChatGPT web and Continuos MCP integration",
+  "author": "Continuos I.T. (fork of miuuyy/codex-chatgpt-web)",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -45,9 +45,9 @@
     "source-map-js": "1.2.2"
   },
   "build": {
-    "appId": "dev.codexwebgpt.launcher",
-    "productName": "Codex Web GPT",
-    "artifactName": "codex-web-gpt-${version}-${os}-${arch}.${ext}",
+    "appId": "br.com.continuos.codexinfinity.launcher",
+    "productName": "Codex Continuos Infinity",
+    "artifactName": "codex-continuos-infinity-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
       "assets/linux-appimage-runner.sh"
@@ -89,7 +89,7 @@
       "target": ["AppImage"]
     },
     "nsis": {
-      "guid": "d1a6026a-6210-588e-9a2b-da3936f94e02",
+      "guid": "8d70288c-48e8-55c9-94ad-16f56e4d0a88",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": false,

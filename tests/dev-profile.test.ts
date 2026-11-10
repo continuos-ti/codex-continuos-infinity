@@ -34,7 +34,7 @@ test("DEV profile paths isolate browser, Codex, config, chat, and runtime state"
 });
 
 test("Bigger Context is disabled by default and read from the isolated DEV runtime config", () => {
-  const root = mkdtempSync(join(tmpdir(), "codex-web-gpt-dev-features-"));
+  const root = mkdtempSync(join(tmpdir(), "codex-continuos-infinity-dev-features-"));
   try {
     const paths = resolveDevProfilePaths({
       homeDirectory: root,
@@ -74,53 +74,53 @@ test("installed launcher discovery has explicit platform candidates", () => {
     homeDirectory: "/Users/tester",
     environment: {},
   })).toEqual([
-    "/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT",
-    "/Users/tester/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT",
+    "/Applications/Codex Continuos Infinity.app/Contents/MacOS/Codex Continuos Infinity",
+    "/Users/tester/Applications/Codex Continuos Infinity.app/Contents/MacOS/Codex Continuos Infinity",
   ]);
   expect(installedLauncherCandidates({
     platform: "linux",
     homeDirectory: "/home/tester",
     environment: { PATH: "/usr/local/bin:/usr/bin" },
   })).toEqual([
-    "/home/tester/.local/bin/codex-web-gpt",
-    "/usr/local/bin/codex-web-gpt",
-    "/usr/bin/codex-web-gpt",
+    "/home/tester/.local/bin/codex-continuos-infinity",
+    "/usr/local/bin/codex-continuos-infinity",
+    "/usr/bin/codex-continuos-infinity",
   ]);
   expect(installedLauncherCandidates({
     platform: "win32",
     homeDirectory: "C:\\Users\\tester",
     environment: { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
   })).toEqual([
-    "C:\\Users\\tester\\AppData\\Local\\Programs\\Codex Web GPT\\Codex Web GPT.exe",
+    "C:\\Users\\tester\\AppData\\Local\\Programs\\Codex Continuos Infinity\\Codex Continuos Infinity.exe",
   ]);
   expect(installedLauncherCandidates({
     platform: "win32",
     homeDirectory: "C:\\Users\\tester",
     environment: { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" },
-    windowsInstallLocation: "D:\\Apps\\Codex Web GPT",
+    windowsInstallLocation: "D:\\Apps\\Codex Continuos Infinity",
   })).toEqual([
-    "D:\\Apps\\Codex Web GPT\\Codex Web GPT.exe",
+    "D:\\Apps\\Codex Continuos Infinity\\Codex Continuos Infinity.exe",
   ]);
 });
 
 test("injected Windows discovery avoids the live registry while ordinary discovery still uses it", () => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   const registry = spyOn(childProcess, "execFileSync").mockImplementation((() =>
-    "    InstallLocation    REG_SZ    D:\\Installed\\Codex Web GPT\n"
+    "    InstallLocation    REG_SZ    D:\\Installed\\Codex Continuos Infinity\n"
   ) as unknown as typeof childProcess.execFileSync);
   Object.defineProperty(process, "platform", { ...platform, value: "win32" });
   try {
     expect(installedLauncherCandidates({
       platform: "win32",
       environment: { LOCALAPPDATA: "C:\\Fixture\\AppData\\Local" },
-    })).toEqual(["C:\\Fixture\\AppData\\Local\\Programs\\Codex Web GPT\\Codex Web GPT.exe"]);
+    })).toEqual(["C:\\Fixture\\AppData\\Local\\Programs\\Codex Continuos Infinity\\Codex Continuos Infinity.exe"]);
     expect(registry).not.toHaveBeenCalled();
     expect(installedLauncherCandidates({ platform: "win32", environment: process.env }))
-      .toEqual(["D:\\Installed\\Codex Web GPT\\Codex Web GPT.exe"]);
+      .toEqual(["D:\\Installed\\Codex Continuos Infinity\\Codex Continuos Infinity.exe"]);
     expect(registry).toHaveBeenCalledTimes(1);
     expect(installedLauncherCandidates({
       platform: "win32", environment: {}, windowsInstallLocation: "E:\\Explicit",
-    })).toEqual(["E:\\Explicit\\Codex Web GPT.exe"]);
+    })).toEqual(["E:\\Explicit\\Codex Continuos Infinity.exe"]);
     expect(registry).toHaveBeenCalledTimes(1);
   } finally {
     Object.defineProperty(process, "platform", platform);

@@ -240,8 +240,9 @@ test("packaged runtime is verified before launcher browser surfaces can bind por
   const browserReady = electronMain.indexOf("await browserHost.ready();", start);
 
   assert.ok(runtimeValidation > start, "startup must eagerly verify the packaged runtime");
+  assert.ok(cdpPortAllocation > start && cdpPortAllocation < runtimeValidation, "CDP flags must be set before runtime installation yields control");
   for (const [surface, position] of [
-    ["CDP port allocation", cdpPortAllocation],
+    // A free-port lookup does not bind or expose a listener.
     ["launcher window", windowCreation],
     ["browser control server", controlServerStart],
     ["embedded browser", browserReady],
@@ -340,22 +341,14 @@ test("passkey buttons show launch progress, wait for Chrome, and preserve import
   }
 });
 
-test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {
-  assert.match(
-    appSource,
-    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\([\s\S]*?snapshot\.state\.browserInteractionMode === "automatic"[\s\S]*?snapshot\.state\.coreSetupComplete === true[\s\S]*?snapshot\.state\.biggerContextAvailable === true[\s\S]*?!snapshot\.state\.experimentalBiggerContext,/,
-  );
-  assert.match(appSource, /&& !biggerContextRecommendationOpen;/);
+test("Bigger Context stays closed at startup and preserves its Settings transaction", () => {
+  assert.match(appSource, /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\(false\)/);
+  assert.doesNotMatch(appSource, /setBiggerContextRecommendationOpen\(true\)/);
   assert.match(appSource, /updateState\(await api!\.setBiggerContext\(enabled\)\)/);
-  assert.match(
-    appSource,
-    /<BiggerContextRecommendation[\s\S]*?checked=\{snapshot\.state\.experimentalBiggerContext\}[\s\S]*?onClose=\{\(\) => setBiggerContextRecommendationOpen\(false\)\}/,
-  );
-  assert.match(appSource, /<Switch checked=\{checked\} disabled=\{busy\} onChange=\{onChange\} \/>/);
+  assert.match(appSource, /checked=\{snapshot\.state\.experimentalBiggerContext\}/);
+  assert.match(appSource, /onChange=\{\(checked\) => void setBiggerContext\(checked\)\}/);
   assert.match(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*position:\s*fixed;/s);
-  assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*backdrop-filter:/s);
 });
-
 test("Zero Risk setup commits state after the runtime transaction and preserves manual inspection boundaries", () => {
   const modeSwitchHandler = electronMain.slice(
     electronMain.indexOf('handle("launcher:browser-interaction-mode"'),
@@ -421,7 +414,8 @@ test("installed integration can connect MCP while the native catalog refresh is 
     for (const installed of [false, true]) {
       const snapshot = { state: { browserInteractionMode: "automatic", coreSetupComplete: installed,
         codexCatalogVerified: false, codexRestartRequired: true, mcpGuideStep: 1 },
-        smokePassed: true, mcpCredentialsConfigured: true };
+        smokePassed: true, mcpCredentialsConfigured: true,
+        connectorNames: { automatic: "Other Authorized Connector", manual: "Codex Zero Risk" } };
       const base = { snapshot, copy, devProfile: false, operation: null, updateState() {}, setError(error) { if (error) throw new Error(error); } };
       const setup = visit(sandbox.renderSetup({ ...base, activateBrowser: async () => {}, browser: { authenticated: true }, showMcp() {} }));
       assert.equal(setup.find(node => node.type === "SetupRow" && node.props.index === 3).props.complete, installed);

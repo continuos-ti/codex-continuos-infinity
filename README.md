@@ -1,15 +1,41 @@
+# Codex Continuos Infinity
+
+Fork da Continuos I.T. baseado no projeto `miuuyy/codex-chatgpt-web`, distribuído sob a licença MIT, com as adaptações de integração MCP, Cloudflare e recuperação do runtime desenvolvidas para o ambiente Continuos.
+
+**Status atual — desenvolvimento e homologação.** A base é `v6.1.18` do upstream, identificada como `6.1.18-continuos.1`. O instalador Windows de teste foi compilado localmente. Os downloads públicos do Infinity somente serão disponibilizados depois da aprovação da integração e do pipeline de release. Nenhum instalador oficial do upstream substitui automaticamente o Infinity.
+
+## Identidade e integração
+
+O launcher usa o nome `Codex Continuos Infinity`, perfil próprio em `~/.codex-continuos-infinity`, partição de navegador independente, appId próprio e canal de atualização do fork. A integração MCP `ContinuosWebIntegracao` é a preferência configurável. Permissões, credenciais, sessões e ferramentas permanecem submetidas à autenticação do usuário e às políticas do Codex.
+
+O supervisor interno reconhece falhas de resposta final após envios aceitos em cenários seguros e permite diagnóstico na mesma conversa sem repetir comandos automaticamente. A recuperação depende da confirmação do estado nativo. O contexto confiável de CWD é validado com a identidade da tarefa e as permissões do rollout do Codex. Casos ainda não comprovados estão documentados em `docs/infinity/SUPERVISOR.md` e `docs/infinity/TRUSTED_CWD.md`.
+
+## Construção e documentação
+
+Instale Bun 1.4.0 e as dependências do projeto. Execute `bun install`, `bun run typecheck`, `bun test ./tests` e `bun run app:package`. Antes da instalação real, confira o SHA-256 publicado. Consulte `docs/infinity/INSTALLATION.md`, `docs/infinity/ARCHITECTURE.md`, `docs/infinity/CUSTOMIZATION_MATRIX.md` e `docs/infinity/MIGRATION_ROLLBACK.md` para detalhes técnicos e atualização segura.
+
+A produção anterior do Codex Web GPT é mantida isolada durante o desenvolvimento. Relatórios, senhas, credenciais e perfis privados não fazem parte do código público.
+
+## Créditos
+
+Projeto-base por `miuuyy` e colaboradores. Consulte `LICENSE` e `LICENSES` para licença MIT, dependências e atribuições. As seções seguintes preservam referências do upstream para consulta.
+
+---
+
+## Documentação de referência do upstream
+
 <p align="center">
   <img src="assets/readme/hero.svg" width="960" alt="Switch to web models. Stay in Codex. Your ChatGPT plan. Your workflow. Maximum capabilities.">
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/latest">All releases</a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">macOS Intel</a> · <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">All releases</a>
 </p>
 
 <p align="center">
@@ -49,13 +75,13 @@ Quit the launcher before updating. These installers select the platform and arch
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.ps1 | iex
 ```
 
 </details>

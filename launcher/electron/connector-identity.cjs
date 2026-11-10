@@ -1,7 +1,5 @@
-const CURRENT_CONNECTOR_NAME = "Codex Native2";
+const CURRENT_CONNECTOR_NAME = "ContinuosWebIntegracao";
 const DEV_CONNECTOR_NAME = `${CURRENT_CONNECTOR_NAME} DEV`;
-const LEGACY_CONNECTOR_NAMES = Object.freeze(["Codex Native"]);
-
 function validateConnectorNameSuffix(value) {
   if (typeof value !== "string" || value.length > 74
     || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(value)
@@ -20,42 +18,33 @@ function validateConnectorName(value) {
 }
 
 function isLegacyConnectorName(value) {
-  return LEGACY_CONNECTOR_NAMES.includes(value);
+  // Recognize obsolete Native-series identifiers solely for migration, never use them.
+  return /^Codex Native(?:2)?$/.test(value);
 }
-
 function connectorNameForSetup(value) {
-  const configured = validateConnectorName(value);
+  const configured=validateConnectorName(value);
   return isLegacyConnectorName(configured) ? CURRENT_CONNECTOR_NAME : configured;
 }
-
 function connectorNameForDevSetup(value) {
-  if (value === undefined || value === null) return DEV_CONNECTOR_NAME;
-  const configured = validateConnectorName(value);
-  if (configured === CURRENT_CONNECTOR_NAME || isLegacyConnectorName(configured)) {
-    return DEV_CONNECTOR_NAME;
-  }
-  return configured;
+  if (value == null) return DEV_CONNECTOR_NAME;
+  const configured=validateConnectorName(value);
+  return configured === CURRENT_CONNECTOR_NAME || isLegacyConnectorName(configured)
+    ? DEV_CONNECTOR_NAME : configured;
 }
-
 function requireCurrentRuntimeConnectorName(value) {
-  const configured = validateConnectorName(value);
+  const configured=validateConnectorName(value);
   if (isLegacyConnectorName(configured)) {
-    throw new Error(
-      `The local runtime still targets legacy ChatGPT connector ${JSON.stringify(configured)}. Reconnect the harness`
-      + ` so it targets ${JSON.stringify(CURRENT_CONNECTOR_NAME)}, then create that connector as a new ChatGPT plugin;`
-      + ` do not rename or refresh the legacy connector.`,
-    );
+    throw new Error('The runtime connector identity is obsolete; apply the ContinuosWebIntegracao configuration and reconnect.');
   }
   return configured;
 }
 
 module.exports = {
   connectorNameForSetup,
+  isLegacyConnectorName,
   connectorNameForDevSetup,
   CURRENT_CONNECTOR_NAME,
   DEV_CONNECTOR_NAME,
-  isLegacyConnectorName,
-  LEGACY_CONNECTOR_NAMES,
   requireCurrentRuntimeConnectorName,
   validateConnectorName,
   validateConnectorNameSuffix,

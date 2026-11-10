@@ -23,6 +23,12 @@ test("model selection recognizes Latest in the launcher languages without accept
 
 test("family confirmation verifies the exact Sol or Pro version, including the old Latest picker", () => {
   expect(chatGptModelFamilyMatches(["5.6 High, 3 of 5."], "5.6", "high")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Alta, 3 de 3."], "6", "high")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Média, 2 de 3."], "6", "medium")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Extra Alta, 4 de 5."], "6", "xhigh")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Alta, 3 de 3."], "6", "medium")).toBe(false);
+  expect(chatGptModelFamilyMatches(["5.6 Alta, 3 de 3."], "6", "high")).toBe(false);
+
   expect(chatGptModelFamilyMatches(["5.6 Extra High, 4 of 5."], "6", "xhigh")).toBe(false);
   expect(chatGptModelFamilyMatches(["6 Medium, 2 of 3.", "Medium"], "6", "medium")).toBe(true);
   expect(chatGptModelFamilyMatches(["GPT-6 Sol Extra High, 4 of 5."], "6", "xhigh")).toBe(true);

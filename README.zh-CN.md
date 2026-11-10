@@ -1,15 +1,23 @@
+# Codex Continuos Infinity
+
+This fork by Continuos I.T. is based on `miuuyy/codex-chatgpt-web` under the MIT license. The current development version is `6.1.18-continuos.1`. Native MCP integration, event-driven recovery, a distinct user profile and independent release artifacts are under validation. See `docs/infinity` for architecture, installation, known limits and rollback. Public Infinity releases will be available after validation.
+
+---
+
+## Upstream documentation (retained for reference)
+
 <p align="center">
   <img src="assets/readme/hero.svg" width="960" alt="切换到网页版模型，继续使用 Codex。你的 ChatGPT 订阅。你的工作流。充分发挥模型能力。">
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/latest">所有版本</a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">macOS Intel</a> · <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">所有版本</a>
 </p>
 
 <p align="center">
@@ -49,13 +57,13 @@
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.ps1 | iex
 ```
 
 </details>

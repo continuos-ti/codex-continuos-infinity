@@ -92,6 +92,7 @@ function noManualTerminal(): Promise<never> {
   return new Promise<never>(() => {});
 }
 
+// These integration scenarios open real IPC sockets. Parallel CI scheduling can exceed Bun's 5s default without a stalled operation.
 for (const scenario of [
   { format: "v1", finalWins: false },
   { format: "v2", finalWins: false },
@@ -233,7 +234,7 @@ for (const scenario of [
     await broker.close();
     await server.close();
   }
-});
+}, 20_000);
 
 test("Zero Risk adapter never starts the automatic browser worker and completes only through Zero Risk MCP", async () => {
   const config = provider("complete");
@@ -288,7 +289,7 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
     chatGptTurnSessions.clear();
     await broker.close();
   }
-});
+}, 20_000);
 
 test("a lost launcher completion acknowledgement cannot replace an authoritative Zero Risk answer", async () => {
   const config = provider("completion-ack-lost");

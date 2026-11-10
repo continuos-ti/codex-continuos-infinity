@@ -52,10 +52,13 @@ test("composer and effort selectors exclude unrelated editable fields and menu b
     <button aria-haspopup="menu" data-tone="neutral" id="effort"></button>
     <button aria-haspopup="menu" data-testid="model-switcher-dropdown-button" id="model"></button>
   </form>
+  <form><div contenteditable="true" data-composer-markdown role="textbox" id="current-form-editor"></div></form>
   <div contenteditable="true" data-composer-markdown role="textbox" id="unowned-power-editor"></div>
   <form data-chatgpt-composer>
     <div contenteditable="true" data-composer-markdown role="textbox" id="power-editor"></div>
     <button data-codex-intelligence-trigger="true" data-composer-navigation-target="reasoning" aria-haspopup="menu" id="power-effort"></button>
+    <button data-composer-navigation-target="reasoning" aria-haspopup="menu" id="modern-model-effort"></button>
+    <button data-composer-navigation-target="reasoning"  id="not-a-menu"></button>
   </form></body>`);
   const matches = (selector: string) => Array.from(document.querySelectorAll(selector)).map(element => element.id);
   expect(matches(CHATGPT_COMPOSER_SELECTOR)).toEqual(["composer-testid", "prompt-textarea", "composer-lexical", "power-editor"]);

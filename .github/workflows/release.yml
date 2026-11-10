@@ -14,15 +14,15 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            runtime_asset: codex-chatgpt-web-darwin-arm64.tar.gz
+            runtime_asset: codex-continuos-infinity-darwin-arm64.tar.gz
           - runner: macos-15-intel
-            runtime_asset: codex-chatgpt-web-darwin-amd64.tar.gz
+            runtime_asset: codex-continuos-infinity-darwin-amd64.tar.gz
           - runner: ubuntu-latest
-            runtime_asset: codex-chatgpt-web-linux-amd64.tar.gz
+            runtime_asset: codex-continuos-infinity-linux-amd64.tar.gz
           - runner: ubuntu-24.04-arm
-            runtime_asset: codex-chatgpt-web-linux-arm64.tar.gz
+            runtime_asset: codex-continuos-infinity-linux-arm64.tar.gz
           - runner: windows-latest
-            runtime_asset: codex-chatgpt-web-windows-amd64.zip
+            runtime_asset: codex-continuos-infinity-windows-amd64.zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
@@ -68,7 +68,7 @@ jobs:
           test -n "$archive"
           stage="$(mktemp -d)"
           ditto -x -k "$archive" "$stage"
-          codesign --verify --deep --strict --verbose=2 "$stage/Codex Web GPT.app"
+          codesign --verify --deep --strict --verbose=2 "$stage/Codex Continuos Infinity.app"
       - name: Archive runtime
         if: runner.os != 'Windows'
         run: tar -czf "${{ matrix.runtime_asset }}" -C launcher/build/runtime .

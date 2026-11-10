@@ -21,7 +21,7 @@ if (packageJson.engines?.bun !== bunVersion) throw new Error(`engines.bun is not
 const expected = [
   ["src/version.ts", `export const VERSION = ${JSON.stringify(packageVersion)};`],
   ["src/adapters/chatgpt-web/mcp-server.ts", "version: VERSION"],
-  ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${packageVersion}}\"`],
+  ["scripts/install.sh", `VERSION=\"\${CODEX_CONTINUOS_INFINITY_VERSION:-${packageVersion}}\"`],
   ["README.md", `requires Bun ${bunVersion}.`],
   ["README.zh-CN.md", `Bun ${bunVersion}`],
   ["scripts/install.sh", `Bun-${bunVersion}.md`],
@@ -37,15 +37,18 @@ for (const [path, needle] of expected) {
 }
 for (const path of ["README.md", "README.zh-CN.md", "README.ja.md", "README.ko.md"]) {
   const readme = readFileSync(resolve(root, path), "utf8");
-  for (const target of ["win-x64.exe", "mac-arm64.dmg", "mac-x64.dmg", "linux-x64.AppImage"]) {
-    const download = `/releases/download/v${packageVersion}/codex-web-gpt-${packageVersion}-${target}`;
-    if (!readme.includes(download)) throw new Error(`${path} download for ${target} is not synchronized to ${packageVersion}`);
+  const releases = "https://github.com/continuos-ti/codex-continuos-infinity/releases";
+  if (!readme.includes(packageVersion) || !readme.includes(releases)) {
+    throw new Error(`${path} must reference the current Infinity version and its releases page`);
+  }
+  if (readme.includes("https://github.com/miuuyy/codex-chatgpt-web/releases/download/")) {
+    throw new Error(`${path} still downloads the upstream application instead of Infinity`);
   }
 }
 const releaseWorkflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
 for (const arch of ["amd64", "arm64"]) {
-  if (!releaseWorkflow.includes(`runtime_asset: codex-chatgpt-web-linux-${arch}.tar.gz`)) {
-    throw new Error(`release.yml must build the native Linux ${arch} runtime`);
+  if (!releaseWorkflow.includes(`runtime_asset: codex-continuos-infinity-linux-${arch}.tar.gz`)) {
+    throw new Error(`release.yml must build the Infinity Linux ${arch} runtime`);
   }
 }
 if (releaseWorkflow.split(`bun-version: ${bunVersion}`).length - 1 !== 2) {

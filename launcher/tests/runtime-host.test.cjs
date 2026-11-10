@@ -394,7 +394,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: CURRENT_CONNECTOR_NAME,
     releaseVersion: "1.1.1",
     solAvailable: true,
     extraHighAvailable: false, proAvailable: false,
@@ -545,7 +545,7 @@ test("launcher update transaction leaves current and externally owned runtimes u
   const currentFull = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: CURRENT_CONNECTOR_NAME,
     releaseVersion: "1.1.3",
   });
   const external = hostFor({ mode: "browser-only", browserHost: "managed-chrome", releaseVersion: "1.1.1" });
@@ -844,22 +844,25 @@ test("integration removal rejects a command that leaves an inactive journal behi
 });
 
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
-  const full = hostFor({ mode: "full", appName: "Codex Native2" });
-  assert.equal(full.host.mcpConnectorName(), "Codex Native2");
-  assert.equal(full.host.browserConnectorName(), "Codex Native2");
+  const full = hostFor({ mode: "full", appName: CURRENT_CONNECTOR_NAME });
+  assert.equal(full.host.mcpConnectorName(), CURRENT_CONNECTOR_NAME);
+  assert.equal(full.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const defaultName = hostFor(null);
   assert.equal(defaultName.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const legacyFull = hostFor({ mode: "full", appName: "Codex Native" });
-  assert.equal(legacyFull.host.browserConnectorName(), "Codex Native2");
+  assert.equal(legacyFull.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   assert.throws(
     () => legacyFull.host.mcpConnectorName(),
-    /still targets legacy ChatGPT connector.*create that connector as a new ChatGPT plugin/,
+    /runtime connector identity is obsolete/,
   );
+  const legacyNative2 = hostFor({ mode: "full", appName: "Codex Native2" });
+  assert.throws(() => legacyNative2.host.mcpConnectorName(), /runtime connector identity is obsolete/);
+  assert.equal(legacyNative2.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const invalidFull = hostFor({ mode: "full", appName: "   " });
   assert.throws(() => invalidFull.host.mcpConnectorName(), /Connector name is invalid/);
   assert.throws(() => invalidFull.host.browserConnectorName(), /Connector name is invalid/);
   const browserOnly = hostFor({ mode: "browser-only", appName: "Codex Native" });
-  assert.equal(browserOnly.host.browserConnectorName(), "Codex Native2");
+  assert.equal(browserOnly.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   assert.throws(() => browserOnly.host.mcpConnectorName(), /MCP runtime is not configured/);
   const dev = devHostFor({ mode: "full", appName: "Codex Native2" });
   assert.equal(dev.host.browserConnectorName(), DEV_CONNECTOR_NAME);
