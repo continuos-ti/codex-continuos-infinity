@@ -18,6 +18,8 @@ Testes unitários do supervisor estão em tests/in-band-auto-repair.test.ts, tes
 
 O trace real 863d5b00c1d4 em 10/11/2026 foi reconciliado por inspeção local. O supervisor aceitou uma mensagem de reparo e o trabalho prosseguiu sem reenviar a instrução original.
 
+O incidente real `1865272fdf6f` tem reconciliação, causa comprovada do smoke e limitações de observação registradas em [INCIDENT_1865272fdf6f_20261110.md](INCIDENT_1865272fdf6f_20261110.md).
+
 ## Trabalho adicional para completar a missão
 
 A implementação atual classifica automaticamente apenas os dois códigos de falha acima. Os demais códigos do objetivo, recuperação de pré-envio missing cwd, falhas OAuth, crash de processo e homologação de 3 a 5 chats reais exigem cobertura adicional. Não confundir simulações com prova de restauração fim a fim.
