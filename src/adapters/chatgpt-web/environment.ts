@@ -53,7 +53,7 @@ export const CHATGPT_TURN_REVISION_CONFLICT_MESSAGE =
   "ChatGPT web current user message conflicts with native Codex turn_id metadata";
 
 export class MissingTrustedCodexEnvironmentError extends Error {
-  constructor(field: string) {
+  constructor(readonly field: string) {
     super(`ChatGPT web turn is missing ${field} in trusted Codex environment context`);
     this.name = "MissingTrustedCodexEnvironmentError";
   }

@@ -14,6 +14,7 @@ A auditoria anterior registrou 28 alterações e 12 novos arquivos relativos ao 
 | Suíte launcher após branding | 436 aprovados, 4 ignorados, 0 falhas |
 | Suíte completa de runtime após correções | 1.158 aprovados, 111 ignorados, 0 falhas em 1.269 testes |
 | Suíte integral após reforço do CWD confiável (10/11/2026) | 1.162 aprovados, 111 ignorados, 0 falhas em 1.273 testes; `bun run verify` código 0 |
+| Suíte integral com journal de preflight (10/11/2026) | 1.167 aprovados, 111 ignorados, 0 falhas em 1.278 testes (100 arquivos, 10.072 verificações); `bun run verify` código 0; ajuste posterior do campo de reconciliação: 169 testes dirigidos e TypeScript aprovados |
 | Instalação congelada de dependências | un install --frozen-lockfile passou no root e no launcher |
 | Typecheck + teste de autorreparo + contrato do instalador + build renderer | 4 verificações concluídas com código 0 |
 | Testes de regressão CLI/modelo | 63 aprovados, 1 ignorado, 0 falhas |
@@ -25,4 +26,4 @@ A auditoria anterior registrou 28 alterações e 12 novos arquivos relativos ao 
 
 O pacote Windows possui 153.672.928 bytes. A execução inicial da suíte teve 7 falhas. Após as correções, a nova execução integral passou sem falhas em 10/11/2026. A atualização dos instaladores e do README foi verificada em testes específicos, mantendo o canal de atualização separado.
 
-Permanecem pendentes testes reais autenticados do conector, cinco chats paralelos, reinício controlado, crash de processo e CWD não comprovado no preflight de autorreparo. O arquivo do objetivo original em .codex/attachments é privado e não está incluído no fork.
+Permanecem pendentes testes reais autenticados do conector, cinco chats paralelos, reinício controlado, crash de processo e recuperação automática quando o CWD continua não comprovado no preflight. O bloqueio já gera incidente persistente e sanitizado, sem conceder permissão. O arquivo do objetivo original em .codex/attachments é privado e não está incluído no fork.

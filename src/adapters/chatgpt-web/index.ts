@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
-import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
+import { defaultBrokerEndpoint, expandUserPath, getConfigDir, resolveBrokerEndpoint } from "../../config";
 import {
   cancelLauncherManualTurn,
   endLauncherManualTurn,
@@ -21,6 +21,7 @@ import { namespacedToolName, type AdapterEvent, type CodexContentPart, type Code
 import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
 import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
+import { recordTrustedPreflightIncident } from "./trusted-preflight-incident";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
 import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
@@ -959,6 +960,21 @@ export function createChatGptWebAdapter(
             environment = environmentStore.resolve(parsed);
           } catch (error) {
             const identity = extractChatGptTurnIdentity(parsed);
+            // This attempt has not been submitted. Persist a bounded local incident before
+            // terminating; native Codex remains the sole authority for cwd and permissions.
+            try {
+              const traceId = chatGptWebTraceId(provider, parsed);
+              const incident = recordTrustedPreflightIncident({
+                directory: join(getConfigDir(), "diagnostics", "preflight-incidents"),
+                traceId,
+                identity,
+                error,
+              });
+              if (incident) console.warn(`[chatgpt-web] trusted_cwd_preflight_blocked trace=${traceId} kind=${incident.classification} recorded=${incident.recorded}`);
+            } catch (journalError) {
+              // A journal IO failure must not replace the original authorization error.
+              console.error(`[chatgpt-web] trusted_cwd_preflight_journal_failed type=${journalError instanceof Error ? journalError.name : "unknown"}`);
+            }
             console.warn(
               `[chatgpt-web] trusted environment unavailable (thread_id=${identity.threadId ? "present" : "missing"}, turn_id=${identity.turnId ? "present" : "missing"}, previous_response_id=${parsed.previousResponseId ?? "none"}, replay_prefix_items=${parsed._replayPrefixLen ?? 0}, context_messages=${parsed.context.messages.length})`,
             );

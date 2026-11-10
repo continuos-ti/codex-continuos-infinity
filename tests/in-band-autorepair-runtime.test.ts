@@ -86,7 +86,8 @@ test("accepted stall uses one recovery turn on same surface and returns original
     const result=await f.worker.runExclusive(t.base);
     expect(result).toBe("partial completed");
     expect(t.observed).toEqual(["partial ","completed"]);
-    expect(t.comments.join(" ")).toContain("autorreparo");
+    expect(t.comments.join(" ")).toContain("Codex Continuos Infinity");
+    expect(t.comments.join(" ")).toContain("retomando a tarefa original");
     expect(f.count()).toBe(2);
     expect(f.requests.filter(x=>x.phase==="start").length).toBe(1);
     expect(f.requests.filter(x=>x.phase==="end").length).toBe(1);

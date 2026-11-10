@@ -5568,7 +5568,7 @@ export class ChatGptBrowserWorker {
         console.warn("[chatgpt-web] inband_autorepair_started trace=" + turn.traceId
           + " code=" + failure.code + " priorTextChars=" + streamedBeforeRepair.length);
         turn.onCommentary?.(
-          "Codex Web GPT: falha detectada. Iniciando autorreparo com ferramentas na mesma conversa; a tarefa permanece aberta. Nao repetirei comandos anteriores sem verificacao.",
+          "Codex Continuos Infinity: falha detectada. Diagnosticando e reparando a mesma tarefa com ferramentas autorizadas. Nao repetirei comandos anteriores sem verificacao.",
         );
         try {
           const repaired = await this.runBrowserTurn({
@@ -5583,7 +5583,7 @@ export class ChatGptBrowserWorker {
           }, surfaceId, undefined, true, lease.trackUsage === true);
           console.info("[chatgpt-web] inband_autorepair_completed trace=" + turn.traceId
             + " finalChars=" + repaired.length);
-          turn.onCommentary?.("Codex Web GPT: recuperacao concluida; retomando a tarefa original.");
+          turn.onCommentary?.("Codex Continuos Infinity: recuperacao concluida; retomando a tarefa original.");
           // Codex already saw stable text from before the failure; the completed answer
           // must exactly match both streamed parts to preserve its completion fence.
           return textBeforeRepair + repaired;
