@@ -9,6 +9,7 @@ import {
   readSync,
   readdirSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -34,6 +35,9 @@ export interface CodexRolloutEnvironment {
 
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
+export function isNativeCodexIdentifier(value: unknown): value is string {
+  return typeof value === "string" && CODEX_ID.test(value);
+}
 const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_ROLLOUT_JSON_LINE_BYTES = 16 * 1024 * 1024;
 const MAX_ROLLOUT_DIRECTORY_ENTRIES = 100_000;
@@ -556,6 +560,13 @@ function environmentFromTurnContext(
     throw new Error("Codex rollout cwd is invalid");
   }
   const cwd = resolve(payload.cwd);
+  // The rollout proves identity and the recorded path, not that a removed or swapped
+  // worktree is still usable. Never pass a stale native cwd to the tool broker.
+  try {
+    if (!statSync(cwd).isDirectory()) throw new Error("not a directory");
+  } catch {
+    throw new Error("Codex rollout cwd no longer exists as an accessible directory");
+  }
   const declaredRoots = payload.workspace_roots === undefined
     ? runtimeWorkspaceRoots ?? []
     : absolutePaths(payload.workspace_roots, "workspace_roots");

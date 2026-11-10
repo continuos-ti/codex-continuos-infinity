@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteFile } from "../../config";
 import { getCodexHome, getTrustedCodexHomes } from "../../codex-integration-shared";
@@ -22,7 +22,7 @@ import {
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
-import { latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import { isNativeCodexIdentifier, latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { ChatGptWebAdapterError } from "./adapter-error";
 
 interface StoredThreadEnvironment {
@@ -50,6 +50,10 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function pathIdentity(value: string): string {
   const normalized = resolve(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function cwdIsAccessibleDirectory(path: string): boolean {
+  try { return statSync(path).isDirectory(); } catch { return false; }
 }
 
 function contains(root: string, path: string): boolean {
@@ -201,6 +205,10 @@ export class ChatGptThreadEnvironmentStore {
         );
       }
       const completeEnvironment = { ...environment, cwd: environment.cwd };
+      if (!cwdIsAccessibleDirectory(completeEnvironment.cwd)) {
+        initialClaim = claim;
+        throw new MissingTrustedCodexEnvironmentError("existing cwd");
+      }
       if (identity.threadId) this.set(identity.threadId, completeEnvironment);
       return completeEnvironment;
     } catch (error) {
@@ -307,6 +315,12 @@ export class ChatGptThreadEnvironmentStore {
       // Only a current native rollout can supersede an unrecognized historical envelope. Without
       // that proof, do not turn arbitrary history or an invalid update into cached authority.
       if (hasRawChatGptEnvironmentContext(parsed)) throw error;
+      // A native UUID pair identifies a real Codex turn, but it is not its permission grant.
+      // If its current rollout cannot be authenticated, never turn a historic cache into cwd.
+      if (isNativeCodexIdentifier(identity.threadId) && isNativeCodexIdentifier(identity.turnId)) {
+        console.warn("[chatgpt-web] trusted_cwd_preflight rejected=missing_current_native_rollout");
+        throw error;
+      }
       const sameThread = this.get(identity.threadId);
       if (sameThread) return {
         cwd: sameThread.cwd,
@@ -351,6 +365,8 @@ export class ChatGptThreadEnvironmentStore {
       this.persist();
       return undefined;
     }
+    // Cached authority cannot refer to a directory that has since been removed.
+    if (!cwdIsAccessibleDirectory(stored.cwd)) return undefined;
     return stored;
   }
 

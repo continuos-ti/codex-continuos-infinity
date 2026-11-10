@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, toNamespacedPath } from "node:path";
 import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision, extractChatGptTurnEnvironment, extractChatGptTurnEnvironmentClaim, extractChatGptTurnIdentity, extractChatGptTurnUserRevision, isChatGptCompactionContinuation } from "../src/adapters/chatgpt-web/environment";
@@ -1431,6 +1431,51 @@ describe("trusted Codex task environment continuity", () => {
     });
   });
 
+  test("preflight rejects a removed native cwd even with valid turn identity and cached prior authority", () => {
+    const { codexHome, request, rolloutPath } = resumedRootFixture();
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    expect(store.resolve(request).cwd).toBe(root);
+    const missingCwd = join(root, "__codex_unavailable_worktree__", rolloutThreadId);
+    expect(existsSync(missingCwd)).toBe(false);
+    const records = readFileSync(rolloutPath, "utf8").trim().split("\n")
+      .map(line => JSON.parse(line) as Record<string, any>);
+    records[1]!.payload.cwd = missingCwd;
+    writeFileSync(rolloutPath, records.map(record => JSON.stringify(record)).join("\n") + "\n");
+    // A prior valid cache entry must not turn a removed worktree into an execution grant.
+    expect(() => store.resolve(request)).toThrow("Codex rollout cwd no longer exists as an accessible directory");
+  });
+  test("preflight refuses a removed CWD from a current environment envelope", () => {
+    const vanished = mkdtempSync(join(tmpdir(), "codex-vanished-current-cwd-"));
+    rmSync(vanished, { recursive: true, force: true });
+    const request = currentWire({ workspace: vanished, environmentXml: environmentXml.replaceAll(root, vanished) });
+    expect(() => new ChatGptThreadEnvironmentStore().resolve(request)).toThrow("missing existing cwd");
+  });
+
+  test("persisted same-thread CWD cannot authorize a removed workspace on a later turn", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "codex-expired-cached-cwd-"));
+    const store = new ChatGptThreadEnvironmentStore();
+    expect(store.resolve(currentWire({ workspace, environmentXml: environmentXml.replaceAll(root, workspace) })).cwd)
+      .toBe(workspace);
+    rmSync(workspace, { recursive: true, force: true });
+    const continued = currentWire();
+    continued._rawBody = {
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_current", turn_id: "turn_next" }) },
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Continue" }] }],
+    };
+    expect(() => store.resolve(continued)).toThrow("missing cwd");
+  });
+  test("native Codex UUID turn cannot borrow a cached cwd without its current rollout", () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "codex-native-uncorroborated-turn-"));
+    temporaryRoots.push(codexHome);
+    const store = new ChatGptThreadEnvironmentStore(join(codexHome, "cached-environments.json"), Date.now, codexHome);
+    expect(store.resolve(currentWire({ threadId: rolloutThreadId })).cwd).toBe(root);
+    const continued = currentWire();
+    continued._rawBody = {
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: rolloutThreadId, turn_id: rolloutTurnId }) },
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Continue" }] }],
+    };
+    expect(() => store.resolve(continued)).toThrow("missing cwd");
+  });
   // Captured Codex Desktop shape: turn_context has no workspace_roots and session_meta keeps the
   // roots the task started with, so only world_state records a later turn's current roots.
   function currentRootsFixture(sessionRoots: string[] = [root]) {
@@ -1708,10 +1753,12 @@ describe("trusted Codex task environment continuity", () => {
     request.context.tools = [{ name: "current_only", description: "d", parameters: { type: "object" } }];
     expect(() => extractChatGptTurnEnvironment(request)).toThrow("missing cwd");
     // Both an empty store and an older cached directory must resolve from the current native turn.
+    const oldWorkspace = join(codexHome, "old-workspace");
+    mkdirSync(oldWorkspace);
     for (const cached of [false, true]) {
       const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
       if (cached) store.resolve(currentWire({ threadId: rolloutThreadId,
-        workspace: resolve(root, "old-workspace"), environmentXml: environmentXml.replaceAll(root, resolve(root, "old-workspace")) }));
+        workspace: oldWorkspace, environmentXml: environmentXml.replaceAll(root, oldWorkspace) }));
       expect(store.resolve(request)).toEqual({
         cwd: root, roots: [root], writableRoots: [root], sandboxPolicy: { type: "dangerFullAccess" }, tools: request.context.tools,
       });
@@ -2063,7 +2110,8 @@ describe("trusted Codex task environment continuity", () => {
     const beforeSteering = { ...request, _rawBody: { ...body, input: body.input.slice(0, -1) } };
     const withoutEnvelope = { ...request, _rawBody: { ...body, input: body.input.slice(-1) } };
     const cachedFollowup = { ...request, _rawBody: {
-      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: rolloutThreadId, turn_id: rolloutTurnId }) },
+      // Preserve the native request_kind, sandbox and workspace ownership proof on follow-up.
+      client_metadata: body.client_metadata,
       input: body.input.slice(-1),
     } };
     const broker = TurnBroker.forSocket(process.platform === "win32"
@@ -2813,7 +2861,8 @@ describe("trusted Codex task environment continuity", () => {
     createRolloutState(join(sqliteHome, "state_5.sqlite"), rolloutPath);
 
     const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome, sqliteHome);
-    const staleRoot = resolve(root, "stale-cached-root");
+    const staleRoot = join(codexHome, "stale-cached-root");
+    mkdirSync(staleRoot);
     const staleRequest = currentWire({
       workspace: staleRoot,
       environmentXml: `<environment_context><cwd>${staleRoot}</cwd><filesystem><workspace_roots><root>${staleRoot}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem></environment_context>`,

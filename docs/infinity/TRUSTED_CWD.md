@@ -15,3 +15,16 @@ A verificação principal está em src/adapters/chatgpt-web/environment.ts e thr
 | Estado persistido expirado ou corrompido | Rejeitar reutilização como autoridade |
 
 Os testes relevantes estão em tests/environment.test.ts, tests/trusted-codex-homes.test.ts e tests/subagent-environment-history.test.ts. A lógica atual herdada do upstream 6.1.18 verifica contexto e registros, porém o supervisor ainda precisa integrar um fluxo de recuperação seguro pré-envio para todas as origens do erro missing cwd.
+
+## Verificações nativas de diretório (10/11/2026)
+
+O preflight do runtime agora consulta o diretório de trabalho no sistema de arquivos **antes** de disponibilizar o ambiente ao broker. Em particular:
+
+- O `cwd` recuperado do `turn_context` do rollout nativo deve existir e ser um diretório acessível; a validação ocorre após a checagem de identidade de thread/turno. Uma pasta movida ou removida bloqueia a execução em vez de receber um substituto inferido.
+- O `cwd` de um envelope de ambiente atual também deve existir; se ele estiver ausente, a recuperação só poderá prosseguir com o rollout nativo correspondente. Caso não haja prova, permanece bloqueada antes do envio ao ChatGPT.
+- Um registro persistido da mesma thread não reautoriza diretórios inexistentes. Em particular, para pares de IDs nativos UUID de thread e turno, a ausência da comprovação do **rollout atual** não permite recorrer silenciosamente à permissão salva de outra rodada.
+- Dados de ferramentas continuam a vir da solicitação atual; o cache não persiste inventário MCP, tokens nem credenciais.
+
+Os testes de regressão em `tests/environment.test.ts` cobrem CWD de rollout removido após uma resolução válida, envelope atual com pasta removida, cache histórico para pasta eliminada e thread/turno nativos sem rollout correspondente. Os testes usam diretórios temporários ou caminhos inexistentes, sem remover worktrees reais.
+
+**Limites:** `stat` verifica a disponibilidade no instante do preflight, não oferece reserva exclusiva de uma árvore de diretórios; a mudança do caminho após a validação continua sendo uma condição de corrida sujeita ao sandbox nativo. O fluxo ainda não reconstrói automaticamente tarefas quando a sessão nativa inteira desaparece; erros sem autoridade suficiente exigem reparo de origem e não reenvio do prompt. As demais classes de erro e homologações externas do supervisor permanecem pendentes.
