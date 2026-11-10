@@ -1,7 +1,6 @@
-import { closeSync, fsyncSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { isNativeCodexIdentifier } from "./codex-rollout-environment";
 import { MissingTrustedCodexEnvironmentError, type ChatGptTurnIdentity } from "./environment";
+import { publishPrivateIncident } from "./private-incident-journal";
 
 export type TrustedPreflightFailure =
   | "missing_cwd_authority"
@@ -79,23 +78,5 @@ export function recordTrustedPreflightIncident(input: {
     recovery: "await_authoritative_native_environment",
     autoRepairAttempts: 0,
   };
-  mkdirSync(input.directory, { recursive: true, mode: 0o700 });
-  const path = join(input.directory, `${input.traceId}.json`);
-  let fd: number;
-  try { fd = openSync(path, "wx", 0o600); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return { path, recorded: false, classification };
-    throw error;
-  }
-  let durable = false;
-  try {
-    writeFileSync(fd, JSON.stringify(incident) + "\n");
-    fsyncSync(fd);
-    durable = true;
-  } finally {
-    closeSync(fd);
-    // Do not leave a partial JSON record if the storage write failed.
-    if (!durable) rmSync(path, { force: true });
-  }
-  return { path, recorded: true, classification };
+  return { ...publishPrivateIncident(input.directory, input.traceId, incident), classification };
 }

@@ -8,6 +8,8 @@ import { chatGptInteractionState } from "./browser-interaction-state";
 import { BrowserDiagnosticHistory } from "./browser-diagnostic-history";
 import { ChatGptStreamDiagnostics } from "./stream-diagnostics";
 import { isSafeInBandAutoRepairFailure } from "./in-band-auto-repair";
+import { recordRuntimeTurnIncident } from "./runtime-turn-incident";
+import type { ChatGptTurnIdentity } from "./environment";
 import { readChatGptUserMessage } from "./browser-user-message";
 import { skillFileTokens, validateSkillFiles } from "./skill-attachments";
 import { detectChatGptLimitsPlan, readChatGptUsageAccount, readChatGptUsageModel, supportsChatGptUsageTracking, type ChatGptUsageModel } from "./limits";
@@ -1581,6 +1583,10 @@ function withBrowserTurnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Pro
 
 export interface BrowserTurn {
   traceId: string;
+  /** Canonical native identifiers are persisted only after strict validation. */
+  nativeTurnIdentity?: ChatGptTurnIdentity;
+  /** Explicit opt-in to durable, sanitized runtime incident journaling. */
+  incidentJournalDirectory?: string;
   modelId: string;
   reasoning?: string;
   modelFamily?: "5.6" | "6";
@@ -5495,6 +5501,33 @@ export class ChatGptBrowserWorker {
     let activityFinished = false;
     let lastHeartbeatFailureAt = 0;
     let activityStage: "preparing" | "sending" | "chatgpt" = "preparing";
+    let acceptedSubmission = false;
+    let sendActivated = false;
+    let autoRepairAttempts: 0 | 1 = 0;
+    let recoveredFailure: ChatGptWebAdapterError | undefined;
+    const recordIncident = (error: unknown, outcome: "failed" | "inband_response_completed") => {
+      if (!turn.incidentJournalDirectory) return;
+      try {
+        let activeToolCalls: number | undefined;
+        try { activeToolCalls = turn.externalProgress?.snapshot().activeToolCalls; }
+        catch { /* A failed progress observation is unknown, never zero. */ }
+        const result = recordRuntimeTurnIncident({
+          directory: turn.incidentJournalDirectory,
+          traceId: turn.traceId,
+          identity: turn.nativeTurnIdentity,
+          error,
+          sendActivated,
+          accepted: acceptedSubmission,
+          activeToolCalls,
+          outcome,
+          autoRepairAttempts,
+        });
+        console.warn(`[chatgpt-web] runtime_incident trace=${turn.traceId} kind=${result.classification} outcome=${outcome} recorded=${result.recorded}`);
+      } catch (journalError) {
+        // Storage failure cannot replace the browser exception or a successful recovery.
+        console.error(`[chatgpt-web] runtime_incident_journal_failed type=${journalError instanceof Error ? journalError.name : "unknown"}`);
+      }
+    };
     const sendHeartbeat = () => {
       if (activityFinished) return;
       if (heartbeatInFlight) { heartbeatPending = true; return; }
@@ -5529,7 +5562,6 @@ export class ChatGptBrowserWorker {
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       sendHeartbeat();
-      let acceptedSubmission = false;
       let streamedBeforeRepair = "";
       const observedTurn: BrowserTurn = {
         ...turn,
@@ -5538,6 +5570,7 @@ export class ChatGptBrowserWorker {
           turn.onTextDelta(delta);
         },
         onSendActivated: async () => {
+          sendActivated = true;
           activityStage = "sending";
           sendHeartbeat();
           await turn.onSendActivated?.();
@@ -5570,6 +5603,7 @@ export class ChatGptBrowserWorker {
         turn.onCommentary?.(
           "Codex Continuos Infinity: falha detectada. Diagnosticando e reparando a mesma tarefa com ferramentas autorizadas. Nao repetirei comandos anteriores sem verificacao.",
         );
+        autoRepairAttempts = 1;
         try {
           const repaired = await this.runBrowserTurn({
             ...observedTurn,
@@ -5584,6 +5618,8 @@ export class ChatGptBrowserWorker {
           console.info("[chatgpt-web] inband_autorepair_completed trace=" + turn.traceId
             + " finalChars=" + repaired.length);
           turn.onCommentary?.("Codex Continuos Infinity: recuperacao concluida; retomando a tarefa original.");
+          // The launcher must accept final surface release before we journal success.
+          recoveredFailure = failure;
           // Codex already saw stable text from before the failure; the completed answer
           // must exactly match both streamed parts to preserve its completion fence.
           return textBeforeRepair + repaired;
@@ -5607,6 +5643,7 @@ export class ChatGptBrowserWorker {
         ? "aborted"
         : "failed";
       terminalMessage = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
+      if (terminal === "failed") recordIncident(error, "failed");
       throw error;
     } finally {
       activityFinished = true;
@@ -5630,12 +5667,19 @@ export class ChatGptBrowserWorker {
             { status: 401, errorType: "authentication_error", code: "chatgpt_sign_in_required", retryable: false },
           );
         }
+        if (recoveredFailure && terminal === "completed") {
+          recordIncident(recoveredFailure, "inband_response_completed");
+        }
       } catch (controlError) {
         if (controlError instanceof ChatGptWebAdapterError
           && ["client_cancelled", "chatgpt_sign_in_required"].includes(controlError.code)) {
+          if (!originalError && controlError.code !== "client_cancelled") recordIncident(controlError, "failed");
           throw controlError;
         }
-        if (!originalError) throw controlError;
+        if (!originalError) {
+          recordIncident(controlError, "failed");
+          throw controlError;
+        }
         console.error(
           `[chatgpt-web] launcher turn-end notification failed after browser error: ${controlError instanceof Error ? controlError.message : String(controlError)}`,
         );

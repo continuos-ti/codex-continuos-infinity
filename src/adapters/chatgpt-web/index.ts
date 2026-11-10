@@ -813,6 +813,8 @@ export function createChatGptWebAdapter(
     };
     const browserTurn = cancellableBrowserTurn(trackBrowserOwner(finalizeCheckpoint(worker.run({
       traceId,
+      nativeTurnIdentity: extractChatGptTurnIdentity(parsed),
+      incidentJournalDirectory: join(getConfigDir(), "diagnostics", "runtime-incidents"),
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),

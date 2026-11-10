@@ -9,7 +9,7 @@ import { LAUNCHER_BROWSER_IDLE_URL, LAUNCHER_BROWSER_HOST_KIND } from "../src/la
 const paths: string[] = [];
 afterEach(() => { for (const root of paths.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-async function fixture(stub: (turn: any, reused: boolean, call: number) => Promise<string>) {
+async function fixture(stub: (turn: any, reused: boolean, call: number) => Promise<string>, endReply: Record<string, unknown> = {}) {
   const root = mkdtempSync(join(tmpdir(), "codex-runexclusive-repair-"));
   paths.push(root);
   const requests: Array<{ phase?: string; status?: string }> = [];
@@ -21,7 +21,7 @@ async function fixture(stub: (turn: any, reused: boolean, call: number) => Promi
       if (body.phase === "start") return Response.json({
         ok: true, surfaceId: "launcher_surface_id_0123456789AB", reused: false, connectorBound: true,
       });
-      return Response.json({ ok: true, cancelledByUser: false });
+      return Response.json({ ok: true, cancelledByUser: false, ...(body.phase === "end" ? endReply : {}) });
     },
   });
   writeFileSync(join(root,"dummy-helper.cjs"), "process.exit(99);", {mode:0o700});
@@ -45,7 +45,7 @@ async function fixture(stub: (turn: any, reused: boolean, call: number) => Promi
       return stub(turn, reused, count);
     },
   }) as any;
-  return {worker,requests,server,count:()=>count};
+  return {worker,requests,server,root,count:()=>count};
 }
 
 function turn(extra: Record<string, unknown> = {}) {
@@ -82,7 +82,7 @@ test("accepted stall uses one recovery turn on same surface and returns original
     return "completed";
   });
   try{
-    const t=turn();
+    const t=turn({traceId:"aa11bb22cc33",incidentJournalDirectory:join(f.root,"runtime-incidents")});
     const result=await f.worker.runExclusive(t.base);
     expect(result).toBe("partial completed");
     expect(t.observed).toEqual(["partial ","completed"]);
@@ -91,6 +91,9 @@ test("accepted stall uses one recovery turn on same surface and returns original
     expect(f.count()).toBe(2);
     expect(f.requests.filter(x=>x.phase==="start").length).toBe(1);
     expect(f.requests.filter(x=>x.phase==="end").length).toBe(1);
+    expect(JSON.parse(await Bun.file(join(f.root,"runtime-incidents","aa11bb22cc33.json")).text()))
+      .toMatchObject({phase:"after_submission", classification:"response_stalled",
+        outcome:"inband_response_completed", autoRepairAttempts:1, priorToolEffects:"unknown"});
   }finally{await f.server.stop(true)}
 });
 
@@ -105,8 +108,64 @@ test("stalled turn with active MCP work fails closed without re-sending",async()
     return "must not run";
   });
   try{
-    const t=turn({externalProgress:{snapshot:()=>({revision:2,lastToolBatchRevision:2,activeToolCalls:1})}});
+    const t=turn({traceId:"ab12cd34ef56",incidentJournalDirectory:join(f.root,"runtime-incidents"),
+      externalProgress:{snapshot:()=>({revision:2,lastToolBatchRevision:2,activeToolCalls:1})}});
     await expect(f.worker.runExclusive(t.base)).rejects.toThrow("No final");
     expect(f.count()).toBe(1);
+    expect(JSON.parse(await Bun.file(join(f.root,"runtime-incidents","ab12cd34ef56.json")).text()))
+      .toMatchObject({outcome:"failed",activeToolCallsObserved:1, autoRepairAttempts:0});
   }finally{await f.server.stop(true)}
+});
+
+test("authentication failure after acceptance is journaled without attempting recovery",async()=>{
+  const f=await fixture(async request=>{
+    await request.onSubmitted?.();
+    throw new ChatGptWebAdapterError("Private OAuth details",{
+      code:"chatgpt_sign_in_required",status:401,errorType:"authentication_error",retryable:false,
+    });
+  });
+  try {
+    const t=turn({traceId:"bb22cc33dd44",incidentJournalDirectory:join(f.root,"runtime-incidents")});
+    await expect(f.worker.runExclusive(t.base)).rejects.toThrow("Private OAuth details");
+    expect(f.count()).toBe(1);
+    const text=await Bun.file(join(f.root,"runtime-incidents","bb22cc33dd44.json")).text();
+    expect(JSON.parse(text)).toMatchObject({classification:"authentication_or_session",
+      phase:"after_submission",outcome:"failed",autoRepairAttempts:0});
+    expect(text).not.toContain("OAuth");
+  } finally {await f.server.stop(true)}
+});
+
+test("send activation without accepted acknowledgement is journaled as uncertain and not repeated",async()=>{
+  const f=await fixture(async request=>{
+    await request.onSendActivated?.();
+    throw new Error("Browser transport closed with sensitive connection URL");
+  });
+  try {
+    const t=turn({traceId:"cc33dd44ee55",incidentJournalDirectory:join(f.root,"runtime-incidents")});
+    await expect(f.worker.runExclusive(t.base)).rejects.toThrow("Browser transport closed");
+    expect(f.count()).toBe(1);
+    const text=await Bun.file(join(f.root,"runtime-incidents","cc33dd44ee55.json")).text();
+    expect(JSON.parse(text)).toMatchObject({classification:"unclassified_browser_failure",
+      phase:"send_activated",currentAttemptSubmitted:false,priorSubmissionState:"unknown",
+      priorToolEffects:"unknown",activeToolCallsObserved:0});
+    expect(text).not.toContain("sensitive");
+  } finally {await f.server.stop(true)}
+});
+
+test("successful repair is not journaled as recovered if launcher release requires authentication",async()=>{
+  const f=await fixture(async (request,_reused,count)=>{
+    await request.onSubmitted?.();
+    if(count===1) throw new ChatGptWebAdapterError("No final",{
+      code:"chatgpt_response_incomplete",status:502,errorType:"server_error",retryable:false,
+    });
+    return "repair response visible";
+  },{authenticationRequired:true});
+  try {
+    const t=turn({traceId:"dd44ee55ff66",incidentJournalDirectory:join(f.root,"runtime-incidents")});
+    await expect(f.worker.runExclusive(t.base)).rejects.toThrow("ChatGPT requested sign-in");
+    expect(f.count()).toBe(2);
+    const incident=JSON.parse(await Bun.file(join(f.root,"runtime-incidents","dd44ee55ff66.json")).text());
+    expect(incident).toMatchObject({outcome:"failed", classification:"authentication_or_session",
+      autoRepairAttempts:1, recovery:"await_authoritative_reconciliation"});
+  } finally {await f.server.stop(true)}
 });
