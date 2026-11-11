@@ -1030,7 +1030,7 @@ class RuntimeHost {
           embedded: true,
           env: this.launcherControlEnvironment(),
           message: "Restoring the previous Codex route",
-          successMessage: "Codex Web GPT integration removed",
+          successMessage: "Codex Continuos Infinity integration removed",
           timeoutMs: UNINSTALL_TIMEOUT_MS,
         });
         const verified = await this.bridgeStatus(name);
@@ -1369,7 +1369,7 @@ class RuntimeHost {
     if (compareVersions(currentVersion, existing.config.releaseVersion) < 0) {
       throw new Error(
         `This launcher is version ${currentVersion}, but a newer runtime ${existing.config.releaseVersion} is already installed. `
-        + `Open Codex Web GPT ${existing.config.releaseVersion} or newer to continue.`,
+        + `Open Codex Continuos Infinity ${existing.config.releaseVersion} or newer to continue.`,
       );
     }
     const args = [

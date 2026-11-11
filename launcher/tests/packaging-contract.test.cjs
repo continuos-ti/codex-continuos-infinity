@@ -13,6 +13,20 @@ const repositoryRoot = path.resolve(launcherRoot, "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"));
 const repositoryManifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"));
 
+test("launcher presents the Infinity identity in every locale and credits the upstream author", () => {
+  const html = fs.readFileSync(path.join(launcherRoot, "index.html"), "utf8");
+  const copy = fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8");
+  const native = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
+  const linuxRunner = fs.readFileSync(path.join(launcherRoot, "assets", "linux-appimage-runner.sh"), "utf8");
+  assert.match(html, /<title>Codex Continuos Infinity<\/title>/);
+  assert.equal(copy.match(/^  product: "Codex Continuos Infinity",$/gm)?.length, 5);
+  assert.equal(copy.match(/^  setupTitle: ".*Codex Continuos Infinity.*",$/gm)?.length, 5);
+  assert.match(copy, /fork of Codex Web GPT by miuuyy/);
+  assert.match(copy, /Original author's X/);
+  assert.match(native, /codex-continuos-infinity-diagnostics-/);
+  assert.doesNotMatch(linuxRunner, /Codex Web GPT/);
+});
+
 test("the public launcher command uses the Electron bootstrap", () => {
   assert.equal(repositoryManifest.scripts.launcher, "bun run scripts/start-launcher.ts");
   assert.equal(repositoryManifest.scripts.launcher, repositoryManifest.scripts.app);
