@@ -10,9 +10,12 @@ const ordinaryCall = `call_${"A".repeat(32)}`;
 const customCall = `call_${"B".repeat(32)}`;
 const orphanCall = `call_${"C".repeat(32)}`;
 const taskStarted = (id: string) => ({ type: "event_msg", payload: { type: "task_started", turn_id: id } });
-const taskComplete = { type: "event_msg", payload: { type: "task_complete" } };
-const tool = (type: string, call_id: string) => ({
-  type: "response_item", payload: { type, call_id, output: "private tool output" },
+const taskComplete = { type: "event_msg", payload: { type: "task_complete", turn_id: turn } };
+const foreignTaskComplete = { type: "event_msg", payload: { type: "task_complete", turn_id: otherTurn } };
+const tool = (type: string, call_id: string, owner?: string) => ({
+  type: "response_item", payload: { type, call_id, output: "private tool output",
+    ...(owner ? { internal_chat_message_metadata_passthrough: { turn_id: owner } } : {}),
+  },
 });
 
 const temp = mkdtempSync(join(tmpdir(), "infinity-native-output-"));
@@ -29,7 +32,7 @@ function observed(...ids: string[]) {
 test("native function and custom outputs are observed only within the authenticated task boundary", () => {
   write([
     taskStarted(otherTurn), tool("function_call", orphanCall),
-    tool("function_call_output", orphanCall), taskComplete,
+    tool("function_call_output", orphanCall), foreignTaskComplete,
     taskStarted(turn), tool("function_call", ordinaryCall),
     tool("function_call_output", ordinaryCall), tool("custom_tool_call", customCall),
     tool("custom_tool_call_output", customCall), taskComplete,
@@ -41,7 +44,7 @@ test("native function and custom outputs are observed only within the authentica
 
 test("foreign task output, absent invocation, wrong output type and duplicated calls never authenticate", () => {
   write([taskStarted(otherTurn), tool("function_call", ordinaryCall),
-    tool("function_call_output", ordinaryCall), taskComplete, taskStarted(turn)]);
+    tool("function_call_output", ordinaryCall), foreignTaskComplete, taskStarted(turn)]);
   expect(observed(ordinaryCall)).toEqual([]);
   write([taskStarted(turn), tool("function_call_output", ordinaryCall)]);
   expect(observed(ordinaryCall)).toEqual([]);
@@ -65,6 +68,57 @@ test("repeated task boundary and compaction suppress native output evidence", ()
     { type: "compacted", payload: { replacement_history: [] } },
     tool("function_call_output", ordinaryCall)]);
   expect(observed(ordinaryCall)).toEqual([]);
+});
+
+test("interleaved root and subagent turns use explicit native tool ownership", () => {
+  write([taskStarted(otherTurn), taskStarted(turn),
+    tool("function_call", ordinaryCall, turn),
+    tool("function_call_output", ordinaryCall, turn),
+    foreignTaskComplete, taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([ordinaryCall]);
+
+  write([taskStarted(otherTurn), taskStarted(turn),
+    tool("function_call", ordinaryCall),
+    tool("function_call_output", ordinaryCall),
+    foreignTaskComplete, taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+
+  write([taskStarted(turn), tool("function_call", ordinaryCall, turn),
+    taskStarted(otherTurn), tool("function_call", ordinaryCall, otherTurn),
+    tool("function_call_output", ordinaryCall, otherTurn), foreignTaskComplete,
+    tool("function_call_output", ordinaryCall, turn), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([ordinaryCall]);
+
+  write([taskStarted(turn), tool("function_call", ordinaryCall, turn),
+    taskStarted(otherTurn), tool("function_call_output", ordinaryCall, otherTurn),
+    foreignTaskComplete, taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+
+  write([taskStarted(turn), tool("function_call", ordinaryCall),
+    taskStarted(otherTurn), tool("function_call_output", ordinaryCall),
+    foreignTaskComplete, taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+
+  write([taskStarted(turn), tool("function_call", ordinaryCall),
+    taskStarted(otherTurn), tool("function_call_output", ordinaryCall, turn),
+    { type: "event_msg", payload: { type: "task_complete" } }]);
+  expect(observed(ordinaryCall)).toEqual([]);
+});
+
+test("unidentified native task start cannot authorize target outputs", () => {
+  write([{ type: "event_msg", payload: { type: "task_started" } },
+    taskStarted(turn), tool("function_call", ordinaryCall, turn),
+    tool("function_call_output", ordinaryCall, turn), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+});
+
+test("legacy completion without a turn id retains isolated native output evidence", () => {
+  write([taskStarted(turn), tool("function_call", ordinaryCall),
+    tool("function_call_output", ordinaryCall),
+    { type: "event_msg", payload: { type: "task_complete" } },
+    taskStarted(otherTurn), tool("function_call", customCall, otherTurn),
+    tool("function_call_output", customCall, otherTurn), foreignTaskComplete]);
+  expect(observed(ordinaryCall, customCall)).toEqual([ordinaryCall]);
 });
 
 test("incomplete EOF, malformed JSONL and invalid identities suppress evidence", () => {

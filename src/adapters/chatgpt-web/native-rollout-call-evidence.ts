@@ -61,6 +61,7 @@ export function observeNativeCallOutputs(
     const calls = new Map<string, { expectedOutput: string; outputSeen: boolean }>();
     let active = false;
     let started = false;
+    const otherActiveTurns = new Set<string>();
     for (let start = 0; start < bytes.length;) {
       const end = bytes.indexOf(0x0a, start);
       if (end < 0 || end - start > MAX_RECORD_BYTES) return unavailable();
@@ -73,18 +74,40 @@ export function observeNativeCallOutputs(
 
       if (item.type === "event_msg" && payload?.type === "task_started") {
         if (payload.turn_id === turnId && started) return unavailable();
-        active = payload.turn_id === turnId;
-        if (active) started = true;
+        if (payload.turn_id === turnId) {
+          active = true;
+          started = true;
+        } else if (typeof payload.turn_id === "string") {
+          otherActiveTurns.add(payload.turn_id);
+        } else {
+          // An unidentified turn may overlap later target records.
+          return unavailable();
+        }
         continue;
       }
       if (item.type === "event_msg" && payload?.type === "task_complete") {
-        active = false;
+        if (payload.turn_id === turnId) {
+          active = false;
+        } else if (typeof payload.turn_id === "string") {
+          otherActiveTurns.delete(payload.turn_id);
+        } else if (payload.turn_id === undefined && active && otherActiveTurns.size === 0) {
+          // Older rollouts omit the completion ID. Keep their single-turn evidence.
+          active = false;
+        } else if (active) {
+          return unavailable();
+        }
         continue;
       }
       if (!active) continue;
       if (item.type === "compacted") return unavailable();
       if (item.type !== "response_item" || typeof payload?.call_id !== "string"
         || !requested.has(payload.call_id)) continue;
+
+      // Native rollouts can interleave root and subagent turns. Explicit tool metadata
+      // binds the record to its turn. Legacy records are ambiguous during overlap.
+      const metadataTurnId = record(payload.internal_chat_message_metadata_passthrough)?.turn_id;
+      if (metadataTurnId !== undefined && metadataTurnId !== turnId) continue;
+      if (metadataTurnId === undefined && otherActiveTurns.size > 0) return unavailable();
 
       const id = payload.call_id;
       if (payload.type === "function_call" || payload.type === "custom_tool_call") {
