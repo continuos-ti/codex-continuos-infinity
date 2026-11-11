@@ -32,7 +32,7 @@ async function fixture(stub: (turn: any, reused: boolean, call: number) => Promi
     endpoint: "http://127.0.0.1:" + server.port,
     control: {endpoint:"http://127.0.0.1:" + server.port,token:"launcher-control-token-0123456789abcdefghijklmnop"},
     helper: {executable:process.execPath,script:join(root,"dummy-helper.cjs")},
-    partition:"persist:codex-web-gpt-chatgpt",idleUrl:LAUNCHER_BROWSER_IDLE_URL,
+    partition:"persist:codex-continuos-infinity-chatgpt",idleUrl:LAUNCHER_BROWSER_IDLE_URL,
     surfaceId:"launcher_surface_id_0123456789AB",
     surfaceTargets:{launcher_surface_id_0123456789AB:"native-owned-target"},
     createdAt:new Date().toISOString(),

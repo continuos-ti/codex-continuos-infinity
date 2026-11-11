@@ -41,7 +41,7 @@ test("real helper IPC delivers one distinct repair instruction with the active t
       endpoint: "http://127.0.0.1:39002", token: "launcher-control-token-0123456789abcdefghijklmnop",
     },
     helper: { executable: process.execPath, script: descriptorHelper },
-    partition: "persist:codex-web-gpt-chatgpt",
+    partition: "persist:codex-continuos-infinity-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL, surfaceId: "launcher_surface_id_0123456789AB",
     surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
     createdAt: new Date().toISOString(),

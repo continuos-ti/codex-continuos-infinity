@@ -144,8 +144,8 @@ function descriptorFile(
       script: import.meta.path,
     },
     partition: profile === "development"
-      ? "persist:codex-web-gpt-dev-chatgpt"
-      : "persist:codex-web-gpt-chatgpt",
+      ? "persist:codex-continuos-infinity-dev-chatgpt"
+      : "persist:codex-continuos-infinity-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     surfaceTargets: { ["launcher_surface_id_0123456789AB"]: "native-owned-target" },
@@ -468,10 +468,18 @@ test("launcher profile checks reject cross-profile browser ownership", async () 
   const path = descriptorFile("http://127.0.0.1:39111", "development");
   expect(readLauncherBrowserHostDescriptor(path)).toMatchObject({
     profile: "development",
-    partition: "persist:codex-web-gpt-dev-chatgpt",
+    partition: "persist:codex-continuos-infinity-dev-chatgpt",
   });
   await expect(inspectLauncherBrowserHost(path, { expectedProfile: "production", timeoutMs: 5 }))
     .rejects.toThrow("belongs to development");
+});
+
+test("launcher descriptor rejects legacy product partitions", () => {
+  const path = descriptorFile();
+  const value = JSON.parse(readFileSync(path, "utf8"));
+  value.partition = "persist:codex-web-gpt-chatgpt";
+  writeFileSync(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  expect(() => readLauncherBrowserHostDescriptor(path)).toThrow("unexpected browser partition");
 });
 
 function nativeTargetContext(pages: Page[], targetId: (page: Page) => string): BrowserContext {
