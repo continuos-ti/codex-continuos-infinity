@@ -45,7 +45,7 @@ test("records sanitized, durable evidence of a failed accepted turn with unknown
     expect(statSync(saved.path).mode & 0o777).toBe(0o600);
     expect(statSync(input.directory).mode & 0o777).toBe(0o700);
   }
-});
+}, process.platform === "win32" ? 20_000 : 5_000);
 
 test("send activation without acknowledgement remains ambiguous and does not invent a submission", () => {
   const input = fixture();

@@ -71,6 +71,9 @@ jobs:
         if: runner.os == 'Linux'
         run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
       - run: bun run app:smoke
+      - name: Smoke-test NSIS installation on disposable Windows runner
+        if: runner.os == 'Windows'
+        run: bun run --cwd launcher smoke:package:installed
 
   actionlint:
     runs-on: ubuntu-latest
