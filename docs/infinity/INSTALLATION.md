@@ -1,5 +1,11 @@
 # Instalação e build
 
+## Pacote isolado atualizado em 11/11/2026
+
+O commit `a8af86219da08da0ada6eea9b10a95d9f5ad9a66` foi empacotado em worktree destacado e isolado `E:/Projetos/codex-continuos-infinity-build-a8af862`. O instalador Windows x64 `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` possui **153.678.931 bytes** e SHA-256 **`c3d9ea014abcdc3630b178a9a6bb6c79c61e0a91047e9e8770624325eb1f2230`**. O blockmap correspondente possui **160.908 bytes** e SHA-256 **`ca079b90e5f90e8c85bfa431f20bc7a8d2d4da91c400d2ca4951383d93571da8`**. Ambos conferem com `launcher/artifacts/checksums-local.txt` desse worktree.
+
+`bun run app:package`, `bun run app:smoke` e `7z t` concluíram com código zero. O smoke retornou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64` e a verificação do arquivo retornou `Everything is Ok`. A assinatura Authenticode permanece `NotSigned`. O pacote não foi instalado no Windows produtivo e as sessões existentes foram preservadas. Ainda faltam homologação funcional autenticada do staging, reconciliação independente de efeitos MCP e retomada autorizada após crash.
+
 ## Instalação NSIS no CI descartável
 
 Em 11/11/2026, o run GitHub Actions `43111838944`, associado ao commit `319171ac20d1b476053bc66401e21a55a2b8ce13`, terminou com **sucesso nos quatro jobs**: `actionlint`, `verify (windows-latest)`, `verify (macos-15)` e `verify (ubuntu-24.04)`. Nas três plataformas passaram `bun run verify`, `bun run app:package` e `bun run app:smoke`. O job Windows registrou **438 testes launcher aprovados, quatro ignorados e zero falhas** e executou o step `Smoke-test NSIS installation on disposable Windows runner` com conclusão **success**.
