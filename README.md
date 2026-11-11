@@ -72,16 +72,18 @@ The app includes its browser and runtime. No separate Chrome, Node, or Bun insta
 
 Quit the launcher before updating. These installers select the platform and architecture, verify the published checksums, and preserve your ChatGPT profile and launcher settings.
 
+These commands require a published Infinity release. Until the first release, build from source using the development instructions below.
+
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 </details>
@@ -160,9 +162,9 @@ feature settings and enables plaintext Web-to-Web V2 delegation. Restart Codex a
 after changing the protocol:
 
 ```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
+codex-continuos-infinity subagents status
+codex-continuos-infinity subagents compatibility-v1
+codex-continuos-infinity subagents native
 ```
 
 </details>
@@ -202,8 +204,8 @@ and workspace policies; it does not bypass authentication or access controls.
 <a id="development"></a>
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
+git clone https://github.com/continuos-ti/codex-continuos-infinity.git && \
+cd codex-continuos-infinity && \
 bun run app
 ```
 

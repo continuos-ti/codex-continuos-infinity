@@ -54,16 +54,18 @@ Full ハーネスモードでは、MCP を通じて ChatGPT を現在のタス�
 
 更新前にランチャーを終了してください。以下のインストーラーは OS とアーキテクチャを選択し、公開チェックサムを検証します。ChatGPT プロファイルとランチャー設定は保持されます。
 
+これらのコマンドは Infinity のリリース公開後に利用できます。初回リリースまでは、以下の開発手順でソースからビルドしてください。
+
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 </details>
@@ -132,9 +134,9 @@ ChatGPT のツール呼び出しを現在の Codex タスクへ接続します�
 プロトコル変更後は Codex を再起動し、新しいタスクを開始してください。
 
 ```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
+codex-continuos-infinity subagents status
+codex-continuos-infinity subagents compatibility-v1
+codex-continuos-infinity subagents native
 ```
 
 </details>
@@ -173,8 +175,8 @@ Full モードを有効にする前に、完全な[アーキテクチャ](docs/a
 <a id="development"></a>
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
+git clone https://github.com/continuos-ti/codex-continuos-infinity.git && \
+cd codex-continuos-infinity && \
 bun run app
 ```
 

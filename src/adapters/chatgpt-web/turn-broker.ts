@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { isWindowsPipeEndpoint } from "../../config";
@@ -11,6 +11,7 @@ import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment"
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
+import { acquireBrokerJournalOwnership } from "./broker-journal-ownership";
 import { inspectBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
@@ -345,8 +346,11 @@ export class TurnBroker implements TurnBrokerOwner {
   private acceptingExternalOwners = true;
   private server?: Server;
   private startPromise?: Promise<void>;
+  private closePromise?: Promise<void>;
+  private closed = false;
   private socketIdentity?: { dev: number; ino: number };
   private callJournalDirectory?: string;
+  private releaseJournalOwnership?: () => void;
   private resultVault?: BrokerResultVault;
   private startupCallEvidence: BrokerRecoveryCall[] = [];
   private startupJournalUnreadable = false;
@@ -356,19 +360,40 @@ export class TurnBroker implements TurnBrokerOwner {
   /** Opt-in at startup, before any turn has registered on this socket. */
   enableCallJournal(directory: string): void {
     if (!isAbsolute(directory)) throw new Error("Broker call journal directory must be absolute");
+    if (this.closed) throw new Error("Broker call journal cannot be enabled on a closed broker");
     const normalized = resolve(directory);
-    if (this.callJournalDirectory === normalized) return;
+    if (this.callJournalDirectory && existsSync(normalized)
+      && realpathSync.native(normalized) === this.callJournalDirectory) return;
+    // The DEV driver may bind the broker socket before startServer configures its journal.
+    // No turn can interleave with this synchronous acquisition, so a listening broker with
+    // no registered turns is still safe to configure.
     if (this.callJournalDirectory || this.channels.size > 0) {
       throw new Error("Broker call journal cannot be enabled or changed after turn registration");
     }
-    this.callJournalDirectory = normalized;
-    this.resultVault = new BrokerResultVault(vaultDirectoryForJournal(normalized));
-    // Snapshot only records from before this broker process started. Calls made by an active
-    // session must continue through its in-memory owner, not trip the post-crash fence.
+    // Acquire before snapshotting. Otherwise two brokers can each see an empty journal, then both
+    // admit native turns and dispatch their calls through different sockets.
+    const release = acquireBrokerJournalOwnership(normalized);
     try {
-      this.startupCallEvidence = inspectBrokerCallJournal(normalized);
-    } catch {
-      this.startupJournalUnreadable = true;
+      // Persist and inspect via the same canonical directory that owns the writer lock.
+      const journalDirectory = realpathSync.native(normalized);
+      const vault = new BrokerResultVault(vaultDirectoryForJournal(journalDirectory));
+      // Snapshot only records from before this broker process started. Calls made by an active
+      // session must continue through its in-memory owner, not trip the post-crash fence.
+      let unreadable = false;
+      let evidence: BrokerRecoveryCall[] = [];
+      try {
+        evidence = inspectBrokerCallJournal(journalDirectory);
+      } catch {
+        unreadable = true;
+      }
+      this.resultVault = vault;
+      this.callJournalDirectory = journalDirectory;
+      this.startupCallEvidence = evidence;
+      this.startupJournalUnreadable = unreadable;
+      this.releaseJournalOwnership = release;
+    } catch (error) {
+      release();
+      throw error;
     }
   }
 
@@ -426,6 +451,7 @@ export class TurnBroker implements TurnBrokerOwner {
     handlePrefix = "turn",
   ): Promise<string> {
     await this.start();
+    if (this.closed) throw new Error("ChatGPT turn broker has closed");
     this.prune();
     if (externalOwner && !this.acceptingExternalOwners) {
       throw new Error("turn broker is draining and does not accept new external owners");
@@ -926,9 +952,18 @@ export class TurnBroker implements TurnBrokerOwner {
     waiters.clear();
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.closePromise = this.stop();
+    return this.closePromise;
+  }
+
+  private async stop(): Promise<void> {
     this.compactionTransactions.close();
     for (const token of [...this.channels.keys()]) this.revoke(token);
+    // A pending bind can still create a listener after close() has been requested.
+    await this.startPromise?.catch(() => {});
     const server = this.server;
     this.server = undefined;
     this.startPromise = undefined;
@@ -947,9 +982,14 @@ export class TurnBroker implements TurnBrokerOwner {
         unlinkSync(this.socketPath);
       }
     }
+    // A new process can snapshot the journal only after all requests have settled and the
+    // listener has stopped. A failed shutdown retains the lock until process termination.
+    this.releaseJournalOwnership?.();
+    this.releaseJournalOwnership = undefined;
   }
 
   private start(): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("ChatGPT turn broker has closed"));
     if (this.startPromise) return this.startPromise;
     const attempt = new Promise<void>((resolveStart, rejectStart) => {
       const windowsPipe = isWindowsPipeEndpoint(this.socketPath);

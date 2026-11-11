@@ -54,16 +54,18 @@ This fork by Continuos I.T. is based on `miuuyy/codex-chatgpt-web` under the MIT
 
 更新前请退出启动器。以下安装脚本会选择正确的平台和架构、验证发布的校验和，并保留 ChatGPT 配置文件和启动器设置。
 
+这些命令需在 Infinity 发布正式版本后使用。首次发布前，请按照下方开发说明从源码构建。
+
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/continuos-ti/codex-continuos-infinity/releases/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 </details>
@@ -129,9 +131,9 @@ Zero Risk 不读取或操作 ChatGPT 页面。请自行选择模型和 `Codex Ze
 功能设置，并启用明文 Web-to-Web V2 委派。切换协议后，请重启 Codex 并创建新任务：
 
 ```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
+codex-continuos-infinity subagents status
+codex-continuos-infinity subagents compatibility-v1
+codex-continuos-infinity subagents native
 ```
 
 </details>
@@ -170,8 +172,8 @@ codex-chatgpt-web subagents native
 <a id="development"></a>
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
+git clone https://github.com/continuos-ti/codex-continuos-infinity.git && \
+cd codex-continuos-infinity && \
 bun run app
 ```
 
