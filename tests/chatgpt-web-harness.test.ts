@@ -2670,7 +2670,9 @@ describe("ChatGPT outer-native harness v4", () => {
     }, 10_000);
     await broker.nextToolBatch(token);
     broker.revoke(token);
-    await expect(invocation).rejects.toThrow("revoked");
+    const rejection = await invocation.then(() => undefined, error => error);
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain("revoked");
     await expect(callTurnBroker(socketPath, { method: "resolve", bindingId: claimed.bindingId }))
       .rejects.toThrow("has already finished");
     await broker.close();
@@ -3636,6 +3638,78 @@ describe("ChatGPT outer-native harness v4", () => {
       } finally { broker.revoke(token); }
     } finally {
       await client.close();
+      await broker.close();
+    }
+  }, 15_000);
+
+  test("replayed MCP JSON-RPC request IDs dispatch a native command at most once", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-rpc-fence-${process.pid}-${Date.now()}`);
+    const broker = TurnBroker.forSocket(socketPath);
+    const environment = extractChatGptTurnEnvironment(parsed(environmentXml));
+    environment.tools = [{ name: "exec_command", description: "Run a command", parameters: { type: "object" } }];
+    const token = await broker.register(environment, 60_000);
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      cwd: process.cwd(),
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "native-rpc-replay-test", version: "1" });
+    try {
+      await client.connect(transport);
+      const responseQueues = new Map<number, unknown[]>();
+      const responseWaiters = new Map<number, Array<(response: unknown) => void>>();
+      const originalOnMessage = transport.onmessage;
+      transport.onmessage = message => {
+        if (!("id" in message) || (message.id !== 901 && message.id !== 902)) {
+          originalOnMessage?.(message);
+          return;
+        }
+        const id = message.id;
+        const waiter = responseWaiters.get(id)?.shift();
+        if (waiter) waiter(message);
+        else responseQueues.set(id, [...(responseQueues.get(id) ?? []), message]);
+      };
+      const receive = (id: number): Promise<any> => {
+        const queue = responseQueues.get(id);
+        if (queue?.length) return Promise.resolve(queue.shift());
+        return Promise.race([
+          new Promise(resolve => responseWaiters.set(id, [...(responseWaiters.get(id) ?? []), resolve])),
+          Bun.sleep(5_000).then(() => { throw new Error(`No MCP reply for JSON-RPC ${id}`); }),
+        ]);
+      };
+      const send = (id: number, cmd: string) => transport.send({
+        jsonrpc: "2.0", id, method: "tools/call",
+        params: { name: "codex_exec", arguments: { turn_token: token, cmd } },
+      });
+
+      await Promise.all([send(901, "echo original"), send(901, "echo original")]);
+      const batch = await broker.nextToolBatch(token);
+      expect(batch).toHaveLength(1);
+      expect(batch[0]!.arguments).toEqual({ cmd: "echo original" });
+      broker.completeTool(token, batch[0]!.callId, toolResult({ output: "one native execution" }));
+      const [first, duplicate] = await Promise.all([receive(901), receive(901)]);
+      expect(first.result).toEqual(duplicate.result);
+      expect(first.result.structuredContent).toMatchObject({ output: "one native execution" });
+
+      await send(901, "echo altered");
+      const collision = await receive(901);
+      expect(collision.result?.isError ?? Boolean(collision.error)).toBe(true);
+      expect(JSON.stringify(collision)).toContain("reused for a different tool or arguments");
+
+      await send(902, "echo original");
+      const independent = await broker.nextToolBatch(token);
+      expect(independent).toHaveLength(1);
+      broker.completeTool(token, independent[0]!.callId, toolResult({ output: "second legitimate execution" }));
+      expect((await receive(902)).result.structuredContent).toMatchObject({ output: "second legitimate execution" });
+      const leftover = await broker.nextToolBatch(token, AbortSignal.timeout(150)).catch(error => {
+        if (error?.name === "AbortError") return [];
+        throw error;
+      });
+      expect(leftover).toHaveLength(0);
+    } finally {
+      await client.close().catch(() => {});
+      broker.revoke(token);
       await broker.close();
     }
   }, 15_000);

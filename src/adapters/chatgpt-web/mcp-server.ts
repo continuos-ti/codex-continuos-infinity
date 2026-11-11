@@ -8,6 +8,7 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerRetirementDiagnostics, type BrokerToolResult } from "./turn-broker";
 import { observeMcpToolCalls } from "./mcp-observation";
+import { McpRequestFence } from "./mcp-request-fence";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -497,6 +498,7 @@ export async function runChatGptMcpServer(options: {
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
   );
+  const requestFence = new McpRequestFence();
 
   type DeferredNativeOutcome =
     | { ok: true; value: ReturnType<typeof asMcpResult> | ReturnType<typeof result> }
@@ -565,8 +567,9 @@ export async function runChatGptMcpServer(options: {
     toolName: string,
     turnToken: string,
     extra: McpRequestExtra,
+    toolInput: unknown,
     action: (claimed: ClaimedTurn) => Promise<T> | T,
-  ): Promise<T> => {
+  ): Promise<T> => requestFence.run(extra, toolName, toolInput, async () => {
     const claimed = await claimTurn(toolName, turnToken, extra);
     try {
       return await action(claimed);
@@ -576,7 +579,7 @@ export async function runChatGptMcpServer(options: {
       // and silently prevent every later completion candidate from committing.
       await settleTurnActivity(turnToken, claimed.activityId);
     }
-  };
+  });
 
   if (contract === "safe") {
     server.registerTool(
@@ -593,14 +596,14 @@ export async function runChatGptMcpServer(options: {
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
-      async ({ request_id }, extra) => {
+      async (input, extra) => requestFence.run(extra, "codex_turn_start", input, async () => {
         console.error(`[chatgpt-web-mcp] codex_turn_start scope=${requestScopeSummary(extra)}`);
         const response = await callTurnBroker<{ started: true; duplicate: boolean }>(options.brokerSocketPath, {
           method: "safe_start",
-          token: request_id,
+          token: input.request_id,
         }, 5_000, extra.signal);
         return result(response);
-      },
+      }),
     );
   }
 
@@ -759,6 +762,7 @@ export async function runChatGptMcpServer(options: {
       "codex_exec",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { cmd, workdir, yield_time_ms, max_output_tokens, tty, sandbox_permissions, justification, prefix_rule } = input;
         const bound = claimed.environment;
@@ -822,6 +826,7 @@ export async function runChatGptMcpServer(options: {
       "codex_write_stdin",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { session_id, chars, yield_time_ms, max_output_tokens } = input;
         const bound = claimed.environment;
@@ -851,6 +856,7 @@ export async function runChatGptMcpServer(options: {
       "codex_apply_patch",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { patch } = input;
         const bound = claimed.environment;
@@ -879,6 +885,7 @@ export async function runChatGptMcpServer(options: {
       "codex_view_image",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { path, detail } = input;
         const bound = claimed.environment;
@@ -911,6 +918,7 @@ export async function runChatGptMcpServer(options: {
       "codex_tool_inventory",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { query, offset, limit, include_schema } = input;
         const bound = claimed.environment;
@@ -1015,30 +1023,32 @@ export async function runChatGptMcpServer(options: {
       const requestId = turnReference(contract, toolInput);
       if (wire_name === CHATGPT_NATIVE_PENDING_WIRE_NAME) {
         if (input !== undefined) throw new Error("Pending native tool polling does not accept freeform input");
-        return withClaimedTurn("codex_tool_call", requestId, extra, async claimed =>
+        return withClaimedTurn("codex_tool_call", requestId, extra, toolInput, async claimed =>
           pollDeferredNative(requestId, claimed, args?.job_id));
       }
       if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
-        if (input !== undefined) {
-          throw new Error("Compaction control handoff does not accept freeform input");
-        }
-        const handoffId = args?.handoff_id;
-        const summary = args?.summary;
-        if (typeof handoffId !== "string" || handoffId.length === 0) {
-          throw new Error("Compaction control handoff requires handoff_id");
-        }
-        if (typeof summary !== "string") {
-          throw new Error("Compaction control handoff requires summary");
-        }
-        await callTurnBroker(options.brokerSocketPath, {
-          method: "submit_compaction_handoff",
-          token: requestId,
-          handoffId,
-          summary,
-        }, 5_000, extra.signal);
-        return result({ submitted: true });
+        return requestFence.run(extra, "codex_tool_call", toolInput, async () => {
+          if (input !== undefined) {
+            throw new Error("Compaction control handoff does not accept freeform input");
+          }
+          const handoffId = args?.handoff_id;
+          const summary = args?.summary;
+          if (typeof handoffId !== "string" || handoffId.length === 0) {
+            throw new Error("Compaction control handoff requires handoff_id");
+          }
+          if (typeof summary !== "string") {
+            throw new Error("Compaction control handoff requires summary");
+          }
+          await callTurnBroker(options.brokerSocketPath, {
+            method: "submit_compaction_handoff",
+            token: requestId,
+            handoffId,
+            summary,
+          }, 5_000, extra.signal);
+          return result({ submitted: true });
+        });
       }
-      return withClaimedTurn("codex_tool_call", requestId, extra, async claimed => {
+      return withClaimedTurn("codex_tool_call", requestId, extra, toolInput, async claimed => {
         const bound = claimed.environment;
         const tool = safeVisibleTools(bound, contract)
           .find(candidate => wireName(candidate) === wire_name);
@@ -1096,15 +1106,15 @@ export async function runChatGptMcpServer(options: {
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
-      async ({ request_id, final_answer }, extra) => {
+      async (input, extra) => requestFence.run(extra, "codex_turn_complete", input, async () => {
         console.error(`[chatgpt-web-mcp] codex_turn_complete scope=${requestScopeSummary(extra)}`);
         const response = await callTurnBroker<{ completed: true; duplicate: boolean }>(options.brokerSocketPath, {
           method: "safe_complete",
-          token: request_id,
-          finalAnswer: final_answer,
+          token: input.request_id,
+          finalAnswer: input.final_answer,
         }, null, extra.signal);
         return result(response);
-      },
+      }),
     );
   }
 
