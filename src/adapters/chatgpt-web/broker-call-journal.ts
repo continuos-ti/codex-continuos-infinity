@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { publishPrivateBrokerEvent } from "./private-incident-journal";
 
@@ -56,11 +56,25 @@ export function recordBrokerCallEvent(input: {
   };
   const saved = publishPrivateBrokerEvent(join(input.directory, input.traceId), key, entry);
   if (!saved.recorded) {
-    // A retry of the same boundary may be legitimate. A mismatched entry never is.
-    const prior = JSON.parse(readFileSync(saved.path, "utf8")) as Partial<BrokerCallEvidence>;
-    if (prior.version !== 1 || prior.traceId !== entry.traceId || prior.callId !== entry.callId
+    // A retry can acknowledge an existing boundary only if its entire durable record is valid.
+    // A tampered flag or extra field must not be accepted by the live broker.
+    const stat = lstatSync(saved.path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > 4_096) {
+      throw new Error("Conflicting broker call journal event");
+    }
+    let prior: Partial<BrokerCallEvidence>;
+    try { prior = JSON.parse(readFileSync(saved.path, "utf8")) as Partial<BrokerCallEvidence>; }
+    catch { throw new Error("Conflicting broker call journal event"); }
+    if (!prior || typeof prior !== "object" || Array.isArray(prior)
+      || Object.keys(prior).sort().join(",") !== Object.keys(entry).sort().join(",")
+      || prior.version !== 1 || prior.traceId !== entry.traceId || prior.callId !== entry.callId
       || prior.event !== entry.event || prior.tool !== entry.tool
-      || prior.nativeOwnerDigest !== entry.nativeOwnerDigest) {
+      || prior.nativeOwnerDigest !== entry.nativeOwnerDigest
+      || prior.resultRecoverable !== false || prior.replayAuthorized !== false
+      || typeof prior.recordedAt !== "string"
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(prior.recordedAt)
+      || Number.isNaN(Date.parse(prior.recordedAt))
+      || new Date(prior.recordedAt).toISOString() !== prior.recordedAt) {
       throw new Error("Conflicting broker call journal event");
     }
   }

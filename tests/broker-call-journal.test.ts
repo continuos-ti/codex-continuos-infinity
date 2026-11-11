@@ -63,6 +63,30 @@ test("durable event records contain no arguments, results, paths, or unvalidated
   }
 });
 
+test("duplicate event acknowledgement rejects tampered flags, timestamps, and unexpected fields", () => {
+  const { directory } = fixture();
+  const first = recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mutating_tool", event: "queued", now: new Date("2026-11-10T10:00:00.000Z") });
+  const original = readFileSync(first.path, "utf8");
+  const retry = () => recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mutating_tool", event: "queued" });
+  const altered = [
+    { replayAuthorized: true },
+    { resultRecoverable: true },
+    { recordedAt: "2026-02-31T10:00:00.000Z" },
+    { recordedAt: "not-a-date" },
+    { extra: "unexpected" },
+  ];
+  for (const change of altered) {
+    writeFileSync(first.path, JSON.stringify({ ...JSON.parse(original), ...change }));
+    expect(retry).toThrow("Conflicting broker call journal event");
+  }
+  writeFileSync(first.path, "{invalid");
+  expect(retry).toThrow("Conflicting broker call journal event");
+  writeFileSync(first.path, original);
+  expect(retry()).toEqual({ path: first.path, recorded: false });
+});
+
 test("startup reconciles observation boundaries without granting replay or claiming stored results", () => {
   const { directory } = fixture();
   expect(inspectBrokerCallJournal(directory)).toEqual([]);
