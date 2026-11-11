@@ -33,6 +33,8 @@ O instalador não possui assinatura Authenticode. Uma release pública deve expl
 
 Em 11/11/2026, o instalador foi reconstruído após a validação de timestamps do cache de CWD confiável. O arquivo `codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.677.385 bytes** e SHA-256 **`637b973d7b20b2620e1a311745bab43a4a5083f8b3f2fe65f602e5e3c76e4e11`**. O blockmap tem SHA-256 **`69d532f286b500989aac38cd9d1ad28efdf478f07b6a767ed78b50f52353c54f`**. `bun run app:smoke` confirmou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. A verificação integral `bun run verify` concluiu com exit code 0 e 436 testes do launcher aprovados, com quatro ignorados. Os 162 testes de `tests/environment.test.ts` passaram.
 
+Em 11/11/2026, o pacote independente foi reconstruído a partir do commit `3b6301c`, incluindo a recuperação limitada do preflight com autoridade nativa. O instalador `codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.677.859 bytes**, SHA-256 **`efb504844038086a9de95f2af5e949891e35f9748f7d3b832f37e014c88777c2`**. O blockmap tem **160.730 bytes**, SHA-256 **`fcae2dec0ed4d5eefd44ee5570c36348f40d4ba93a73aeab9b7f55844c09aab8`**. `bun run app:package` e `bun run app:smoke` terminaram com código zero e `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. A suíte integral passou com **1.205 testes runtime aprovados, 111 ignorados**, e **436 testes launcher aprovados, quatro ignorados**, além do build e auditorias. `Get-AuthenticodeSignature` confirmou `NotSigned`. O artefato permanece local, para homologação posterior.
+
 ## Homologação
 
 Compile e valide em staging. Faça login no navegador do Infinity, confirme o conector autorizado, modelos e permissões, e execute testes seguros de read-only antes de ativar qualquer rotina produtiva.
