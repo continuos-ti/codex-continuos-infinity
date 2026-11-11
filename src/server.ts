@@ -788,6 +788,7 @@ export async function responseRequest(
   const abort = new AbortController();
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+  let preflightReconciliationFailure: ChatGptWebAdapterError | undefined;
   const run = async () => {
     try {
       await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
@@ -795,7 +796,20 @@ export async function responseRequest(
         queue.push(event);
       });
     } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      const event: AdapterEvent = {
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ChatGptWebAdapterError ? {
+          status: error.status,
+          errorType: error.errorType,
+          code: error.code,
+          retryable: error.retryable,
+        } : {}),
+      };
+      if (error instanceof ChatGptWebAdapterError && (error.code === "broker_reconciliation_required"
+        || error.code === "broker_reconciliation_unavailable")) {
+        preflightReconciliationFailure = error;
+      }
       options.onAdapterEvent?.(event);
       queue.push(event);
     } finally {
@@ -844,7 +858,9 @@ export async function responseRequest(
     ...(compactionItem ? { compaction: true } : {}),
   });
   rememberCompletedResponse(json);
-  return Response.json(json);
+  return Response.json(json, preflightReconciliationFailure
+    ? { status: preflightReconciliationFailure.status }
+    : undefined);
 }
 
 export async function compactRequest(

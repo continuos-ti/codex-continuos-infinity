@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import { inspectBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
 import { publishPrivateIncident } from "../src/adapters/chatgpt-web/private-incident-journal";
 import { callTurnBroker, RemoteTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
@@ -87,6 +88,56 @@ test("startup reconciles observation boundaries without granting replay or claim
   expect(JSON.stringify(recovered)).not.toContain("private tool output");
   // A second process sees the same conservative classification: this is never live state.
   expect(inspectBrokerCallJournal(directory)).toEqual(recovered);
+});
+
+test("startup broker fences earlier native MCP calls but ignores calls made by its live process", async () => {
+  const { root, directory } = fixture();
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  const digest = nativeBrokerOwnerDigest(identity)!;
+  const oldCall = `call_${"C".repeat(32)}`;
+  recordBrokerCallEvent({ directory, traceId, callId: oldCall, wireName: "mutating_tool",
+    event: "queued", nativeOwnerDigest: digest });
+  recordBrokerCallEvent({ directory, traceId, callId: oldCall, wireName: "mutating_tool",
+    event: "delivery_possible", nativeOwnerDigest: digest });
+
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "startup-socket")));
+  try {
+    broker.enableCallJournal(directory);
+    expect(broker.priorNativeCallStates(traceId, identity)).toEqual(["delivery_unknown"]);
+    expect(broker.priorNativeCallStates("000000000000", identity)).toEqual(["delivery_unknown"]);
+    expect(broker.priorNativeCallStates("000000000000",
+      { ...identity, turnId: "33333333-3333-4333-8333-333333333333" })).toEqual([]);
+    expect(() => broker.priorNativeCallStates(traceId,
+      { ...identity, turnId: "33333333-3333-4333-8333-333333333333" }))
+      .toThrow("ownership cannot be authenticated");
+    expect(() => broker.priorNativeCallStates(traceId, { threadId: identity.threadId }))
+      .toThrow("ownership cannot be authenticated");
+
+    const liveCall = `call_${"D".repeat(32)}`;
+    recordBrokerCallEvent({ directory, traceId: "000000000001", callId: liveCall,
+      wireName: "read_tool", event: "queued", nativeOwnerDigest: digest });
+    expect(broker.priorNativeCallStates("000000000001", identity)).toEqual(["delivery_unknown"]);
+    expect(broker.priorNativeCallStates(traceId, identity)).toEqual(["delivery_unknown"]);
+  } finally {
+    await broker.close();
+  }
+});
+
+test("startup broker refuses a corrupt journal before creating any new browser owner", async () => {
+  const { root, directory } = fixture();
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "unexpected.txt"), "unexpected");
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "invalid-socket")));
+  try {
+    broker.enableCallJournal(directory);
+    expect(() => broker.priorNativeCallStates(traceId, {
+      threadId: "11111111-1111-4111-8111-111111111111",
+      turnId: "22222222-2222-4222-8222-222222222222",
+    })).toThrow("invalid or unreadable");
+  } finally {
+    await broker.close();
+  }
 });
 
 test("native thread and turn identities are linked to calls through direct and socket owners", async () => {

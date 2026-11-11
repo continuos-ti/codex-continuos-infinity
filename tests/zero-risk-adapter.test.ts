@@ -1,15 +1,18 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import {
+  chatGptWebTraceId,
   createChatGptWebAdapter,
   type ChatGptZeroRiskManualControl,
 } from "../src/adapters/chatgpt-web/index";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
+import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
+import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
@@ -91,6 +94,108 @@ function provider(name: string): CodexProviderConfig {
 function noManualTerminal(): Promise<never> {
   return new Promise<never>(() => {});
 }
+
+test("Zero Risk blocks a previous native MCP dispatch before opening another browser turn", async () => {
+  const config = provider("prior-native-calls");
+  const input = request("22222222-2222-4222-8222-222222222222");
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  const rawBody = input._rawBody as {
+    prompt_cache_key: string; client_metadata: Record<string, string>;
+  };
+  rawBody.prompt_cache_key = identity.threadId;
+  rawBody.client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+    thread_id: identity.threadId, turn_id: identity.turnId,
+  });
+  const traceId = chatGptWebTraceId(config, input);
+  const journal = join(root, `prior-native-calls-${Date.now()}`);
+  const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
+  recordBrokerCallEvent({ directory: journal, traceId,
+    callId: `call_${"C".repeat(32)}`, wireName: "mutating_tool",
+    event: "queued", nativeOwnerDigest: nativeBrokerOwnerDigest(identity) });
+  recordBrokerCallEvent({ directory: journal, traceId,
+    callId: `call_${"C".repeat(32)}`, wireName: "mutating_tool",
+    event: "delivery_possible", nativeOwnerDigest: nativeBrokerOwnerDigest(identity) });
+  broker.enableCallJournal(journal);
+  let browserStarts = 0;
+  const control: ChatGptZeroRiskManualControl = {
+    async start() { browserStarts++; },
+    async waitSent() {},
+    waitTerminal: noManualTerminal,
+    async markStarted() {},
+    async end() {},
+    async cancel() {},
+  };
+  const adapter = createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control });
+  try {
+    await expect(adapter.runTurn!(input, { headers: new Headers() }, () => {}))
+      .rejects.toMatchObject({ code: "broker_reconciliation_required", retryable: false });
+    expect(browserStarts).toBe(0);
+    // A new native turn with no prior call is still allowed to run normally.
+    const nextIdentity = { ...identity, turnId: "33333333-3333-4333-8333-333333333333" };
+    const next = request(nextIdentity.turnId);
+    const nextRaw = next._rawBody as typeof rawBody;
+    nextRaw.prompt_cache_key = nextIdentity.threadId;
+    nextRaw.client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+      thread_id: nextIdentity.threadId, turn_id: nextIdentity.turnId,
+    });
+    const nextTrace = chatGptWebTraceId(config, next);
+    expect(broker.priorNativeCallStates(nextTrace, nextIdentity)).toEqual([]);
+  } finally {
+    chatGptTurnSessions.clear();
+    await broker.close();
+  }
+}, 20_000);
+
+test("Zero Risk fails closed before browser startup for corrupt or foreign native call evidence", async () => {
+  const identity = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+  };
+  for (const scenario of ["corrupt-journal", "foreign-owner"] as const) {
+    const config = provider(`fence-${scenario}`);
+    const input = request(identity.turnId);
+    const rawBody = input._rawBody as {
+      prompt_cache_key: string; client_metadata: Record<string, string>;
+    };
+    rawBody.prompt_cache_key = identity.threadId;
+    rawBody.client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+      thread_id: identity.threadId, turn_id: identity.turnId,
+    });
+    const journal = join(root, `fence-${scenario}-${Date.now()}`);
+    if (scenario === "corrupt-journal") {
+      mkdirSync(journal, { recursive: true });
+      writeFileSync(join(journal, "unexpected.txt"), "invalid record");
+    } else {
+      recordBrokerCallEvent({
+        directory: journal, traceId: chatGptWebTraceId(config, input),
+        callId: `call_${"F".repeat(32)}`, wireName: "mutating_tool", event: "queued",
+        nativeOwnerDigest: nativeBrokerOwnerDigest({ ...identity,
+          turnId: "33333333-3333-4333-8333-333333333333" }),
+      });
+    }
+    const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
+    broker.enableCallJournal(journal);
+    let browserStarts = 0;
+    const control: ChatGptZeroRiskManualControl = {
+      async start() { browserStarts++; },
+      async waitSent() {},
+      waitTerminal: noManualTerminal,
+      async markStarted() {},
+      async end() {},
+      async cancel() {},
+    };
+    try {
+      const adapter = createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control });
+      await expect(adapter.runTurn!(input, { headers: new Headers() }, () => {}))
+        .rejects.toMatchObject({ code: "broker_reconciliation_unavailable", retryable: false });
+      expect(browserStarts).toBe(0);
+    } finally {
+      chatGptTurnSessions.clear();
+      await broker.close();
+    }
+  }
+}, 20_000);
 
 // These integration scenarios open real IPC sockets. Parallel CI scheduling can exceed Bun's 5s default without a stalled operation.
 for (const scenario of [

@@ -4,6 +4,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptWebTraceId } from "../src/adapters/chatgpt-web";
+import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { runStructuredCompactionOnce } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, closeTurnBrokers, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -14,6 +15,41 @@ import { compactRequest, HttpTurnCounter, ModelCatalogFetches, responseRequest, 
 test("DEV harness configuration cannot bind a Responses listener", () => {
   const config = { ...defaultConfig("browser-only"), purpose: "dev-harness" as const, port: 0 };
   expect(() => startServer(config)).toThrow("cannot start a Responses listener");
+});
+
+test("Responses preserves typed native broker reconciliation failures without a retryable fallback", async () => {
+  const config = { ...defaultConfig("full"), solAvailable: false, experimentalBiggerContext: true };
+  const codes = ["broker_reconciliation_required", "broker_reconciliation_unavailable"] as const;
+  for (const code of codes) for (const stream of [false, true]) {
+    const seen: unknown[] = [];
+    const response = await responseRequest(new Request("http://127.0.0.1/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/luna", input: "reconcile", stream }),
+    }), config, () => ({
+      name: "reconciliation-failure-test",
+      async runTurn() {
+        throw new ChatGptWebAdapterError("Existing native MCP call must be reconciled", {
+          status: 409, errorType: "invalid_request_error", code, retryable: false,
+        });
+      },
+    }), { onAdapterEvent: event => seen.push(event) });
+
+    expect(response.status).toBe(stream ? 200 : 409);
+    expect(seen).toEqual([{
+      type: "error", message: "Existing native MCP call must be reconciled",
+      status: 409, errorType: "invalid_request_error", code, retryable: false,
+    }]);
+    if (stream) {
+      const body = await response.text();
+      expect(body).toContain("event: response.failed");
+      expect(body).toContain(`\"code\":\"${code}\"`);
+      expect(body).toContain(`\"retryable\":false`);
+    } else {
+      const body = await response.json() as { status: string; error: { code: string }; retryable: boolean };
+      expect(body).toMatchObject({ status: "failed", error: { code }, retryable: false });
+    }
+  }
 });
 
 test("Luna Bigger Context reaches the adapter for every Free route and response mode", async () => {

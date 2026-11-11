@@ -11,6 +11,7 @@ import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment"
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
+import { inspectBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
 import { cwdWithinRealRoots } from "./trusted-cwd-path";
@@ -347,6 +348,8 @@ export class TurnBroker implements TurnBrokerOwner {
   private socketIdentity?: { dev: number; ino: number };
   private callJournalDirectory?: string;
   private resultVault?: BrokerResultVault;
+  private startupCallEvidence: BrokerRecoveryCall[] = [];
+  private startupJournalUnreadable = false;
 
   private constructor(readonly socketPath: string) {}
 
@@ -360,6 +363,35 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     this.callJournalDirectory = normalized;
     this.resultVault = new BrokerResultVault(vaultDirectoryForJournal(normalized));
+    // Snapshot only records from before this broker process started. Calls made by an active
+    // session must continue through its in-memory owner, not trip the post-crash fence.
+    try {
+      this.startupCallEvidence = inspectBrokerCallJournal(normalized);
+    } catch {
+      this.startupJournalUnreadable = true;
+    }
+  }
+
+  /** Fence a fresh browser owner if this exact native turn previously dispatched MCP work. */
+  priorNativeCallStates(
+    traceId: string,
+    identity: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
+  ): BrokerRecoveryState[] {
+    if (!this.callJournalDirectory) return [];
+    if (this.startupJournalUnreadable) {
+      throw new Error("Previous broker call journal is invalid or unreadable; reconciliation is required");
+    }
+    const ownerDigest = nativeBrokerOwnerDigest(identity);
+    const traceCalls = this.startupCallEvidence.filter(call => call.traceId === traceId);
+    if (traceCalls.length > 0 && (!ownerDigest
+      || traceCalls.some(call => call.nativeOwnerDigest !== ownerDigest))) {
+      throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+    }
+    // The provider configuration can change across restarts and change the diagnostic trace.
+    // Native ownership remains stable and must fence all earlier calls across trace folders.
+    if (!ownerDigest) return [];
+    return this.startupCallEvidence.filter(call => call.nativeOwnerDigest === ownerDigest)
+      .map(call => call.state);
   }
 
   private recordCall(channel: TurnChannel, request: BrokerToolRequest, event: BrokerCallEvent): void {

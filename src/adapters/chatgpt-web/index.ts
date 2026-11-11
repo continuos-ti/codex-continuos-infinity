@@ -1330,7 +1330,28 @@ export function createChatGptWebAdapter(
         const session = await chatGptTurnSessions.getOrCreateAfterOwnerRetirement(
           executionKey,
           ownerKey,
-          () => startRuntime(parsed, environment, traceId, turnCapabilities),
+          () => {
+            if (mode.localTools && structuredBroker) {
+              let priorStates: ReturnType<TurnBroker["priorNativeCallStates"]>;
+              try {
+                priorStates = structuredBroker.priorNativeCallStates(traceId, nativeIdentity);
+              } catch (error) {
+                throw new ChatGptWebAdapterError(
+                  "Previous MCP call evidence cannot be verified. Reconcile the original native Codex turn before continuing.",
+                  { status: 409, errorType: "invalid_request_error", code: "broker_reconciliation_unavailable",
+                    retryable: false, cause: error },
+                );
+              }
+              if (priorStates.length > 0) {
+                throw new ChatGptWebAdapterError(
+                  `The original native Codex turn has ${priorStates.length} persisted MCP call(s) from an earlier broker process. Reconcile canonical tool results and external effects before resuming the browser turn.`,
+                  { status: 409, errorType: "invalid_request_error", code: "broker_reconciliation_required",
+                    retryable: false },
+                );
+              }
+            }
+            return startRuntime(parsed, environment, traceId, turnCapabilities);
+          },
           traceId,
           incoming.abortSignal,
           nativeTurnId,
