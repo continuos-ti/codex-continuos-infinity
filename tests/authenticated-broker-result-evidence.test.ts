@@ -148,6 +148,27 @@ test("individual authenticated result read rejects journal changes during decryp
   }
 });
 
+test("individual authenticated result read detects a bytewise rewrite of valid sealed evidence", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const path = join(vaultDirectoryForJournal(directory), traceId,
+    `${createHash("sha256").update(`v1:${callId}:sealed_result`).digest("hex")}.json`);
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    writeFileSync(path, JSON.stringify(JSON.parse(readFileSync(path, "utf8")), null, 2));
+    return value;
+  };
+  try {
+    expect(read()).toEqual(unavailable);
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+  // The rewritten envelope still authenticates, but was not stable during the read.
+  expect(read().status).toBe("verified_result_evidence");
+});
+
 test("native call inventory authenticates ownership across traces without exposing results or replay rights", () => {
   nativeRollout();
   journal();
@@ -317,6 +338,56 @@ test("recovery snapshot detects a pending journal publication introduced during 
   BrokerResultVault.prototype.read = function (identity) {
     const value = originalRead.call(this, identity);
     writeFileSync(join(directory, traceId, `.${"1".repeat(64)}.${"2".repeat(24)}.pending`), "{}");
+    return value;
+  };
+  try {
+    expect(snapshot().status).toBe("unavailable");
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+});
+
+test("recovery snapshot rejects concurrent vault rewrites and pending publications", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const vaultTrace = join(vaultDirectoryForJournal(directory), traceId);
+  const path = join(vaultTrace,
+    `${createHash("sha256").update(`v1:${callId}:sealed_result`).digest("hex")}.json`);
+  const originalRead = BrokerResultVault.prototype.read;
+  let change: "rewrite" | "pending" = "rewrite";
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    if (change === "rewrite") {
+      writeFileSync(path, JSON.stringify(JSON.parse(readFileSync(path, "utf8")), null, 2));
+    } else {
+      writeFileSync(join(vaultTrace, `.${"1".repeat(64)}.${"2".repeat(24)}.pending`), "{}");
+    }
+    return value;
+  };
+  try {
+    expect(snapshot().status).toBe("unavailable");
+    change = "pending";
+    expect(snapshot().status).toBe("unavailable");
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+});
+
+test("recovery snapshot detects a result published for a previously queued call", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const queuedCallId = `call_${"B".repeat(32)}`;
+  const owner = nativeBrokerOwnerDigest({ threadId, turnId })!;
+  recordBrokerCallEvent({ directory, traceId, callId: queuedCallId,
+    wireName: "another_tool", event: "queued", nativeOwnerDigest: owner });
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    new BrokerResultVault(vaultDirectoryForJournal(directory)).seal({
+      traceId, callId: queuedCallId, tool: "another_tool", nativeOwnerDigest: owner,
+    }, result);
     return value;
   };
   try {

@@ -6,7 +6,8 @@ import type { BrokerCallEvent, BrokerCallEvidence } from "./broker-call-journal"
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "./environment";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
-import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
+import { BrokerResultVault, captureBrokerResultFileEvidence, vaultDirectoryForJournal,
+  type ResultIdentity } from "./sealed-broker-results";
 import type { BrokerToolResult } from "./turn-broker";
 
 const EVENTS = new Set<BrokerCallEvent>([
@@ -251,9 +252,12 @@ export function readAuthenticatedBrokerResultEvidence(input: {
   if (!call || call.state !== "result_unavailable" || call.nativeOwnerDigest !== ownerDigest) {
     return unavailable();
   }
-  const result = new BrokerResultVault(vaultDirectoryForJournal(input.journalDirectory)).read({
+  const vaultDirectory = vaultDirectoryForJournal(input.journalDirectory);
+  const identity: ResultIdentity = {
     traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
-  });
+  };
+  const beforeVault = captureBrokerResultFileEvidence(vaultDirectory, [identity]);
+  const result = new BrokerResultVault(vaultDirectory).read(identity);
   if (!result) return unavailable();
 
   // A concurrent broker publication or rewrite invalidates this evidence even when the
@@ -262,6 +266,9 @@ export function readAuthenticatedBrokerResultEvidence(input: {
   if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
     return unavailable();
   }
+  const afterVault = captureBrokerResultFileEvidence(vaultDirectory, [identity]);
+  if (beforeVault.pendingPublication || afterVault.pendingPublication
+    || beforeVault.fingerprint !== afterVault.fingerprint) return unavailable();
 
   // The owner could have moved to another native turn while the journal/vault were read.
   try {
@@ -329,7 +336,12 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   if (owned.length > MAX_AUTHENTICATED_SNAPSHOT_CALLS) {
     throw new Error("Broker recovery snapshot exceeds the bounded call count");
   }
-  const vault = new BrokerResultVault(vaultDirectoryForJournal(input.journalDirectory));
+  const vaultDirectory = vaultDirectoryForJournal(input.journalDirectory);
+  const vault = new BrokerResultVault(vaultDirectory);
+  const resultIdentities: ResultIdentity[] = owned.map(call => ({
+    traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
+  }));
+  const beforeVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
   let totalResultBytes = 0;
   const calls = owned.map(call => {
     let resultEvidence: AuthenticatedBrokerResultEvidence = {
@@ -359,6 +371,9 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
     return unavailable();
   }
+  const afterVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
+  if (beforeVault.pendingPublication || afterVault.pendingPublication
+    || beforeVault.fingerprint !== afterVault.fingerprint) return unavailable();
   try {
     const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
     if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();

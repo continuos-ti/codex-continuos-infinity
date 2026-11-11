@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { publishPrivateBrokerEvent } from "./private-incident-journal";
 import type { BrokerToolResult } from "./turn-broker";
@@ -42,6 +42,53 @@ export interface ResultIdentity {
 function resultPath(directory: string, input: ResultIdentity): string {
   const key = createHash("sha256").update(`v1:${input.callId}:sealed_result`).digest("hex");
   return join(directory, input.traceId, `${key}.json`);
+}
+
+/** Detect changes to the sealed evidence while an authenticated recovery read is in progress. */
+export function captureBrokerResultFileEvidence(directory: string, identities: readonly ResultIdentity[]): {
+  fingerprint: string;
+  pendingPublication: boolean;
+} {
+  const fingerprint = createHash("sha256");
+  const ordered = [...identities].sort((a, b) => a.traceId.localeCompare(b.traceId)
+    || a.callId.localeCompare(b.callId));
+  const traces = new Set<string>();
+  let pendingPublication = false;
+  for (const identity of ordered) {
+    verifyIdentity(identity);
+    traces.add(identity.traceId);
+    const path = resultPath(directory, identity);
+    fingerprint.update(JSON.stringify(identity)).update("\0");
+    if (!existsSync(path)) {
+      fingerprint.update("missing\0");
+      continue;
+    }
+    const stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > MAX_SEALED_BYTES) {
+      throw new Error("Broker result vault record is invalid");
+    }
+    const raw = readFileSync(path);
+    if (raw.byteLength !== stat.size) throw new Error("Broker result vault record changed during read");
+    fingerprint.update(raw).update("\0");
+  }
+  for (const trace of [...traces].sort()) {
+    const path = join(directory, trace);
+    if (!existsSync(path)) continue;
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error("Broker result vault trace directory is invalid");
+    }
+    let pendingCount = 0;
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      if (!entry.name.endsWith(".pending")) continue;
+      if (!/^\.[0-9a-f]{64}\.[0-9a-f]{24}\.pending$/.test(entry.name)
+        || !entry.isFile() || entry.isSymbolicLink() || ++pendingCount > 1_000) {
+        throw new Error("Broker result vault pending publication is invalid");
+      }
+      pendingPublication = true;
+    }
+  }
+  return { fingerprint: fingerprint.digest("hex"), pendingPublication };
 }
 
 function identityAAD(input: ResultIdentity): Buffer {
