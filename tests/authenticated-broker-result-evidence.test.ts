@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
@@ -141,6 +141,29 @@ test("subagent evidence requires canonical parent and agent lineage", () => {
   expect(read()).toEqual(unavailable);
   expect(read({ owner: { ...lineage(true), parentThreadId: staleTurnId } as ChatGptThreadSpawnLineage }))
     .toEqual(unavailable);
+});
+
+test("native cwd changes during vault read invalidate the earlier owner snapshot", () => {
+  const rollout = nativeRollout();
+  journal();
+  seal();
+  const movedCwd = join(cwd, "other-worktree");
+  mkdirSync(movedCwd);
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    appendFileSync(rollout, JSON.stringify({ type: "turn_context", payload: {
+      turn_id: turnId, cwd: movedCwd,
+      sandbox_policy: { type: "danger-full-access" },
+      permission_profile: { type: "disabled" },
+    } }) + "\n");
+    return value;
+  };
+  try {
+    expect(read()).toEqual(unavailable);
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
 });
 
 test("owner digest disagreement and malformed result evidence fail closed", () => {

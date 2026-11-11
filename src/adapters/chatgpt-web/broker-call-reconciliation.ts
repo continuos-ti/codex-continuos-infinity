@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { BrokerCallEvent, BrokerCallEvidence } from "./broker-call-journal";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "./environment";
@@ -148,8 +149,10 @@ export function readAuthenticatedBrokerResultEvidence(input: {
   };
   // Codex's canonical rollout and current turn_context are independent of the old broker.
   // An absent, ambiguous, stale or invalid native owner cannot authorize reading a body.
+  let initialOwner: ReturnType<typeof resolveCurrentCodexRolloutEnvironment>;
   try {
-    if (!resolveCurrentCodexRolloutEnvironment(ownerOptions)) return unavailable();
+    initialOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
+    if (!initialOwner) return unavailable();
   } catch {
     return unavailable();
   }
@@ -166,7 +169,8 @@ export function readAuthenticatedBrokerResultEvidence(input: {
 
   // The owner could have moved to another native turn while the journal/vault were read.
   try {
-    if (!resolveCurrentCodexRolloutEnvironment(ownerOptions)) return unavailable();
+    const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
+    if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();
   } catch {
     return unavailable();
   }
