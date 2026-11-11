@@ -11,6 +11,7 @@ const launcherManifest = JSON.parse(
   fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"),
 );
 const expectedVersion = launcherManifest.version;
+const portable = process.argv.includes("--portable");
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-package-smoke-"));
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
@@ -93,6 +94,23 @@ function artifact(pattern, label) {
   return path.join(artifactsDirectory, matches[0]);
 }
 
+/** Verify the packaged Electron app without installing anything or changing the registry. */
+function extractPortableWindowsLauncher(installer) {
+  const sevenZip = process.env.SEVEN_ZIP_EXE
+    || ["C:\\Program Files\\7-Zip\\7z.exe", "C:\\ProgramData\\chocolatey\\bin\\7z.exe"]
+      .find(candidate => fs.existsSync(candidate))
+    || "7z";
+  const outer = path.join(scratch, "nsis");
+  const appRoot = path.join(scratch, "unpacked");
+  fs.mkdirSync(outer);
+  fs.mkdirSync(appRoot);
+  run(sevenZip, ["e", installer, `-o${outer}`, "-y", "$PLUGINSDIR\\app-64.7z"], { timeout: 120_000 });
+  const payload = path.join(outer, "app-64.7z");
+  if (!fs.existsSync(payload)) throw new Error("NSIS archive has no packaged application payload");
+  run(sevenZip, ["x", payload, `-o${appRoot}`, "-y"], { timeout: 120_000 });
+  return path.join(appRoot, `${launcherManifest.build.productName}.exe`);
+}
+
 function smokeEnvironment() {
   return {
     ...process.env,
@@ -134,8 +152,12 @@ try {
     env.APPIMAGE_EXTRACT_AND_RUN = "1";
   } else if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-    run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
-    executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
+    if (portable) {
+      executable = extractPortableWindowsLauncher(installer);
+    } else {
+      run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
+      executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
+    }
     command = executable;
     args = ["--launcher-smoke-test"];
   } else {
@@ -175,7 +197,8 @@ try {
     || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
     throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
   }
-  process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
+  process.stdout.write(`${portable && process.platform === "win32"
+    ? "PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK" : "PACKAGED_LAUNCHER_SMOKE_OK"} ${process.platform}/${process.arch}\n`);
 } finally {
   try {
     if (macAppBundle) {

@@ -25,9 +25,9 @@ Variáveis de configuração: CODEX_CONTINUOS_INFINITY_HOME, CODEX_CONTINUOS_INF
 
 ## Verificação local
 
-O empacotamento gera `launcher/artifacts/checksums-local.txt` com SHA-256 do instalador e dos respectivos blockmaps/arquivos distribuíveis. O comando `bun run app:smoke` verifica a lista completa de arquivos e os hashes **antes** de instalar o pacote em uma localização independente no perfil Windows do usuário; em seguida verifica o manifesto do runtime instalado e seu bundleId. Qualquer alteração do instalador exige reconstrução do arquivo de hashes. Não reutilize hashes de compilações anteriores.
+O empacotamento gera `launcher/artifacts/checksums-local.txt` com SHA-256 do instalador e dos respectivos blockmaps/arquivos distribuíveis. O comando `bun run app:smoke` valida a lista completa e os hashes antes de extrair o payload NSIS com 7-Zip em uma pasta temporária, executar o launcher empacotado no modo smoke com perfis isolados e verificar o manifesto do runtime e seu `bundleId`. No Windows, **não executa o instalador, não altera o registro e não substitui o launcher instalado**. Requer 7-Zip (`SEVEN_ZIP_EXE` pode apontar ao executável). A extração é removida ao terminar. Qualquer alteração do instalador exige reconstrução dos hashes; não reutilize hashes de compilações anteriores.
 
-O instalador Windows 6.1.18-continuos.1 foi compilado e o smoke de pacote retornou `PACKAGED_LAUNCHER_SMOKE_OK win32/x64` em 10/11/2026. A aplicação em `C:/Program Files/Codex Web GPT` continua separada.
+O instalador Windows 6.1.18-continuos.1 foi recompilado em 10/11/2026, com 153.675.718 bytes e SHA-256 `c20ec506c6733605b8807dae454fdc3de2bb0806c578e5814a4ec390767213c8`. A inspeção do contêiner NSIS via `7z t` foi aprovada, e o smoke isolado retornou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. A aplicação em `C:/Program Files/Codex Web GPT` continua separada. Para testar a instalação NSIS real em um ambiente descartável, existe o comando explícito `bun run --cwd launcher smoke:package:installed`, que **altera a instalação per-user e o registro do Windows**; não o execute no computador produtivo.
 
 O instalador não possui assinatura Authenticode. Uma release pública deve explicitar essa condição e fornecer checksums. Não altere as políticas de segurança do Windows para executar o pacote.
 
