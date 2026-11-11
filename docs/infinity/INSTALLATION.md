@@ -31,6 +31,8 @@ O instalador Windows 6.1.18-continuos.1 foi recompilado em 10/11/2026 a partir d
 
 O instalador não possui assinatura Authenticode. Uma release pública deve explicitar essa condição e fornecer checksums. Não altere as políticas de segurança do Windows para executar o pacote.
 
+Em 11/11/2026, o instalador foi reconstruído após a validação de timestamps do cache de CWD confiável. O arquivo `codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.677.385 bytes** e SHA-256 **`637b973d7b20b2620e1a311745bab43a4a5083f8b3f2fe65f602e5e3c76e4e11`**. O blockmap tem SHA-256 **`69d532f286b500989aac38cd9d1ad28efdf478f07b6a767ed78b50f52353c54f`**. `bun run app:smoke` confirmou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. A verificação integral `bun run verify` concluiu com exit code 0 e 436 testes do launcher aprovados, com quatro ignorados. Os 162 testes de `tests/environment.test.ts` passaram.
+
 ## Homologação
 
 Compile e valide em staging. Faça login no navegador do Infinity, confirme o conector autorizado, modelos e permissões, e execute testes seguros de read-only antes de ativar qualquer rotina produtiva.

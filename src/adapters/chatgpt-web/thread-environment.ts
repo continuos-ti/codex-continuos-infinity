@@ -41,6 +41,7 @@ interface StoredThreadEnvironmentFile {
 
 const MAX_THREAD_ENVIRONMENTS = 256;
 const THREAD_ENVIRONMENT_TTL_MS = 30 * 24 * 60 * 60_000;
+const THREAD_ENVIRONMENT_CLOCK_SKEW_MS = 5 * 60_000;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -100,7 +101,8 @@ function sandboxPolicy(value: unknown, roots: string[], writableRoots: string[])
 
 function validateStoredEnvironment(value: unknown): StoredThreadEnvironment {
   const parsed = record(value);
-  if (!parsed || typeof parsed.cwd !== "string" || !isAbsolute(parsed.cwd) || typeof parsed.updatedAt !== "number") {
+  if (!parsed || typeof parsed.cwd !== "string" || !isAbsolute(parsed.cwd)
+    || typeof parsed.updatedAt !== "number" || !Number.isFinite(parsed.updatedAt) || parsed.updatedAt < 0) {
     throw new Error("Invalid persisted ChatGPT thread environment");
   }
   const cwd = resolve(parsed.cwd);
@@ -358,7 +360,9 @@ export class ChatGptThreadEnvironmentStore {
     this.load();
     const stored = this.threads.get(threadId);
     if (!stored) return undefined;
-    if (this.now() - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS) {
+    const now = this.now();
+    if (now - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS
+      || stored.updatedAt > now + THREAD_ENVIRONMENT_CLOCK_SKEW_MS) {
       this.threads.delete(threadId);
       this.persist();
       return undefined;
@@ -418,9 +422,14 @@ export class ChatGptThreadEnvironmentStore {
     if (parsed?.version !== 1 || !rawThreads) throw invalidState("has an unsupported or invalid format");
     let entries: Array<readonly [string, StoredThreadEnvironment]>;
     try {
-      const cutoff = this.now() - THREAD_ENVIRONMENT_TTL_MS;
-      entries = Object.entries(rawThreads)
-        .map(([threadId, value]) => [threadId, validateStoredEnvironment(value)] as const)
+      const now = this.now();
+      const cutoff = now - THREAD_ENVIRONMENT_TTL_MS;
+      const validatedEntries = Object.entries(rawThreads)
+        .map(([threadId, value]) => [threadId, validateStoredEnvironment(value)] as const);
+      if (validatedEntries.some(([, environment]) => environment.updatedAt > now + THREAD_ENVIRONMENT_CLOCK_SKEW_MS)) {
+        throw new Error("Persisted ChatGPT environment timestamp is in the future");
+      }
+      entries = validatedEntries
         .filter(([, environment]) => environment.updatedAt >= cutoff)
         .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
         .slice(-MAX_THREAD_ENVIRONMENTS);

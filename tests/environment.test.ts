@@ -1014,6 +1014,44 @@ describe("trusted Codex task environment continuity", () => {
     }
   });
 
+  test("rejects invalid or future persisted environment timestamps without overwriting the cache", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "codex-invalid-environment-time-"));
+    temporaryRoots.push(stateRoot);
+    const statePath = join(stateRoot, "thread-environments.json");
+    const codexHome = join(stateRoot, "codex");
+    const now = 2_000_000_000_000;
+    new ChatGptThreadEnvironmentStore(statePath, () => now, codexHome).resolve(currentWire());
+    const valid = readFileSync(statePath, "utf8");
+
+    for (const timestamp of ["-1", "1e999", String(now + 6 * 60_000)]) {
+      const invalid = valid.replace(/"updatedAt":\s*\d+/, `"updatedAt": ${timestamp}`);
+      expect(invalid).not.toBe(valid);
+      writeFileSync(statePath, invalid);
+      expect(() => new ChatGptThreadEnvironmentStore(statePath, () => now, codexHome).resolve(currentWire()))
+        .toThrow("invalid workspace or permission records");
+      expect(readFileSync(statePath, "utf8")).toBe(invalid);
+    }
+  });
+
+  test("stops using an in-memory environment cache after a clock rollback exceeds tolerance", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "codex-environment-clock-rollback-"));
+    temporaryRoots.push(stateRoot);
+    const statePath = join(stateRoot, "thread-environments.json");
+    let now = 2_000_000_000_000;
+    const store = new ChatGptThreadEnvironmentStore(statePath, () => now, join(stateRoot, "codex"));
+    expect(store.resolve(currentWire()).cwd).toBe(root);
+
+    const followup = currentWire();
+    (followup._rawBody as { input: unknown[] }).input = [{
+      type: "message", role: "user", content: [{ type: "input_text", text: "Continue" }],
+    }];
+    now -= 4 * 60_000;
+    expect(store.resolve(followup).cwd).toBe(root);
+    now -= 2 * 60_000;
+    expect(() => store.resolve(followup)).toThrow("missing cwd");
+    expect(Object.keys(JSON.parse(readFileSync(statePath, "utf8")).threads)).toEqual([]);
+  });
+
   test("persists the trusted first-turn authority and refreshes tools from every follow-up", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "codex-chatgpt-thread-environment-"));
     temporaryRoots.push(stateRoot);
