@@ -139,6 +139,22 @@ test("broker journals dispatch boundaries, exact reconnect replay, results, and 
     expect(replayed!.callId).toBe(first!.callId);
     broker.completeTool(tokens[0]!, first!.callId, result);
     expect(await pending[0]).toEqual(result);
+    // The acknowledgement may be retried if its socket response was lost. The
+    // same owner accepts identical receipts without re-running the invocation.
+    const duplicateReceipts = await Promise.all(Array.from({ length: 3 }, () =>
+      callTurnBroker<{ completed: boolean }>(broker.socketPath, {
+        method: "owner_complete", token: tokens[0]!, callId: first!.callId,
+        toolResult: structuredClone(result),
+      })));
+    expect(duplicateReceipts).toEqual(Array.from({ length: 3 }, () => ({ completed: true })));
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "owner_complete", token: tokens[0]!, callId: first!.callId,
+      toolResult: { content: [{ type: "text", text: "conflicting output" }] },
+    })).rejects.toThrow("Conflicting result");
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "owner_complete", token: tokens[2]!, callId: first!.callId,
+      toolResult: result,
+    })).rejects.toThrow("not pending");
     broker.revoke(tokens[1]!);
     await expect(pending[1]).rejects.toThrow();
     broker.completeTool(tokens[2]!, batches[2]![0]!.callId, result);

@@ -108,6 +108,8 @@ interface TurnChannel {
   queuedCallIds: string[];
   deliveredCallIds: Set<string>;
   invocations: Map<string, PendingInvocation>;
+  /** Recent acknowledgements scoped to this live owner, for idempotent delivery retries. */
+  completedCallDigests: Map<string, string>;
   waiters: Set<ToolWaiter>;
   compactionRequested: boolean;
   compactionResult?: BrokerToolResult;
@@ -183,6 +185,13 @@ const brokers = new Map<string, TurnBroker>();
 const MAX_BROKER_LINE_CHARS = 67_108_864;
 const MAX_RETIRED_TURN_HANDLES = 64;
 const MAX_PENDING_CALL_DIAGNOSTICS = 16;
+const MAX_COMPLETED_CALL_ACKS = 256;
+
+function resultDigest(result: BrokerToolResult): string {
+  const encoded = JSON.stringify(result);
+  if (typeof encoded !== "string") throw new Error("Invalid broker tool result");
+  return createHash("sha256").update(encoded).digest("hex");
+}
 
 function retirementDiagnostics(channel: TurnChannel): BrokerRetirementDiagnostics {
   const now = performance.now();
@@ -394,6 +403,7 @@ export class TurnBroker implements TurnBrokerOwner {
       queuedCallIds: [],
       deliveredCallIds: new Set(),
       invocations: new Map(),
+      completedCallDigests: new Map(),
       waiters: new Set(),
       compactionRequested: false,
       compactionDeliveryCount: 0,
@@ -525,14 +535,29 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!channel) throw new Error("turn token is invalid or expired");
     this.assertSafeHarnessRunning(channel, true);
     const invocation = channel.invocations.get(callId);
-    if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
+    if (!invocation) {
+      const previousDigest = channel.completedCallDigests.get(callId);
+      if (previousDigest === undefined) throw new Error(`tool call is not pending: ${callId}`);
+      if (previousDigest !== resultDigest(result)) {
+        throw new Error("Conflicting result for a completed Codex tool call");
+      }
+      // An owner may retry the same acknowledgement when the socket reply was lost.
+      // No tool operation is dispatched or resolved a second time.
+      return;
+    }
     if (!channel.deliveredCallIds.has(callId)) {
       throw new Error(`tool call was completed before it was delivered: ${callId}`);
     }
+    const digest = resultDigest(result);
     // If persistence fails, retain the pending invocation for an owner retry.
     this.recordCall(channel, invocation.request, "result_received");
     channel.deliveredCallIds.delete(callId);
     channel.invocations.delete(callId);
+    channel.completedCallDigests.set(callId, digest);
+    if (channel.completedCallDigests.size > MAX_COMPLETED_CALL_ACKS) {
+      const oldest = channel.completedCallDigests.keys().next().value;
+      if (oldest !== undefined) channel.completedCallDigests.delete(oldest);
+    }
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size} isError=${result.isError === true}`);
     invocation.resolve(result);
   }
