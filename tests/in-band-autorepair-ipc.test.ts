@@ -22,7 +22,7 @@ test("real helper IPC delivers one distinct repair instruction with the active t
     "  await turn.onPreparedSelected(false);",
     "  const original = await turn.prepare();",
     "  if (original.text !== 'ORIGINAL_NON_MUTABLE') throw new Error('original prompt was lost');",
-    "  const repaired = await turn.prepareRecovery({traceId:turn.traceId,code:'chatgpt_stalled_same_turn',error:'accepted without final'});",
+    "  const repaired = await turn.prepareRecovery({traceId:turn.traceId,code:'chatgpt_stalled_same_turn'});",
     "  if (repaired.text !== 'REPAIR_DIAGNOSTIC_NO_REPLAY') throw new Error('repair prompt mismatch');",
     "  if (repaired.turnToken !== 'turn_0123456789abcdef0123456789abcdef') throw new Error('tool token mismatch');",
     "  turn.onCommentary?.('Reparando');",
@@ -54,7 +54,7 @@ test("real helper IPC delivers one distinct repair instruction with the active t
     turnTimeoutMs: 120_000, headed: true, autoApproveToolCalls: false, useTemporaryChats: false,
   };
   const client = new LauncherBrowserHelperClient(config);
-  const calls: Array<{traceId:string;code:string;error:string}> = [];
+  const calls: Array<{traceId:string;code:string}> = [];
   const statuses: string[] = [];
   try {
     const result = await client.run({
@@ -70,7 +70,7 @@ test("real helper IPC delivers one distinct repair instruction with the active t
       onCommentary: text => statuses.push(text),
     });
     expect(result).toBe("RECOVERED");
-    expect(calls).toEqual([{traceId:"repair-ipc-test-01",code:"chatgpt_stalled_same_turn",error:"accepted without final"}]);
+    expect(calls).toEqual([{traceId:"repair-ipc-test-01",code:"chatgpt_stalled_same_turn"}]);
     expect(statuses).toEqual(["Reparando", "RECOVERED"]);
   } finally { await client.close(); }
 });

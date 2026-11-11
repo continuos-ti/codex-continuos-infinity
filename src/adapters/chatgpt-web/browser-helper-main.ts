@@ -244,10 +244,10 @@ async function run(message: RunMessage): Promise<void> {
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
     ...(repairSelection ? {
-      prepareRecovery: async (failure: { traceId: string; code: string; error: string }) => {
+      prepareRecovery: async (failure: { traceId: string; code: string }) => {
         if (!writeProtocol({
           type: "event", id: message.id, event: "repair_prepare_requested",
-          code: failure.code, error: failure.error.slice(0, 700),
+          code: failure.code,
         })) {
           throw new Error("Browser helper could not request a recovery prompt");
         }

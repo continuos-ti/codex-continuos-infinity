@@ -8,6 +8,8 @@ A implementação atual de isSafeInBandAutoRepairFailure aceita chatgpt_stalled_
 
 O prompt original aceito nunca deve ser reenviado cegamente. Primeiro é obrigatório reconciliar chamadas mutáveis já aceitas e ler checkpoints e resultados. A execução de diagnóstico utiliza somente ferramentas com autorização atual. Tokens expirados não são reconstruídos.
 
+O pedido técnico de reparo usa somente o identificador sanitizado do incidente e o código validado da falha. O texto livre da exceção pode conter URLs, credenciais ou instruções não confiáveis; por isso ele não é incorporado ao prompt nem transportado pelo evento IPC `repair_prepare_requested`. Detalhes adicionais devem ser obtidos de diagnósticos locais autorizados e inspecionados separadamente. O teste `tests/in-band-auto-repair.test.ts` cobre vazamento de mensagem bruta, URL com token e instrução injetada, enquanto `tests/in-band-autorepair-ipc.test.ts` verifica o contrato de transporte.
+
 ## Falhas excluídas
 
 Falhas de autenticação, aprovações manuais pendentes, CWD não comprovado, tarefas com ferramentas ativas e perda total do processo não têm autorização genérica de replay. Se o estado não puder ser provado, preservar o incidente e orientar a intervenção necessária. Retomada após crash total requer novo vínculo de sessão confiável.

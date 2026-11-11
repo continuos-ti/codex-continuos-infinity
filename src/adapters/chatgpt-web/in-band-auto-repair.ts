@@ -18,19 +18,18 @@ export function isSafeInBandAutoRepairFailure(error: unknown, state: {
 export function inBandRepairTaskPrompt(details: {
   traceId: string;
   code: string;
-  error: string;
+  /** Compatibility only: raw error text is untrusted and must never enter prompts. */
+  error?: string;
   diagnosticsDirectory: string;
 }): string {
   const trace = details.traceId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
   const code = details.code.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 80);
-  const issue = details.error.replace(/[\r\n]+/g, " ").slice(0, 460);
   return [
     "MENSAGEM AUTOMATICA DO SUPERVISOR CODEX CONTINUOS INFINITY. Esta mensagem nao e novo pedido humano.",
     "A tarefa original do usuario permanece ATIVA. O envio anterior ao ChatGPT foi aceito, porem a resposta final nao foi confirmada.",
     "Reenviar a instrucao original PODERIA DUPLICAR operacoes. Nao faca isso.",
     "AVISO AO USUARIO: Autorreparo iniciado; inspecao e reconciliacao antes da continuacao.",
     "Incidente trace=" + trace + " codigo=" + code + ".",
-    "Falha observada: " + issue,
     "No Windows, examine os checkpoints e logs pelo trace em: " + details.diagnosticsDirectory,
     "OBJETIVO: diagnosticar usando ferramentas autorizadas do conector ContinuosWebIntegracao ou Windows Local, corrigir falhas comprovadas e continuar a tarefa ORIGINAL visivel no historico desta conversa.",
     "Primeiro analise logs, estado real das ferramentas e saidas. Reconcile efeitos ja produzidos antes de executar uma acao mutavel.",

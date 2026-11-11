@@ -1594,7 +1594,7 @@ export interface BrowserTurn {
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   /** A new recovery instruction, not a replay of the accepted original user prompt. */
-  prepareRecovery?: (failure: { traceId: string; code: string; error: string }) => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
+  prepareRecovery?: (failure: { traceId: string; code: string }) => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   /** Select the Codex Native connector without advertising the ordinary turn tool environment. */
   nativeConnector?: boolean;
   retainConversation?: boolean;
@@ -5616,7 +5616,6 @@ export class ChatGptBrowserWorker {
             prepareResume: () => turn.prepareRecovery!({
               traceId: turn.traceId,
               code: failure.code,
-              error: failure.message,
             }),
             prepareRecovery: undefined,
           }, surfaceId, undefined, true, lease.trackUsage === true);

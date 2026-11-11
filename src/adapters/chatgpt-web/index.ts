@@ -822,7 +822,7 @@ export function createChatGptWebAdapter(
       prepare: () => prepareWith(checkpointInput.parsed),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
       ...(retainConversation && !parsed._compactionRequest ? {
-        prepareRecovery: async (failure: { traceId: string; code: string; error: string }) => {
+        prepareRecovery: async (failure: { traceId: string; code: string }) => {
           if (!activeToken) throw new Error("In-band repair has no still-active Codex tool binding");
           const recoveryParsed: CodexParsedRequest = {
             ...checkpointInput.parsed,
@@ -832,7 +832,8 @@ export function createChatGptWebAdapter(
                 role: "user",
                 timestamp: Date.now(),
                 content: inBandRepairTaskPrompt({
-                  ...failure,
+                  traceId: failure.traceId,
+                  code: failure.code,
                   diagnosticsDirectory: resolve(expandUserPath("~/.codex-chatgpt-web/diagnostics/browser-turns")),
                 }),
               }],
