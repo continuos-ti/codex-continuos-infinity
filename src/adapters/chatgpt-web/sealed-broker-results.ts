@@ -101,7 +101,7 @@ export class BrokerResultVault {
     this.keyDirectory = join(directory, "keys");
   }
 
-  private getKey(): Buffer {
+  private getKey(createIfMissing: boolean): Buffer {
     if (this.key) return this.key;
     if (process.platform !== "win32") {
       const configured = process.env.CODEX_INFINITY_RESULT_VAULT_KEY;
@@ -114,6 +114,7 @@ export class BrokerResultVault {
 
     const path = join(this.keyDirectory, `${KEY_ID}.json`);
     if (!existsSync(path)) {
+      if (!createIfMissing) throw new Error("Broker result vault key is unavailable");
       const generated = randomBytes(32);
       try {
         const protectedKey = dpapi("Protect", generated).toString("base64");
@@ -148,7 +149,7 @@ export class BrokerResultVault {
       return;
     }
     const nonce = randomBytes(12);
-    const cipher = createCipheriv("aes-256-gcm", this.getKey(), nonce);
+    const cipher = createCipheriv("aes-256-gcm", this.getKey(true), nonce);
     cipher.setAAD(identityAAD(input));
     const ciphertext = Buffer.concat([cipher.update(encoded, "utf8"), cipher.final()]);
     const entry: SealedResult = {
@@ -178,11 +179,14 @@ export class BrokerResultVault {
       || typeof record.ciphertext !== "string") {
       throw new Error("Broker result vault identity mismatch or invalid envelope");
     }
+    // Missing/unwrappable key material is a distinct recovery failure. Never create a new
+    // key while reading an existing result, and preserve the actionable key error.
+    const key = this.getKey(false);
     try {
       const nonce = decodeCanonicalBase64(record.nonce, 16);
       const tag = decodeCanonicalBase64(record.tag, 24);
       if (nonce.length !== 12 || tag.length !== 16) throw new Error("Invalid nonce or tag");
-      const decipher = createDecipheriv("aes-256-gcm", this.getKey(), nonce);
+      const decipher = createDecipheriv("aes-256-gcm", key, nonce);
       decipher.setAAD(identityAAD(input));
       decipher.setAuthTag(tag);
       const plaintext = Buffer.concat([decipher.update(decodeCanonicalBase64(record.ciphertext,

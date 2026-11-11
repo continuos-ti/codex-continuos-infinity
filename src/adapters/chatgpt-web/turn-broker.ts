@@ -12,6 +12,7 @@ import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
+import { nativeBrokerOwnerDigest } from "./native-broker-owner";
 import { cwdWithinRealRoots } from "./trusted-cwd-path";
 
 interface BrokerRetirementFailure {
@@ -242,16 +243,6 @@ function handleFingerprint(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
-const NATIVE_CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function nativeOwnerDigest(identity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">): string | undefined {
-  if (typeof identity?.threadId !== "string" || !NATIVE_CODEX_ID.test(identity.threadId)
-    || typeof identity.turnId !== "string" || !NATIVE_CODEX_ID.test(identity.turnId)) return undefined;
-  return createHash("sha256")
-    .update(JSON.stringify([identity.threadId.toLowerCase(), identity.turnId.toLowerCase()]))
-    .digest("hex");
-}
-
 function errorOf(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
@@ -411,7 +402,7 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error("ChatGPT web turn broker TTL must be a positive finite number");
     }
     const token = opaqueId(handlePrefix);
-    const ownerDigest = nativeOwnerDigest(nativeIdentity);
+    const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity);
     const channel: TurnChannel = {
       traceId,
       journalNonce: token,

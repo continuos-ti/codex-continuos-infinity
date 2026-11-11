@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { BrokerCallEvent, BrokerCallEvidence } from "./broker-call-journal";
+import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "./environment";
+import { nativeBrokerOwnerDigest } from "./native-broker-owner";
+import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
+import type { BrokerToolResult } from "./turn-broker";
 
 const EVENTS = new Set<BrokerCallEvent>([
   "queued", "delivery_possible", "result_received", "compaction_resolution_possible", "retired_uncertain",
@@ -96,4 +101,77 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
     return { traceId, callId, tool, ...(nativeOwnerDigest ? { nativeOwnerDigest } : {}), state,
       resultRecoverable: false as const, replayAuthorized: false as const };
   }).sort((a, b) => a.traceId.localeCompare(b.traceId) || a.callId.localeCompare(b.callId));
+}
+
+export type AuthenticatedBrokerResultEvidence = {
+  status: "unavailable";
+  /** An unavailable result is never a reason to dispatch the call again. */
+  replayAuthorized: false;
+  externalEffectsReconciled: false;
+} | {
+  status: "verified_result_evidence";
+  /** A result returned by the previous broker, authenticated against current Codex ownership. */
+  result: BrokerToolResult;
+  replayAuthorized: false;
+  externalEffectsReconciled: false;
+};
+
+/**
+ * Recover the body only for a freshly authenticated native Codex turn. This internal API accepts
+ * native lineage and registered Codex homes supplied by the trusted runtime. It does not accept
+ * a client-supplied owner digest, a historical turn token, or an arbitrary compaction ancestor.
+ * A matching journal boundary proves reception of a result, not its external side effects.
+ * Callers must still reconcile external effects before deciding how to resume a task.
+ */
+export function readAuthenticatedBrokerResultEvidence(input: {
+  journalDirectory: string;
+  codexHome: string;
+  additionalCodexHomes?: readonly string[];
+  sqliteHome?: string;
+  lineage: ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
+  turnId: string;
+  traceId: string;
+  callId: string;
+}): AuthenticatedBrokerResultEvidence {
+  const unavailable = (): AuthenticatedBrokerResultEvidence => ({
+    status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+  });
+  const ownerDigest = nativeBrokerOwnerDigest({ threadId: input.lineage.threadId, turnId: input.turnId });
+  if (!ownerDigest) return unavailable();
+
+  const ownerOptions = {
+    codexHome: input.codexHome,
+    ...(input.additionalCodexHomes ? { additionalCodexHomes: input.additionalCodexHomes } : {}),
+    ...(input.sqliteHome ? { sqliteHome: input.sqliteHome } : {}),
+    lineage: input.lineage,
+    turnId: input.turnId,
+  };
+  // Codex's canonical rollout and current turn_context are independent of the old broker.
+  // An absent, ambiguous, stale or invalid native owner cannot authorize reading a body.
+  try {
+    if (!resolveCurrentCodexRolloutEnvironment(ownerOptions)) return unavailable();
+  } catch {
+    return unavailable();
+  }
+
+  const call = inspectBrokerCallJournal(input.journalDirectory).find(entry =>
+    entry.traceId === input.traceId && entry.callId === input.callId);
+  if (!call || call.state !== "result_unavailable" || call.nativeOwnerDigest !== ownerDigest) {
+    return unavailable();
+  }
+  const result = new BrokerResultVault(vaultDirectoryForJournal(input.journalDirectory)).read({
+    traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
+  });
+  if (!result) return unavailable();
+
+  // The owner could have moved to another native turn while the journal/vault were read.
+  try {
+    if (!resolveCurrentCodexRolloutEnvironment(ownerOptions)) return unavailable();
+  } catch {
+    return unavailable();
+  }
+  return {
+    status: "verified_result_evidence", result,
+    replayAuthorized: false, externalEffectsReconciled: false,
+  };
 }
