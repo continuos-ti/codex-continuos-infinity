@@ -96,6 +96,9 @@ export function observeNativeCallOutputs(
       }
       if (item.type === "event_msg" && payload?.type === "task_complete") {
         if (payload.turn_id === turnId) {
+          // A completion without an active matching start makes this turn's
+          // boundary ambiguous, including a duplicate completion after its end.
+          if (!active || !started) return unavailable();
           active = false;
         } else if (typeof payload.turn_id === "string") {
           // An unpaired foreign completion can hide an unknown concurrent owner.
