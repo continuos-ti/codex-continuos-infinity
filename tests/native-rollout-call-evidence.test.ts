@@ -131,6 +131,17 @@ test("unidentified native task start cannot authorize target outputs", () => {
   expect(observed(ordinaryCall)).toEqual([]);
 });
 
+test("unbalanced foreign task boundaries cannot authorize legacy outputs", () => {
+  write([taskStarted(otherTurn), taskStarted(otherTurn), taskStarted(turn),
+    foreignTaskComplete, tool("function_call", ordinaryCall),
+    tool("function_call_output", ordinaryCall), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+
+  write([taskStarted(turn), foreignTaskComplete,
+    tool("function_call", ordinaryCall), tool("function_call_output", ordinaryCall), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+});
+
 test("malformed explicit native tool owner never falls back to legacy single-turn attribution", () => {
   for (const malformed of [null, [], "invalid", {}, { turn_id: null }, { turn_id: "" }]) {
     write([taskStarted(turn), tool("function_call", ordinaryCall),

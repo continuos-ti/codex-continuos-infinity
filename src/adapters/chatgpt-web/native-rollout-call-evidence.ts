@@ -85,6 +85,8 @@ export function observeNativeCallOutputs(
           active = true;
           started = true;
         } else if (typeof payload.turn_id === "string") {
+          // A repeated foreign start loses the correct overlap count if treated as a set.
+          if (otherActiveTurns.has(payload.turn_id)) return unavailable();
           otherActiveTurns.add(payload.turn_id);
         } else {
           // An unidentified turn may overlap later target records.
@@ -96,7 +98,8 @@ export function observeNativeCallOutputs(
         if (payload.turn_id === turnId) {
           active = false;
         } else if (typeof payload.turn_id === "string") {
-          otherActiveTurns.delete(payload.turn_id);
+          // An unpaired foreign completion can hide an unknown concurrent owner.
+          if (!otherActiveTurns.delete(payload.turn_id) && active) return unavailable();
         } else if (payload.turn_id === undefined && active && otherActiveTurns.size === 0) {
           // Older rollouts omit the completion ID. Keep their single-turn evidence.
           active = false;
