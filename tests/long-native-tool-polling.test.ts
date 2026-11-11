@@ -1,16 +1,16 @@
 import { test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import { CHATGPT_NATIVE_DEFER_AFTER_MS, CHATGPT_NATIVE_PENDING_WIRE_NAME } from "../src/adapters/chatgpt-web/mcp-server";
+import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 test("a slow native tool returns a polling receipt, executes once and delivers its original result", async () => {
   expect(CHATGPT_NATIVE_DEFER_AFTER_MS).toBeLessThan(60_000);
-  const root = mkdtempSync(join(tmpdir(), "cgw-deferred-native-"));
+  const root = socketFixtureRoot("cgw-deferred-native-");
   const socket = defaultBrokerEndpoint(join(root, "broker"));
   const broker = TurnBroker.forSocket(socket);
   const environment = {

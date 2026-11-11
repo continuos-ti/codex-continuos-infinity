@@ -181,7 +181,7 @@ printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/resources/app.asar.unpacked/asset
         if (valid) {
           assert.equal(result.status, 0, result.stderr);
           assert.deepEqual(fs.readFileSync(path.join(root, "lib", "1.2.3", "Codex Continuos Infinity.AppImage")), appImage);
-          assert.ok(fs.existsSync(path.join(root, "data", "applications", "codex-web-gpt.desktop")));
+          assert.ok(fs.existsSync(path.join(root, "data", "applications", "codex-continuos-infinity.desktop")));
         } else {
           assert.notEqual(result.status, 0);
           assert.match(result.stderr, /SHA-256 verification failed/);

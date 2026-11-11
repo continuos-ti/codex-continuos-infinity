@@ -38,7 +38,7 @@ case "$RUNTIME_PARENT" in
   /*) ;;
   *) echo "AppImage fallback runtime directory must be absolute" >&2; exit 65 ;;
 esac
-FALLBACK_ROOT="$RUNTIME_PARENT/codex-web-gpt-appimage-$(id -u)"
+FALLBACK_ROOT="$RUNTIME_PARENT/codex-continuos-infinity-appimage-$(id -u)"
 umask 077
 if [ -L "$FALLBACK_ROOT" ]; then
   echo "AppImage fallback root must not be a symbolic link" >&2
