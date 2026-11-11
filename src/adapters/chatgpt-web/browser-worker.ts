@@ -2503,7 +2503,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
-    useTemporaryChats: configured.useTemporaryChats !== false,
+    useTemporaryChats: configured.useTemporaryChats === true,
   };
 }
 

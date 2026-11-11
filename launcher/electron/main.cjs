@@ -524,7 +524,7 @@ function syncBrowserPreferences(stateStore, config) {
   const biggerContextAvailable = typeof config?.solAvailable === "boolean";
   const biggerContextEnabled = config?.experimentalBiggerContext === true;
   const composerPredictionsEnabled = config?.composerPredictionsEnabled !== false;
-  const useTemporaryChats = config?.useTemporaryChats !== false;
+  const useTemporaryChats = config?.useTemporaryChats === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true;
   const autoApproveToolCalls = config?.autoApproveToolCalls === true;
   const current = stateStore.read();
@@ -813,7 +813,6 @@ function registerIpc({ logger, stateStore }) {
       experimentalBiggerContext: false,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useTemporaryChats: true,
       autoApproveToolCalls: false,
       zeroRiskProEnabled: false,
     });
@@ -851,7 +850,7 @@ function registerIpc({ logger, stateStore }) {
       biggerContextAvailable: typeof runtimeHost.runtimeConfigSnapshot().config?.solAvailable === "boolean",
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
-      useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats !== false,
+      useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats === true,
       autoApproveToolCalls: runtimeHost.runtimeConfigSnapshot().config?.autoApproveToolCalls === true,
       ...(result.mode === "full" ? {
         mcpRuntimeInstalled: true,
@@ -896,7 +895,7 @@ function registerIpc({ logger, stateStore }) {
       biggerContextAvailable: typeof runtimeHost.runtimeConfigSnapshot().config?.solAvailable === "boolean",
       zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
       experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
-      useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats !== false,
+      useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats === true,
       autoApproveToolCalls: runtimeHost.runtimeConfigSnapshot().config?.autoApproveToolCalls === true,
       coreSetupComplete: true,
       codexCatalogVerified: IS_DEV_PROFILE,
@@ -1031,7 +1030,7 @@ function registerIpc({ logger, stateStore }) {
       browserInteractionMode: mode,
       biggerContextAvailable: typeof runtimeHost.runtimeConfigSnapshot().config?.solAvailable === "boolean",
       experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
-      useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats !== false,
+      useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats === true,
       autoApproveToolCalls: runtimeHost.runtimeConfigSnapshot().config?.autoApproveToolCalls === true,
       ...(mode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false } : {}),
       ...(result.configured ? {
@@ -1354,7 +1353,7 @@ async function start() {
       composerPredictionsEnabled: config?.composerPredictionsEnabled !== false,
       experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
       experimentalFreshConversationPerTurn: config?.experimentalFreshConversationPerTurn === true,
-      useTemporaryChats: config?.useTemporaryChats !== false,
+      useTemporaryChats: config?.useTemporaryChats === true,
       autoApproveToolCalls: config?.autoApproveToolCalls === true,
       zeroRiskProEnabled: config?.zeroRiskProEnabled === true,
     });
@@ -1383,7 +1382,7 @@ async function start() {
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
         experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
         experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
-        useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats !== false,
+        useTemporaryChats: runtimeHost.runtimeConfigSnapshot().config?.useTemporaryChats === true,
         autoApproveToolCalls: runtimeHost.runtimeConfigSnapshot().config?.autoApproveToolCalls === true,
         zeroRiskProEnabled: runtimeHost.runtimeConfigSnapshot().config?.zeroRiskProEnabled === true,
         ...(upgrade.mode === "full" ? {
@@ -1410,7 +1409,7 @@ async function start() {
       const composerPredictionsEnabled = configuredRuntime.config?.composerPredictionsEnabled !== false;
       const experimentalSkillAttachments = configuredRuntime.config?.experimentalSkillAttachments === true;
       const experimentalFreshConversationPerTurn = configuredRuntime.config?.experimentalFreshConversationPerTurn === true;
-      const useTemporaryChats = configuredRuntime.config?.useTemporaryChats !== false;
+      const useTemporaryChats = configuredRuntime.config?.useTemporaryChats === true;
       const autoApproveToolCalls = configuredRuntime.config?.autoApproveToolCalls === true;
       const zeroRiskProEnabled = configuredRuntime.config?.zeroRiskProEnabled === true;
       const saved = stateStore.read();
@@ -1440,7 +1439,7 @@ async function start() {
         composerPredictionsEnabled: config.composerPredictionsEnabled !== false,
         experimentalSkillAttachments: config.experimentalSkillAttachments === true,
         experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,
-        useTemporaryChats: config.useTemporaryChats !== false,
+        useTemporaryChats: config.useTemporaryChats === true,
         autoApproveToolCalls: config.autoApproveToolCalls === true,
         zeroRiskProEnabled: config.zeroRiskProEnabled === true,
         ...(runtime.bridgeRouteChanged ? {

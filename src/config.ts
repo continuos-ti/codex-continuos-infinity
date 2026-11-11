@@ -243,7 +243,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     composerPredictionsEnabled: true,
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: false,
-    useTemporaryChats: true,
+    useTemporaryChats: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -579,7 +579,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     composerPredictionsEnabled,
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
-    useTemporaryChats: parsed.useTemporaryChats !== false,
+    useTemporaryChats: parsed.useTemporaryChats === true,
     zeroRiskProEnabled,
   } as AppConfig;
 }

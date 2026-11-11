@@ -151,10 +151,10 @@ that option clicks **Allow once**, never a permanent grant.
 
 Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
 Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
-**Settings → Temporary Chat** is on by default and keeps new task conversations out of ChatGPT
-history. Turn it off to use ordinary saved chats or if your connector is unavailable in that mode.
-ChatGPT memory and custom instructions may apply in either mode. **New browser chat for each turn**
-separately controls conversation reuse. An explicit choice to disable Temporary Chat is preserved when updating.
+**Settings → Temporary Chat** is off by default, keeping new task conversations in ChatGPT
+history. Turn it on to opt in to Temporary Chat. ChatGPT memory and custom instructions may
+apply in either mode. **New browser chat for each turn** separately controls conversation reuse.
+Explicit Temporary Chat choices are preserved when updating.
 Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
 
 New installs use **Compatibility V1** for cross-backend subagents. **Native** preserves Codex's own

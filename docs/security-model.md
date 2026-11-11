@@ -120,11 +120,12 @@ one-shot MCP control capability in the exact retained source chat. If that chat 
 fresh tool-free chat receives the canonical Codex history; the bridge never parses ordinary
 assistant prose as a structured handoff.
 
-**Temporary Chat** is enabled by default and keeps new task conversations out of ChatGPT history; it does not prevent OpenAI from processing them
+**Temporary Chat** is disabled by default, so new task conversations remain in ChatGPT history.
+Enabling it keeps new task conversations out of that history; it does not prevent OpenAI from processing them
 or change local Codex history and diagnostics. ChatGPT memory, plugins and custom instructions may
 still apply. Existing ChatGPT conversations are not deleted. Connector verification follows the
 selected mode; sign-in and account inspection use ordinary chats. The retired saved-chat preference
-is discarded when loading older configuration; an explicit choice to disable Temporary Chat is preserved.
+is discarded when loading older configuration; explicit choices to enable or disable Temporary Chat are preserved.
 
 ## Network exposure
 

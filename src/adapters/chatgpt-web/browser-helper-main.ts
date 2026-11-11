@@ -212,7 +212,7 @@ async function run(message: RunMessage): Promise<void> {
       browserDiagnosticsPath: message.config.browserDiagnosticsPath,
       turnTimeoutMs: message.config.turnTimeoutMs,
       autoApproveToolCalls: message.config.autoApproveToolCalls,
-      useTemporaryChats: message.config.useTemporaryChats !== false,
+      useTemporaryChats: message.config.useTemporaryChats === true,
     },
   };
   const abortController = new AbortController();
@@ -400,7 +400,7 @@ function maintenanceWorker(message: MaintenanceMessage): ChatGptBrowserWorker {
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
-    chatgptWeb: { appName, browserHost: "launcher", browserHostDescriptorPath, useTemporaryChats: message.config.useTemporaryChats !== false },
+    chatgptWeb: { appName, browserHost: "launcher", browserHostDescriptorPath, useTemporaryChats: message.config.useTemporaryChats === true },
   };
   return ChatGptBrowserWorker.forProvider(provider);
 }
