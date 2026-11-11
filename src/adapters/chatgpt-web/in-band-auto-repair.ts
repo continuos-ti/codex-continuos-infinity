@@ -11,7 +11,9 @@ export function isSafeInBandAutoRepairFailure(error: unknown, state: {
   activeToolCalls: number | undefined;
 }): error is ChatGptWebAdapterError {
   return error instanceof ChatGptWebAdapterError
-    && (error.code === "chatgpt_stalled_same_turn" || error.code === "chatgpt_response_incomplete")
+    && (error.code === "chatgpt_stalled_same_turn"
+      || error.code === "chatgpt_response_incomplete"
+      || error.code === "browser_dom_observation_failed")
     && state.accepted && state.localTools && state.retained
     && !state.cancelled && !state.compaction && state.activeToolCalls === 0;
 }

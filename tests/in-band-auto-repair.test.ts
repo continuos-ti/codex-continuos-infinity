@@ -14,6 +14,14 @@ describe("in-band event-driven repair guards", () => {
       code: "chatgpt_response_incomplete", status: 502, errorType: "server_error", retryable: false,
     });
     expect(isSafeInBandAutoRepairFailure(incomplete, eligible)).toBe(true);
+    const observationFailed = new ChatGptWebAdapterError("Repeated DOM observation errors", {
+      code: "browser_dom_observation_failed", status: 502, errorType: "server_error", retryable: false,
+    });
+    expect(isSafeInBandAutoRepairFailure(observationFailed, eligible)).toBe(true);
+    for (const change of [{ accepted: false }, { retained: false }, { activeToolCalls: 1 },
+      { activeToolCalls: undefined }, { compaction: true }]) {
+      expect(isSafeInBandAutoRepairFailure(observationFailed, { ...eligible, ...change })).toBe(false);
+    }
   });
   test("never autorepairs before acceptance, on cancelled rounds or while MCP tools are active", () => {
     for (const change of [

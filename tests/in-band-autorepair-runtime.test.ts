@@ -98,6 +98,32 @@ test("accepted stall uses one recovery turn on same surface and returns original
   }finally{await f.server.stop(true)}
 });
 
+test("repeated typed DOM observation failure repairs once on the retained browser surface", async () => {
+  const f = await fixture(async (request, reused, count) => {
+    if (count === 1) {
+      expect(reused).toBe(false);
+      await request.onSubmitted?.();
+      throw new ChatGptWebAdapterError("Repeated DOM observation errors", {
+        code: "browser_dom_observation_failed", status: 502, errorType: "server_error", retryable: false,
+      });
+    }
+    expect(reused).toBe(true);
+    expect((await request.prepareResume()).text).toBe("NEW REPAIR ONLY");
+    request.onTextDelta?.("restored answer");
+    return "restored answer";
+  });
+  try {
+    const t = turn({ traceId: "cafe12babe34", incidentJournalDirectory: join(f.root, "runtime-incidents") });
+    expect(await f.worker.runExclusive(t.base)).toBe("restored answer");
+    expect(t.observed).toEqual(["restored answer"]);
+    expect(f.count()).toBe(2);
+    expect(f.requests.filter(request => request.phase === "start")).toHaveLength(1);
+    const incident = JSON.parse(await Bun.file(join(f.root, "runtime-incidents", "cafe12babe34.json")).text());
+    expect(incident).toMatchObject({ classification: "browser_observation_failure",
+      outcome: "inband_response_completed", autoRepairAttempts: 1 });
+  } finally { await f.server.stop(true); }
+});
+
 test("stalled turn with active MCP work fails closed without re-sending",async()=>{
   const f=await fixture(async (request,_reuse,count)=>{
     if(count===1){
