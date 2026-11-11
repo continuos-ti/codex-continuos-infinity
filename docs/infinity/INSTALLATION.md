@@ -1,5 +1,7 @@
 # Instalação e build
 
+Em 11/11/2026, o commit `e54d02ac7315ce12b18ffc382f50e0a4d14a3d99` foi compilado no worktree destacado `E:/Projetos/codex-continuos-infinity-build-e54d02a`. O pacote Windows x64 `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.678.925 bytes**, SHA-256 **`c2e448cd695e0be2eec93352cbce05db0ed34897e35be1aa87786c3a6b52522a`**. Seu blockmap tem **160.858 bytes**, SHA-256 **`f486368cf856d7d571bc4432e1f01b8793e6df2df8d19c11adec8570bc02784e`**. Os hashes coincidem com `checksums-local.txt`. O empacotamento, o smoke portátil (`PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`) e `7z t` (`Everything is Ok`) passaram, com Authenticode `NotSigned`. A compilação e os testes foram isolados da instalação de produção. A validação de instalação funcional em staging e a recuperação autenticada após crash continuam pendentes.
+
 ## Compilar
 
 Requisitos: Windows 11 x64, Git, Node.js recente, Bun 1.4.0 e dependências Electron. No diretório do fork:
