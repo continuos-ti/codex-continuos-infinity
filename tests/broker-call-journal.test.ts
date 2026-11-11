@@ -216,6 +216,55 @@ test("live broker refuses duplicate native owners and re-registration after a qu
   }
 });
 
+test("startup broker fences unfinished journal publication before any owner registration", async () => {
+  const { root, directory } = fixture();
+  const pendingDirectory = join(directory, traceId);
+  mkdirSync(pendingDirectory, { recursive: true });
+  const pendingPath = join(pendingDirectory,
+    `.${"a".repeat(64)}.${"b".repeat(24)}.pending`);
+  writeFileSync(pendingPath, "{unfinished");
+  // The diagnostic reader may show confirmed calls without treating this as an event.
+  expect(inspectBrokerCallJournal(directory)).toEqual([]);
+
+  const environment = { cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [] };
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  const changedTrace = "abcdef123456";
+  const nonce = "A".repeat(32);
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "unfinished-journal")));
+  const remote = new RemoteTurnBroker(broker.socketPath);
+  try {
+    broker.enableCallJournal(directory);
+    expect(() => broker.priorNativeCallStates(changedTrace, identity))
+      .toThrow("invalid or unreadable");
+    await expect(broker.register(environment, 20_000, changedTrace, identity))
+      .rejects.toThrow("invalid or unreadable");
+    await expect(remote.register(environment, 20_000, changedTrace, identity))
+      .rejects.toThrow("invalid or unreadable");
+    await expect(broker.registerSafe(environment, nonce, 20_000, changedTrace, identity))
+      .rejects.toThrow("invalid or unreadable");
+    await expect(remote.registerSafe(environment, nonce, 20_000, changedTrace, identity))
+      .rejects.toThrow("invalid or unreadable");
+    expect(existsSync(pendingPath)).toBe(true);
+  } finally {
+    await broker.close();
+  }
+
+  // Once the publication is independently investigated and removed, a new broker
+  // may admit a fresh owner with no surviving call evidence.
+  rmSync(pendingPath);
+  const restarted = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "restarted-journal")));
+  try {
+    restarted.enableCallJournal(directory);
+    const token = await restarted.register(environment, 20_000, changedTrace, identity);
+    expect(token).toStartWith("turn_");
+    restarted.revoke(token);
+  } finally {
+    await restarted.close();
+  }
+});
+
 test("startup broker refuses a corrupt journal before creating any new browser owner", async () => {
   const { root, directory } = fixture();
   mkdirSync(directory, { recursive: true });

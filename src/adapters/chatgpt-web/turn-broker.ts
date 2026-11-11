@@ -12,7 +12,7 @@ import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
 import { acquireBrokerJournalOwnership } from "./broker-journal-ownership";
-import { inspectBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
+import { inspectSettledBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
 import { cwdWithinRealRoots } from "./trusted-cwd-path";
@@ -384,7 +384,7 @@ export class TurnBroker implements TurnBrokerOwner {
       let unreadable = false;
       let evidence: BrokerRecoveryCall[] = [];
       try {
-        evidence = inspectBrokerCallJournal(journalDirectory);
+        evidence = inspectSettledBrokerCallJournal(journalDirectory);
       } catch {
         unreadable = true;
       }

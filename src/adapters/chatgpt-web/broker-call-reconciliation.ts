@@ -122,6 +122,15 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
   return inspectBrokerCallJournalSnapshot(directory).calls;
 }
 
+/** The startup admission fence must account for interrupted event publications too. */
+export function inspectSettledBrokerCallJournal(directory: string): BrokerRecoveryCall[] {
+  const snapshot = inspectBrokerCallJournalSnapshot(directory);
+  if (snapshot.pendingPublication) {
+    throw new Error("Broker call journal has unfinished event publication; reconciliation is required");
+  }
+  return snapshot.calls;
+}
+
 export type AuthenticatedBrokerResultEvidence = {
   status: "unavailable";
   /** An unavailable result is never a reason to dispatch the call again. */
