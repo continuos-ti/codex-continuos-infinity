@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realp
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
-import { readAuthenticatedBrokerResultEvidence, type AuthenticatedBrokerResultEvidence } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { readAuthenticatedBrokerCallInventory, readAuthenticatedBrokerResultEvidence, type AuthenticatedBrokerResultEvidence } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "../src/adapters/chatgpt-web/environment";
 import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
@@ -103,6 +103,66 @@ test("current native owner may recover authenticated result evidence without obt
   expect(records).not.toContain(result.content[0]!.text);
   expect(records).not.toContain(threadId);
   expect(records).not.toContain(turnId);
+});
+
+test("native call inventory authenticates ownership across traces without exposing results or replay rights", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const changedTrace = "123456abcdef";
+  const pendingCallId = `call_${"B".repeat(32)}`;
+  const foreignCallId = `call_${"C".repeat(32)}`;
+  const ownerDigest = nativeBrokerOwnerDigest({ threadId, turnId })!;
+  recordBrokerCallEvent({ directory, traceId: changedTrace, callId: pendingCallId,
+    wireName: "read_tool", event: "queued", nativeOwnerDigest: ownerDigest });
+  recordBrokerCallEvent({ directory, traceId: changedTrace, callId: foreignCallId,
+    wireName: "other_tool", event: "queued", nativeOwnerDigest: "a".repeat(64) });
+
+  const inventory = readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory, lineage: lineage(), turnId,
+  });
+  expect(inventory.status).toBe("verified_native_call_inventory");
+  if (inventory.status !== "verified_native_call_inventory") throw new Error("Expected authenticated inventory");
+  expect(inventory.calls.map(call => ({ traceId: call.traceId, callId: call.callId, state: call.state })))
+    .toEqual([
+      { traceId: changedTrace, callId: pendingCallId, state: "queued_unconfirmed" },
+      { traceId, callId, state: "result_unavailable" },
+    ]);
+  expect(inventory.calls.every(call => call.replayAuthorized === false && call.resultRecoverable === false))
+    .toBe(true);
+  expect(inventory.replayAuthorized).toBe(false);
+  expect(inventory.externalEffectsReconciled).toBe(false);
+  expect(JSON.stringify(inventory)).not.toContain(result.content[0]!.text);
+  expect(JSON.stringify(inventory)).not.toContain(foreignCallId);
+  expect(JSON.stringify(inventory)).not.toContain(threadId);
+  expect(JSON.stringify(inventory)).not.toContain(turnId);
+});
+
+test("native call inventory fails closed for stale turn, mismatched lineage, ambiguous home and corrupt journal", () => {
+  nativeRollout();
+  journal();
+  const inventory = (options: { owner?: ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
+    currentTurn?: string; additionalCodexHomes?: string[] } = {}) => readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory,
+    lineage: options.owner ?? lineage(), turnId: options.currentTurn ?? turnId,
+    ...(options.additionalCodexHomes ? { additionalCodexHomes: options.additionalCodexHomes } : {}),
+  });
+  expect(inventory({ currentTurn: staleTurnId }).status).toBe("unavailable");
+  expect(inventory({ owner: lineage(true) }).status).toBe("unavailable");
+  const secondHome = join(root, "duplicate-home");
+  nativeRollout({ alternateHome: secondHome });
+  expect(inventory({ additionalCodexHomes: [secondHome] }).status).toBe("unavailable");
+
+  const digest = createHash("sha256").update(`v1:${callId}:queued`).digest("hex");
+  writeFileSync(join(directory, traceId, `${digest}.json`), "{broken");
+  expect(() => inventory()).toThrow("invalid or inconsistent evidence");
+});
+
+test("a missing broker journal cannot be treated as a verified empty inventory", () => {
+  nativeRollout();
+  expect(readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory, lineage: lineage(), turnId,
+  })).toEqual({ status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false });
 });
 
 test("missing journal boundary or missing ciphertext never enables recovering a result", () => {

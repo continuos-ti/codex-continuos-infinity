@@ -117,6 +117,70 @@ export type AuthenticatedBrokerResultEvidence = {
   externalEffectsReconciled: false;
 };
 
+export type AuthenticatedBrokerCallInventory = {
+  status: "unavailable";
+  replayAuthorized: false;
+  externalEffectsReconciled: false;
+} | {
+  status: "verified_native_call_inventory";
+  /** Calls owned by this native turn across all diagnostic traces, including changed providers. */
+  calls: BrokerRecoveryCall[];
+  replayAuthorized: false;
+  externalEffectsReconciled: false;
+};
+
+/**
+ * Inventory a crashed broker's call boundaries using current native Codex authority. Diagnostic
+ * traces can change across restarts, so discover calls by authenticated owner digest. This only
+ * returns the journal's observation states. Sealed bodies require an explicit authenticated
+ * read per call, and neither operation reconciles effects or enables tool dispatch.
+ */
+export function readAuthenticatedBrokerCallInventory(input: {
+  journalDirectory: string;
+  codexHome: string;
+  additionalCodexHomes?: readonly string[];
+  sqliteHome?: string;
+  lineage: ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
+  turnId: string;
+}): AuthenticatedBrokerCallInventory {
+  const unavailable = (): AuthenticatedBrokerCallInventory => ({
+    status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+  });
+  const ownerDigest = nativeBrokerOwnerDigest({ threadId: input.lineage.threadId, turnId: input.turnId });
+  // An absent journal directory provides no evidence that a previous broker was empty.
+  if (!ownerDigest || !existsSync(input.journalDirectory)) return unavailable();
+
+  const ownerOptions = {
+    codexHome: input.codexHome,
+    ...(input.additionalCodexHomes ? { additionalCodexHomes: input.additionalCodexHomes } : {}),
+    ...(input.sqliteHome ? { sqliteHome: input.sqliteHome } : {}),
+    lineage: input.lineage,
+    turnId: input.turnId,
+  };
+  let initialOwner: ReturnType<typeof resolveCurrentCodexRolloutEnvironment>;
+  try {
+    initialOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
+    if (!initialOwner) return unavailable();
+  } catch {
+    return unavailable();
+  }
+
+  // Journal corruption is a recovery error, including corruption in another trace. Do not
+  // silently turn it into an empty inventory that might be mistaken for a clean turn.
+  const calls = inspectBrokerCallJournal(input.journalDirectory)
+    .filter(call => call.nativeOwnerDigest === ownerDigest);
+  try {
+    const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
+    if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();
+  } catch {
+    return unavailable();
+  }
+  return {
+    status: "verified_native_call_inventory", calls,
+    replayAuthorized: false, externalEffectsReconciled: false,
+  };
+}
+
 /**
  * Recover the body only for a freshly authenticated native Codex turn. This internal API accepts
  * native lineage and registered Codex homes supplied by the trusted runtime. It does not accept
