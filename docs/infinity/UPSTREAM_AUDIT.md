@@ -15,15 +15,17 @@ A auditoria anterior registrou 28 alterações e 12 novos arquivos relativos ao 
 | Suíte completa de runtime após correções | 1.158 aprovados, 111 ignorados, 0 falhas em 1.269 testes |
 | Suíte integral após reforço do CWD confiável (10/11/2026) | 1.162 aprovados, 111 ignorados, 0 falhas em 1.273 testes; `bun run verify` código 0 |
 | Suíte integral com journal de preflight (10/11/2026) | 1.167 aprovados, 111 ignorados, 0 falhas em 1.278 testes (100 arquivos, 10.072 verificações); `bun run verify` código 0; ajuste posterior do campo de reconciliação: 169 testes dirigidos e TypeScript aprovados |
+| Suíte integral do runtime com journal do broker (10/11/2026) | 1.182 aprovados, 111 ignorados, 0 falhas em 1.293 testes (102 arquivos, 10.156 verificações); refatoração posterior validada com 16 testes focados aprovados, 0 falhas, 88 verificações |
 | Instalação congelada de dependências | un install --frozen-lockfile passou no root e no launcher |
 | Typecheck + teste de autorreparo + contrato do instalador + build renderer | 4 verificações concluídas com código 0 |
 | Testes de regressão CLI/modelo | 63 aprovados, 1 ignorado, 0 falhas |
 | Suite dev profile | 7 aprovados, 0 falhas |
 | Testes dirigidos de autorreparo e polling | 173 aprovados, 0 falhas |
 | Smoke do instalador Windows | PACKAGED_LAUNCHER_SMOKE_OK win32/x64 |
-| SHA-256 do instalador Windows | 71cc5b9182fe853f62e022d5220c152ca076016ceabbbbfe019278d310fec44b |
+| SHA-256 do instalador Windows (build local mais recente) | b41d3fb5a4197952c93074e4f2cd70575d358fda7a85eabe332136eea0fd9731 |
+| Integridade de pacote local | `checksums-local.txt` gerado na compilação e validado pelo smoke; arquivo anterior desatualizado foi rejeitado como esperado |
 | Assinatura digital Windows | Ausente |
 
-O pacote Windows possui 153.672.928 bytes. A execução inicial da suíte teve 7 falhas. Após as correções, a nova execução integral passou sem falhas em 10/11/2026. A atualização dos instaladores e do README foi verificada em testes específicos, mantendo o canal de atualização separado.
+O pacote Windows mais recente possui 153.675.668 bytes. A execução inicial da suíte teve 7 falhas. Após as correções, a nova execução integral passou sem falhas em 10/11/2026. A atualização dos instaladores e do README foi verificada em testes específicos, mantendo o canal de atualização separado. Os hashes locais são específicos de cada build; consultar sempre `launcher/artifacts/checksums-local.txt`.
 
 Permanecem pendentes testes reais autenticados do conector, cinco chats paralelos, reinício controlado, crash de processo e recuperação automática quando o CWD continua não comprovado no preflight. O bloqueio já gera incidente persistente e sanitizado, sem conceder permissão. O arquivo do objetivo original em .codex/attachments é privado e não está incluído no fork.

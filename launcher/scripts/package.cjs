@@ -1,4 +1,5 @@
 const { spawnSync } = require("node:child_process");
+const { createHash, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -79,6 +80,21 @@ function runChecked(command, args) {
   }
 }
 
+function sha256File(file) {
+  const digest = createHash("sha256");
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let count;
+    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      digest.update(buffer.subarray(0, count));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return digest.digest("hex");
+}
+
 function verifySignedMacArchive() {
   const archives = fs.readdirSync(staging)
     .filter(name => /-mac-(?:arm64|x64)\.zip$/.test(name));
@@ -129,6 +145,16 @@ try {
     const publicName = artifact.name.replace(/-linux-x86_64(?=\.)/, "-linux-x64")
       .replace(/-linux-aarch64(?=\.)/, "-linux-arm64");
     fs.copyFileSync(path.join(staging, artifact.name), path.join(artifactsDirectory, publicName));
+  }
+  const checksums = fs.readdirSync(artifactsDirectory).filter(name =>
+    /\.(?:AppImage|dmg|exe|zip|blockmap)$/i.test(name)).sort()
+    .map(name => `${sha256File(path.join(artifactsDirectory, name))}  ${name}`).join("\n") + "\n";
+  const checksumTemp = path.join(artifactsDirectory, `.checksums-${randomBytes(8).toString("hex")}.pending`);
+  try {
+    fs.writeFileSync(checksumTemp, checksums, { flag: "wx", mode: 0o600 });
+    fs.renameSync(checksumTemp, path.join(artifactsDirectory, "checksums-local.txt"));
+  } finally {
+    fs.rmSync(checksumTemp, { force: true });
   }
 } finally {
   fs.rmSync(staging, { recursive: true, force: true });

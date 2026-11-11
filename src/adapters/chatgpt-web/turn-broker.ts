@@ -10,6 +10,7 @@ import {
 import type { ChatGptTurnEnvironment } from "./environment";
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
+import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
 
 interface BrokerRetirementFailure {
   code: "codex_tool_timeout";
@@ -99,6 +100,7 @@ interface SafeTurnControl {
 
 interface TurnChannel {
   traceId: string;
+  journalNonce: string;
   externalOwner: boolean;
   environment: PendingTurn;
   bindingId?: string;
@@ -329,8 +331,32 @@ export class TurnBroker implements TurnBrokerOwner {
   private server?: Server;
   private startPromise?: Promise<void>;
   private socketIdentity?: { dev: number; ino: number };
+  private callJournalDirectory?: string;
 
   private constructor(readonly socketPath: string) {}
+
+  /** Opt-in at startup, before any turn has registered on this socket. */
+  enableCallJournal(directory: string): void {
+    if (!isAbsolute(directory)) throw new Error("Broker call journal directory must be absolute");
+    const normalized = resolve(directory);
+    if (this.callJournalDirectory === normalized) return;
+    if (this.callJournalDirectory || this.channels.size > 0) {
+      throw new Error("Broker call journal cannot be enabled or changed after turn registration");
+    }
+    this.callJournalDirectory = normalized;
+  }
+
+  private recordCall(channel: TurnChannel, request: BrokerToolRequest, event: BrokerCallEvent): void {
+    if (!this.callJournalDirectory) return;
+    // Preserve the native 12-hex trace when available. External owners may provide an
+    // arbitrary identifier; give their turn a private per-registration pseudonym instead.
+    const traceId = /^[0-9a-f]{12}$/.test(channel.traceId)
+      ? channel.traceId : createHash("sha256").update(`broker:${channel.journalNonce}`).digest("hex").slice(0, 12);
+    recordBrokerCallEvent({
+      directory: this.callJournalDirectory,
+      traceId, callId: request.callId, wireName: request.wireName, event,
+    });
+  }
 
   /**
    * A ChatGPT turn outlives the request that started it, and its Codex Native calls arrive from a
@@ -360,6 +386,7 @@ export class TurnBroker implements TurnBrokerOwner {
     const token = opaqueId(handlePrefix);
     const channel: TurnChannel = {
       traceId,
+      journalNonce: token,
       externalOwner,
       environment: {
         ...environment,
@@ -500,9 +527,12 @@ export class TurnBroker implements TurnBrokerOwner {
     this.assertSafeHarnessRunning(channel, true);
     const invocation = channel.invocations.get(callId);
     if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
-    if (!channel.deliveredCallIds.delete(callId)) {
+    if (!channel.deliveredCallIds.has(callId)) {
       throw new Error(`tool call was completed before it was delivered: ${callId}`);
     }
+    // If persistence fails, retain the pending invocation for an owner retry.
+    this.recordCall(channel, invocation.request, "result_received");
+    channel.deliveredCallIds.delete(callId);
     channel.invocations.delete(callId);
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size} isError=${result.isError === true}`);
     invocation.resolve(result);
@@ -550,6 +580,13 @@ export class TurnBroker implements TurnBrokerOwner {
     this.assertSafeHarnessRunning(channel);
     if (channel.compactionRequested) {
       throw new Error("Codex context compaction was already requested for this turn");
+    }
+    // Compaction can resolve queued invocations without delivering them to the adapter.
+    // Persist the possibility of that transition before changing the queue or turn state.
+    // The payload itself is not durable and this event never authorizes replay.
+    for (const callId of channel.queuedCallIds) {
+      const invocation = channel.invocations.get(callId);
+      if (invocation) this.recordCall(channel, invocation.request, "compaction_resolution_possible");
     }
     channel.compactionRequested = true;
     channel.compactionResult = structuredClone(queuedResult);
@@ -683,6 +720,14 @@ export class TurnBroker implements TurnBrokerOwner {
   revoke(token: string, reason = new Error("Codex turn binding was revoked"), failure?: BrokerRetirementFailure): void {
     const channel = this.channels.get(token);
     if (!channel) return;
+    for (const invocation of channel.invocations.values()) {
+      try {
+        this.recordCall(channel, invocation.request, "retired_uncertain");
+      } catch {
+        // Revocation must terminate waiters even when the diagnostic disk is full.
+        console.error(`[chatgpt-web] broker trace=${channel.traceId} could not persist retirement evidence`);
+      }
+    }
     const diagnostics = retirementDiagnostics(channel);
     console.info(`[chatgpt-web] broker_retired ${JSON.stringify({
       ...diagnostics,
@@ -1236,6 +1281,8 @@ export class TurnBroker implements TurnBrokerOwner {
       freeform: request.freeform === true,
       ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
     };
+    // Do not expose an invocation to the adapter before recording its existence.
+    this.recordCall(binding.channel, toolRequest, "queued");
     return new Promise<BrokerToolResult>((resolveInvoke, rejectInvoke) => {
       binding.channel.invocations.set(callId, {
         request: toolRequest, queuedAt: performance.now(), resolve: resolveInvoke, reject: rejectInvoke,
@@ -1253,7 +1300,13 @@ export class TurnBroker implements TurnBrokerOwner {
   }
 
   private takeQueued(channel: TurnChannel): BrokerToolRequest[] {
-    const ids = channel.queuedCallIds.splice(0);
+    // Record all possibly-delivered boundaries before altering the in-memory queue.
+    const ids = [...channel.queuedCallIds];
+    for (const id of ids) {
+      const invocation = channel.invocations.get(id);
+      if (invocation) this.recordCall(channel, invocation.request, "delivery_possible");
+    }
+    channel.queuedCallIds.splice(0, ids.length);
     for (const id of ids) {
       const invocation = channel.invocations.get(id);
       if (invocation) {
@@ -1283,7 +1336,19 @@ export class TurnBroker implements TurnBrokerOwner {
 
   private wakeToolWaiters(channel: TurnChannel): void {
     if (channel.queuedCallIds.length === 0 || channel.waiters.size === 0) return;
-    const batch = this.takeQueued(channel);
+    let batch: BrokerToolRequest[];
+    try {
+      batch = this.takeQueued(channel);
+    } catch (error) {
+      // A timer must not throw outside the request path; notify the waiting adapter.
+      const waiters = [...channel.waiters];
+      channel.waiters.clear();
+      for (const waiter of waiters) {
+        if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
+        waiter.reject(error instanceof Error ? error : new Error("Broker call journal write failed"));
+      }
+      return;
+    }
     this.logToolDelivery(channel, batch, "waiter");
     const waiters = [...channel.waiters];
     channel.waiters.clear();

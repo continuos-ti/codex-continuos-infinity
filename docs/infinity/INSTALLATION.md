@@ -25,7 +25,9 @@ Variáveis de configuração: CODEX_CONTINUOS_INFINITY_HOME, CODEX_CONTINUOS_INF
 
 ## Verificação local
 
-O instalador Windows 6.1.18-continuos.1 foi criado em 10/11/2026, com 153.672.928 bytes. Seu SHA-256 local é 71cc5b9182fe853f62e022d5220c152ca076016ceabbbbfe019278d310fec44b. O smoke de pacote retornou PACKAGED_LAUNCHER_SMOKE_OK win32/x64.
+O empacotamento gera `launcher/artifacts/checksums-local.txt` com SHA-256 do instalador e dos respectivos blockmaps/arquivos distribuíveis. O comando `bun run app:smoke` verifica a lista completa de arquivos e os hashes **antes** de instalar o pacote em uma localização independente no perfil Windows do usuário; em seguida verifica o manifesto do runtime instalado e seu bundleId. Qualquer alteração do instalador exige reconstrução do arquivo de hashes. Não reutilize hashes de compilações anteriores.
+
+O instalador Windows 6.1.18-continuos.1 foi compilado e o smoke de pacote retornou `PACKAGED_LAUNCHER_SMOKE_OK win32/x64` em 10/11/2026. A aplicação em `C:/Program Files/Codex Web GPT` continua separada.
 
 O instalador não possui assinatura Authenticode. Uma release pública deve explicitar essa condição e fornecer checksums. Não altere as políticas de segurança do Windows para executar o pacote.
 

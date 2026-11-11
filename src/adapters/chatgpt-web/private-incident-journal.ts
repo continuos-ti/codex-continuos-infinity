@@ -13,14 +13,32 @@ export function publishPrivateIncident(
   incident: object,
 ): { path: string; recorded: boolean } {
   if (!/^[0-9a-f]{12}$/.test(traceId)) throw new Error("Invalid incident trace id");
+  return publishPrivateRecord(directory, traceId, incident);
+}
+
+/** Separate 64-hex namespace: broker events cannot broaden the incident trace contract. */
+export function publishPrivateBrokerEvent(
+  directory: string,
+  eventKey: string,
+  event: object,
+): { path: string; recorded: boolean } {
+  if (!/^[0-9a-f]{64}$/.test(eventKey)) throw new Error("Invalid broker event key");
+  return publishPrivateRecord(directory, eventKey, event);
+}
+
+function publishPrivateRecord(
+  directory: string,
+  key: string,
+  record: object,
+): { path: string; recorded: boolean } {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const path = join(directory, `${traceId}.json`);
-  const pending = join(directory, `.${traceId}.${randomBytes(12).toString("hex")}.pending`);
+  const path = join(directory, `${key}.json`);
+  const pending = join(directory, `.${key}.${randomBytes(12).toString("hex")}.pending`);
   let fd: number | undefined;
   try {
     fd = openSync(pending, "wx", 0o600);
     try {
-      writeFileSync(fd, JSON.stringify(incident) + "\n");
+      writeFileSync(fd, JSON.stringify(record) + "\n");
       fsyncSync(fd);
     } finally {
       closeSync(fd);

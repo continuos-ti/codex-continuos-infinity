@@ -21,7 +21,8 @@ import { assertComposerPredictionFits, configureComposerPrediction } from "./com
 import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compaction-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
-import { providerConfig } from "./config";
+import { getConfigDir, providerConfig } from "./config";
+import { join } from "node:path";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
@@ -976,6 +977,7 @@ export function startServer(
   const startedAt = Date.now();
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
   if (config.mode === "full") {
+    turnBroker!.enableCallJournal(join(getConfigDir(), "diagnostics", "broker-calls"));
     void turnBroker!.listen().catch(error => {
       console.error(
         `[chatgpt-web] turn broker endpoint is unavailable: ${error instanceof Error ? error.message : String(error)}`,

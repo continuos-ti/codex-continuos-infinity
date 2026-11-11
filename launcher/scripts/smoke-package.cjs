@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { createHash } = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -14,6 +15,38 @@ const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
 let macAppBundle;
+
+function sha256File(file) {
+  const digest = createHash("sha256");
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let count;
+    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      digest.update(buffer.subarray(0, count));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return digest.digest("hex");
+}
+
+function verifyArtifactChecksums() {
+  const checksumFile = path.join(artifactsDirectory, "checksums-local.txt");
+  const lines = fs.readFileSync(checksumFile, "utf8").trim().split(/\r?\n/);
+  const names = fs.readdirSync(artifactsDirectory).filter(name =>
+    /\.(?:AppImage|dmg|exe|zip|blockmap)$/i.test(name)).sort();
+  if (lines.length !== names.length || names.length === 0) {
+    throw new Error("Packaged artifact checksum list is incomplete");
+  }
+  for (let index = 0; index < names.length; index++) {
+    const match = /^([a-f0-9]{64})  ([^/\\\r\n]+)$/.exec(lines[index]);
+    if (!match || match[2] !== names[index]
+      || sha256File(path.join(artifactsDirectory, names[index])) !== match[1]) {
+      throw new Error(`Packaged artifact checksum mismatch: ${names[index]}`);
+    }
+  }
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -72,6 +105,7 @@ function smokeEnvironment() {
 }
 
 try {
+  verifyArtifactChecksums();
   let executable;
   let command;
   let args;
