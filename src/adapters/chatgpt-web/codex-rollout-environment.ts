@@ -22,6 +22,7 @@ import type {
   ChatGptTurnEnvironment,
   ChatGptUnattributedEnvironmentMessage,
 } from "./environment";
+import { cwdWithinRealRoots } from "./trusted-cwd-path";
 
 type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
 
@@ -573,9 +574,9 @@ function environmentFromTurnContext(
   const roots = declaredRoots.length > 0 ? declaredRoots : [cwd];
   const permissionProfile = record(payload.permission_profile);
   const sandbox = record(payload.sandbox_policy);
-  if (!roots.some(root => contains(root, cwd))
+  if (!cwdWithinRealRoots(roots, cwd)
     && !(permissionProfile?.type === "disabled" && sandbox?.type === "danger-full-access")) {
-    throw new Error("Codex rollout cwd is outside its workspace roots");
+    throw new Error("Codex rollout cwd is outside its real workspace roots");
   }
 
   if (!permissionProfile || !sandbox) {

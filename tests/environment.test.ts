@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve, toNamespacedPath } from "node:path";
 import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision, extractChatGptTurnEnvironment, extractChatGptTurnEnvironmentClaim, extractChatGptTurnIdentity, extractChatGptTurnUserRevision, isChatGptCompactionContinuation } from "../src/adapters/chatgpt-web/environment";
@@ -11,6 +11,7 @@ import { parseRequest } from "../src/responses/parser";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
+import { cwdWithinRealRoot } from "../src/adapters/chatgpt-web/trusted-cwd-path";
 import type { CodexParsedRequest, CodexTool } from "../src/types";
 
 const root = resolve(process.cwd());
@@ -935,6 +936,36 @@ describe("permission_profile sandbox detection (Codex CLI 0.146+)", () => {
 });
 
 describe("trusted Codex task environment continuity", () => {
+  test("restricted cwd verifies real directory membership across junctions and link changes", () => {
+    const base = mkdtempSync(join(tmpdir(), "codex-real-workspace-"));
+    temporaryRoots.push(base);
+    const workspace = join(base, "workspace");
+    const inside = join(workspace, "inside");
+    const outside = join(base, "outside");
+    const alias = join(workspace, "alias");
+    mkdirSync(inside, { recursive: true });
+    mkdirSync(outside);
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    symlinkSync(inside, alias, linkType);
+    const xml = `<environment_context><cwd>${alias}</cwd><network_access>restricted</network_access>`
+      + `<filesystem><workspace_roots><root>${workspace}</root></workspace_roots>`
+      + `${readOnlyProfileXml}</filesystem></environment_context>`;
+    const request = currentWire({ workspace, sandbox: "read-only", environmentXml: xml });
+    const store = new ChatGptThreadEnvironmentStore();
+    expect(cwdWithinRealRoot(workspace, alias)).toBe(true);
+    expect(store.resolve(request).cwd).toBe(alias);
+    rmSync(alias, { recursive: true, force: true });
+    symlinkSync(outside, alias, linkType);
+    expect(cwdWithinRealRoot(workspace, alias)).toBe(false);
+    // The path and original turn identity are unchanged; only its real target moved.
+    expect(() => store.resolve(request)).toThrow("missing current native worktree authority");
+    const continued = currentWire({ workspace, sandbox: "read-only", environmentXml: xml });
+    (continued._rawBody as { input: unknown[] }).input = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: "Continue" }] },
+    ];
+    expect(() => store.resolve(continued)).toThrow("missing cwd");
+  });
+
   test("preserves corrupt state and rebuilds only from a verified current environment", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "codex-corrupt-environment-"));
     temporaryRoots.push(stateRoot);
@@ -1377,6 +1408,20 @@ describe("trusted Codex task environment continuity", () => {
     expect(store.resolve(request)).toMatchObject({ cwd: root, roots: reordered });
     environment.content[0]!.text = original.replaceAll(dirname(root), join(codexHome, "unrelated"));
     expect(() => store.resolve(request)).toThrow("environment conflicts");
+  });
+
+  test("current native workspace-write rollout rejects a junction cwd escaping its real roots", () => {
+    const { codexHome, request, nativeContext, writeContext } = cwdlessRolloutFixture("workspace-write");
+    const visualizations = join(codexHome, "visualizations");
+    const outside = join(codexHome, "elsewhere");
+    const alias = join(visualizations, "junction");
+    mkdirSync(visualizations, { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(outside, alias, process.platform === "win32" ? "junction" : "dir");
+    (nativeContext.payload as Record<string, unknown>).cwd = alias;
+    writeContext();
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
+      .toThrow("Codex rollout cwd is outside its real workspace roots");
   });
 
   test.each(["workspace-write", "danger-full-access"] as const)("cwd-less %s cannot use cached authority or an earlier turn (#894)", mode => {

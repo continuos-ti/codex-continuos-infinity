@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProviderAdapter } from "../src/adapters/base";
@@ -100,6 +100,32 @@ test("remote owners preserve Full Access worktree cwd outside project roots", as
       { type: "workspaceWrite" as const, writableRoots: environment.roots, networkAccess: false },
     ]) {
       await expect(remote.register({ ...environment, sandboxPolicy }, 60_000, "restricted-worktree"))
+        .rejects.toThrow("environment is invalid");
+    }
+  } finally {
+    await broker.close();
+  }
+});
+
+test("remote restricted owners reject a junction cwd outside their workspace", async () => {
+  const base = scratch("cgw-dev-restricted-junction");
+  const root = join(base, "workspace");
+  const outside = join(base, "outside");
+  const cwd = join(root, "junction");
+  mkdirSync(root);
+  mkdirSync(outside);
+  symlinkSync(outside, cwd, process.platform === "win32" ? "junction" : "dir");
+  const socketPath = defaultBrokerEndpoint(base);
+  const broker = TurnBroker.forSocket(socketPath);
+  const remote = new RemoteTurnBroker(socketPath);
+  await broker.listen();
+  try {
+    for (const policy of [
+      { type: "readOnly" as const, networkAccess: false },
+      { type: "workspaceWrite" as const, writableRoots: [root], networkAccess: false },
+    ]) {
+      await expect(remote.register({ cwd, roots: [root], writableRoots: policy.type === "readOnly" ? [] : [root],
+        sandboxPolicy: policy, tools: [] }, 60_000, "escaped-junction"))
         .rejects.toThrow("environment is invalid");
     }
   } finally {

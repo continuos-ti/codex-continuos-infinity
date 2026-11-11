@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, renameSync, statSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteFile } from "../../config";
 import { getCodexHome, getTrustedCodexHomes } from "../../codex-integration-shared";
@@ -24,6 +24,7 @@ import {
 } from "./environment";
 import { isNativeCodexIdentifier, latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { ChatGptWebAdapterError } from "./adapter-error";
+import { cwdIsAccessibleDirectory, cwdWithinRealRoots } from "./trusted-cwd-path";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -50,10 +51,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function pathIdentity(value: string): string {
   const normalized = resolve(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function cwdIsAccessibleDirectory(path: string): boolean {
-  try { return statSync(path).isDirectory(); } catch { return false; }
 }
 
 function contains(root: string, path: string): boolean {
@@ -188,7 +185,8 @@ export class ChatGptThreadEnvironmentStore {
       const claim = extractChatGptTurnEnvironmentClaim(parsed);
       const environment = claim.environment;
       const outsideProjectRoots = environment.cwd !== undefined
-        && !environment.roots.some(root => contains(root, environment.cwd!));
+        && cwdIsAccessibleDirectory(environment.cwd)
+        && !cwdWithinRealRoots(environment.roots, environment.cwd);
       if (environment.cwd === undefined || outsideProjectRoots || this.codexHomes.length > 1
         || (environment.sandboxPolicy.type !== "dangerFullAccess" && !claim.statesNetworkAccess)) {
         // A shared bridge must prove the current native owner even for complete envelopes.
@@ -366,7 +364,9 @@ export class ChatGptThreadEnvironmentStore {
       return undefined;
     }
     // Cached authority cannot refer to a directory that has since been removed.
-    if (!cwdIsAccessibleDirectory(stored.cwd)) return undefined;
+    if (!cwdIsAccessibleDirectory(stored.cwd)
+      || (stored.sandboxPolicy.type !== "dangerFullAccess"
+        && !cwdWithinRealRoots(stored.roots, stored.cwd))) return undefined;
     return stored;
   }
 

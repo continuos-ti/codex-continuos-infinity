@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { isWindowsPipeEndpoint } from "../../config";
 import {
   CompactionTransactionStore,
@@ -11,6 +11,7 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
+import { cwdWithinRealRoots } from "./trusted-cwd-path";
 
 interface BrokerRetirementFailure {
   code: "codex_tool_timeout";
@@ -255,10 +256,8 @@ function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
   if (typeof environment.cwd !== "string" || !isAbsolute(environment.cwd)
     || !paths(environment.roots) || !Array.isArray(environment.writableRoots)
     || environment.writableRoots.some(path => typeof path !== "string" || !isAbsolute(path))
-    || (environment.sandboxPolicy?.type !== "dangerFullAccess" && !environment.roots.some(root => {
-      const nested = relative(resolve(root), resolve(environment.cwd!));
-      return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
-    }))
+    || (environment.sandboxPolicy?.type !== "dangerFullAccess"
+      && !cwdWithinRealRoots(environment.roots, environment.cwd!))
     || !environment.sandboxPolicy || !["dangerFullAccess", "workspaceWrite", "readOnly"].includes(environment.sandboxPolicy.type)
     || !Array.isArray(environment.tools)
     || environment.tools.some(tool => !tool || typeof tool.name !== "string" || typeof tool.description !== "string"
