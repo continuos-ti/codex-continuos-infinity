@@ -131,6 +131,21 @@ test("unidentified native task start cannot authorize target outputs", () => {
   expect(observed(ordinaryCall)).toEqual([]);
 });
 
+test("malformed explicit native tool owner never falls back to legacy single-turn attribution", () => {
+  for (const malformed of [null, [], "invalid", {}, { turn_id: null }, { turn_id: "" }]) {
+    write([taskStarted(turn), tool("function_call", ordinaryCall),
+      { type: "response_item", payload: { type: "function_call_output", call_id: ordinaryCall,
+        internal_chat_message_metadata_passthrough: malformed } }, taskComplete]);
+    expect(observed(ordinaryCall)).toEqual([]);
+
+    write([taskStarted(turn), { type: "response_item", payload: {
+      type: "function_call", call_id: ordinaryCall, name: "ordinary_tool",
+      internal_chat_message_metadata_passthrough: malformed } },
+    tool("function_call_output", ordinaryCall), taskComplete]);
+    expect(observed(ordinaryCall)).toEqual([]);
+  }
+});
+
 test("legacy completion without a turn id retains isolated native output evidence", () => {
   write([taskStarted(turn), tool("function_call", ordinaryCall),
     tool("function_call_output", ordinaryCall),

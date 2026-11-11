@@ -1,6 +1,6 @@
 # Matriz de aceite do Codex Continuos Infinity
 
-Estado observado em 11/11/2026. A branch `feature/continuos-infinity-native` está no commit `319171ac20d1b476053bc66401e21a55a2b8ce13`, versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. O build local isolado mais recente documentado corresponde a `47372b1051181c02be28f0e28c65639fa9cb8700`. O HEAD atual foi compilado e instalado durante o CI em runner descartável. Os builds anteriores permanecem registrados como histórico de verificação.
+Estado observado em 11/11/2026. A branch `feature/continuos-infinity-native` utiliza a versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. O build local isolado mais recente documentado corresponde a `47372b1051181c02be28f0e28c65639fa9cb8700`. O CI no commit `319171ac` compilou o aplicativo e instalou o pacote NSIS em runner descartável. Os builds anteriores permanecem registrados como histórico de verificação.
 
 | Nº | Entregável do objetivo | Evidência verificável | Situação de aceite |
 | --- | --- | --- | --- |
@@ -23,6 +23,8 @@ Estado observado em 11/11/2026. A branch `feature/continuos-infinity-native` est
 | 17 | Diferenças com upstream | `docs/infinity/UPSTREAM_AUDIT.md` e `CUSTOMIZATION_MATRIX.md` | **Disponível** para a base 6.1.18. Futuras atualizações exigem nova comparação de três vias. |
 
 ## Validação adicional em 11/11/2026
+
+Uma correção adicional em `native-rollout-call-evidence.ts` impede associar chamadas ou saídas MCP a um turno quando `internal_chat_message_metadata_passthrough` está presente, porém contém um proprietário inválido. O novo teste exercitou seis variantes malformadas tanto na chamada quanto na saída. Os testes focados `native-rollout-call-evidence.test.ts`, `authenticated-broker-result-evidence.test.ts` e `broker-call-journal.test.ts` terminaram com **56 aprovados, zero falhas e 262 asserções**. A verificação integral `bun run verify` terminou com código zero, incluindo dependências, TypeScript, testes de runtime e launcher, compilação e smoke de runtime relocável. A suíte launcher registrou **438 aprovados, quatro ignorados e zero falhas**. A execução de ferramentas demoradas nesses testes foi simulada. A comprovação com MCP autenticado real e reconciliação de efeitos externos após crash continua pendente.
 
 No worktree `feature/continuos-infinity-native`, a correção adicional de identidade da ferramenta em `native-rollout-call-evidence.ts` passou nos dois testes direcionados de evidência nativa e broker, com **33 testes aprovados, zero falhas e 104 asserções**. A execução completa de `bun run verify` terminou com código zero, incluindo auditoria de dependências, typecheck, testes, build e smoke de runtime relocável. Os runs PR `43099254982` e push `43099245246` do commit anterior `c74c7b6` concluíram com sucesso em `actionlint`, Ubuntu 24.04, macOS 15 e Windows. O run PR `43102321683` referente ao commit `0040eeb` também concluiu com sucesso em `actionlint`, Ubuntu 24.04, macOS 15 e Windows.
 

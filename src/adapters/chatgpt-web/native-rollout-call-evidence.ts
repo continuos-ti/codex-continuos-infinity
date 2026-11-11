@@ -112,7 +112,13 @@ export function observeNativeCallOutputs(
 
       // Native rollouts can interleave root and subagent turns. Explicit tool metadata
       // binds the record to its turn. Legacy records are ambiguous during overlap.
-      const metadataTurnId = record(payload.internal_chat_message_metadata_passthrough)?.turn_id;
+      const metadata = payload.internal_chat_message_metadata_passthrough;
+      const metadataRecord = record(metadata);
+      // A present but malformed native owner is not a legacy item without metadata.
+      // Treating it as absent would attribute an ambiguous result to the only active turn.
+      if (metadata !== undefined && (typeof metadataRecord?.turn_id !== "string"
+        || metadataRecord.turn_id.length === 0)) return unavailable();
+      const metadataTurnId = metadataRecord?.turn_id;
       if (metadataTurnId !== undefined && metadataTurnId !== turnId) continue;
       if (metadataTurnId === undefined && otherActiveTurns.size > 0) return unavailable();
 
