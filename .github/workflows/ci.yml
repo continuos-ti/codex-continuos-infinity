@@ -48,11 +48,7 @@ jobs:
         if: runner.os == 'Linux'
         timeout-minutes: 12
         run: |
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i 's#azure.archive.ubuntu.com#archive.ubuntu.com#g' /etc/apt/apt-mirrors.txt
-          fi
-          timeout 180s sudo apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
-          timeout 180s sudo apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
+          sh ./scripts/prepare-linux-build-deps.sh
           ./scripts/prepare-linux-libnotify.sh
       - name: Prepare owned AppImage toolset
         if: runner.os == 'Linux'
