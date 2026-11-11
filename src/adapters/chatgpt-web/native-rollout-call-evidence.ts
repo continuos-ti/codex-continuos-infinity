@@ -1,0 +1,106 @@
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+
+const MAX_ROLLOUT_BYTES = 128 * 1024 * 1024;
+const MAX_RECORD_BYTES = 16 * 1024 * 1024;
+const CALL_ID = /^call_[A-Za-z0-9_-]{32}$/;
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : undefined;
+}
+
+/** Read the same bounded file descriptor twice to reject concurrent appends and rewrites. */
+function stableRolloutBytes(path: string): Buffer | undefined {
+  const fd = openSync(path, "r");
+  try {
+    const before = fstatSync(fd);
+    if (before.size <= 0 || before.size > MAX_ROLLOUT_BYTES) return undefined;
+    const read = (): Buffer | undefined => {
+      const bytes = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+        if (count <= 0) return undefined;
+        offset += count;
+      }
+      return bytes;
+    };
+    const first = read();
+    const second = read();
+    const after = fstatSync(fd);
+    if (!first || !second || !first.equals(second) || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) return undefined;
+    return first;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Observe only matching native invocation/output pairs within the requested task boundary.
+ * The rollout path must already have been authenticated against native thread/turn authority.
+ * No output bodies leave this reader. A recorded output cannot prove external side effects,
+ * authorize a replay, or create a new tool capability after a broker crash.
+ */
+export function observeNativeCallOutputs(
+  rolloutPath: string,
+  turnId: string,
+  callIds: readonly string[],
+): ReadonlySet<string> {
+  const unavailable = (): ReadonlySet<string> => new Set();
+  if (new Set(callIds).size !== callIds.length || callIds.some(id => !CALL_ID.test(id))) {
+    return unavailable();
+  }
+  if (callIds.length === 0) return unavailable();
+
+  try {
+    const bytes = stableRolloutBytes(rolloutPath);
+    if (!bytes || bytes[bytes.length - 1] !== 0x0a) return unavailable();
+
+    const requested = new Set(callIds);
+    const calls = new Map<string, { expectedOutput: string; outputSeen: boolean }>();
+    let active = false;
+    let started = false;
+    for (let start = 0; start < bytes.length;) {
+      const end = bytes.indexOf(0x0a, start);
+      if (end < 0 || end - start > MAX_RECORD_BYTES) return unavailable();
+      const line = bytes.subarray(start, end);
+      start = end + 1;
+      if (line.length === 0) continue;
+      const item = record(JSON.parse(line.toString("utf8").replace(/^\uFEFF/, "")));
+      if (!item) return unavailable();
+      const payload = record(item.payload);
+
+      if (item.type === "event_msg" && payload?.type === "task_started") {
+        if (payload.turn_id === turnId && started) return unavailable();
+        active = payload.turn_id === turnId;
+        if (active) started = true;
+        continue;
+      }
+      if (item.type === "event_msg" && payload?.type === "task_complete") {
+        active = false;
+        continue;
+      }
+      if (!active) continue;
+      if (item.type === "compacted") return unavailable();
+      if (item.type !== "response_item" || typeof payload?.call_id !== "string"
+        || !requested.has(payload.call_id)) continue;
+
+      const id = payload.call_id;
+      if (payload.type === "function_call" || payload.type === "custom_tool_call") {
+        if (calls.has(id)) return unavailable();
+        calls.set(id, { expectedOutput: `${payload.type}_output`, outputSeen: false });
+      } else if (payload.type === "function_call_output" || payload.type === "custom_tool_call_output") {
+        const call = calls.get(id);
+        if (!call || call.expectedOutput !== payload.type || call.outputSeen) return unavailable();
+        call.outputSeen = true;
+      }
+    }
+
+    if (!started) return unavailable();
+    return new Set([...calls].filter(([, call]) => call.outputSeen).map(([id]) => id));
+  } catch {
+    // Locked, truncated or malformed evidence is unavailable, never permission to replay.
+    return unavailable();
+  }
+}

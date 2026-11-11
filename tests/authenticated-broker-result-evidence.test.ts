@@ -228,9 +228,14 @@ test("native call inventory rejects a concurrent journal publication during owne
 });
 
 test("recovery snapshot authenticates a mixed multi-trace inventory and each sealed result", () => {
-  nativeRollout();
+  const rollout = nativeRollout();
   journal();
   seal();
+  appendFileSync(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { type: "response_item", payload: { type: "function_call", call_id: callId, name: "mutating_tool" } },
+    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "returned" } },
+  ].map(item => JSON.stringify(item)).join("\n") + "\n");
   const pendingCallId = `call_${"B".repeat(32)}`;
   const missingResultCallId = `call_${"C".repeat(32)}`;
   const foreignCallId = `call_${"D".repeat(32)}`;
@@ -257,6 +262,9 @@ test("recovery snapshot authenticates a mixed multi-trace inventory and each sea
   const sealed = observed.calls[2]!.resultEvidence;
   if (sealed.status !== "verified_result_evidence") throw new Error("Missing sealed result");
   expect(sealed.result).toEqual(result);
+  expect(observed.calls.map(entry => entry.nativeOutputEvidence)).toEqual([
+    "unavailable", "unavailable", "recorded_in_native_rollout",
+  ]);
   expect(observed.replayAuthorized).toBe(false);
   expect(observed.externalEffectsReconciled).toBe(false);
   expect(JSON.stringify(observed)).not.toContain(foreignCallId);

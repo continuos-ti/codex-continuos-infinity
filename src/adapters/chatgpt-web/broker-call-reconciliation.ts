@@ -6,6 +6,7 @@ import type { BrokerCallEvent, BrokerCallEvidence } from "./broker-call-journal"
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "./environment";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
+import { observeNativeCallOutputs } from "./native-rollout-call-evidence";
 import { BrokerResultVault, captureBrokerResultFileEvidence, vaultDirectoryForJournal,
   type ResultIdentity } from "./sealed-broker-results";
 import type { BrokerToolResult } from "./turn-broker";
@@ -304,7 +305,9 @@ export type AuthenticatedBrokerRecoverySnapshot = {
 } | {
   status: "verified_native_recovery_snapshot";
   /** Complete bounded inventory for the current native owner, with individually sealed results. */
-  calls: Array<{ call: BrokerRecoveryCall; resultEvidence: AuthenticatedBrokerResultEvidence }>;
+  /** Native output presence is diagnostic only and cannot reconcile provider-side effects. */
+  calls: Array<{ call: BrokerRecoveryCall; resultEvidence: AuthenticatedBrokerResultEvidence;
+    nativeOutputEvidence: "recorded_in_native_rollout" | "unavailable" }>;
   replayAuthorized: false;
   externalEffectsReconciled: false;
 };
@@ -357,6 +360,8 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
     traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
   }));
   const beforeVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
+  const nativeOutputs = observeNativeCallOutputs(initialOwner.rolloutPath, input.turnId,
+    owned.map(call => call.callId));
   let totalResultBytes = 0;
   const calls = owned.map(call => {
     let resultEvidence: AuthenticatedBrokerResultEvidence = {
@@ -377,7 +382,8 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
         };
       }
     }
-    return { call, resultEvidence };
+    return { call, resultEvidence,
+      nativeOutputEvidence: nativeOutputs.has(call.callId) ? "recorded_in_native_rollout" as const : "unavailable" as const };
   });
 
   // Fingerprint covers every record's bytes and every pending filename, so modifications
