@@ -7,7 +7,8 @@ export function isSafeInBandAutoRepairFailure(error: unknown, state: {
   retained: boolean;
   cancelled: boolean;
   compaction: boolean;
-  activeToolCalls: number;
+  /** Unknown progress must never be interpreted as zero active MCP calls. */
+  activeToolCalls: number | undefined;
 }): error is ChatGptWebAdapterError {
   return error instanceof ChatGptWebAdapterError
     && (error.code === "chatgpt_stalled_same_turn" || error.code === "chatgpt_response_incomplete")

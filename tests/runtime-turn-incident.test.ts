@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
-import { classifyRuntimeFailure, recordRuntimeTurnIncident } from "../src/adapters/chatgpt-web/runtime-turn-incident";
+import { classifyRuntimeFailure, recordRuntimeTurnIncident, type RuntimeFailureClass } from "../src/adapters/chatgpt-web/runtime-turn-incident";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -93,6 +93,30 @@ test("untrusted error strings and native ids cannot enter journal; invalid trace
   expect(() => recordRuntimeTurnIncident({ ...input, traceId: "../private", error: error("chatgpt_response_incomplete"),
     sendActivated: false, accepted: false, activeToolCalls: 0, outcome: "failed", autoRepairAttempts: 0 }))
     .toThrow("Invalid runtime incident trace id");
+});
+
+test("classifies known browser, MCP and account failure codes without inspecting sensitive messages", () => {
+  const examples: Partial<Record<RuntimeFailureClass, readonly string[]>> = {
+    browser_observation_failure: ["browser_stream_inconsistent", "browser_dom_observation_failed"],
+    submission_or_delivery_uncertain: ["chatgpt_delivery_timeout", "chatgpt_submission_ambiguous", "chatgpt_submitted_turn_failed"],
+    connector_binding_failure: ["connector_not_found"],
+    model_control_failure: ["chatgpt_model_controls_unavailable", "chatgpt_capabilities_stale", "chatgpt_effort_locked", "model_version_unavailable"],
+    model_or_upstream_failure: ["chatgpt_stopped_thinking", "chatgpt_subscription_unavailable", "upstream_server_error"],
+    upload_or_attachment_failure: ["chatgpt_attachment_unconfirmed", "chatgpt_attachment_queue_busy", "multipart_acknowledgement_mismatch", "prompt_attachment_integrity", "upload_quota_exceeded", "too_many_attachments"],
+    compaction_handoff_failure: ["compaction_handoff_missing", "compaction_handoff_timeout", "compaction_control_unavailable"],
+    mcp_result_pending_or_unavailable: ["codex_tool_in_progress", "codex_pending_result_unavailable"],
+    authentication_or_session: ["chatgpt_session_expired", "chatgpt_sign_in_required", "chatgpt_security_check", "compaction_source_unavailable"],
+    tool_or_permission_failure: ["chatgpt_tool_approval_required", "codex_tool_timeout"],
+    connector_or_rate_limit: ["rate_limit_exceeded"],
+  } as const;
+  for (const classification of Object.keys(examples) as RuntimeFailureClass[]) {
+    for (const code of examples[classification] ?? []) {
+      expect(classifyRuntimeFailure(error(code, "Sensitive Authorization: Bearer abc"))).toBe(classification);
+    }
+  }
+  // A crafted Error with a code property cannot forge a trusted adapter classification.
+  const forged = Object.assign(new Error("connector_not_found"), { code: "connector_not_found" });
+  expect(classifyRuntimeFailure(forged)).toBe("unclassified_browser_failure");
 });
 
 test("a stale partial pending file never masquerades as the published incident", () => {

@@ -12,7 +12,7 @@ afterEach(() => { for (const root of paths.splice(0)) rmSync(root, { recursive: 
 async function fixture(stub: (turn: any, reused: boolean, call: number) => Promise<string>, endReply: Record<string, unknown> = {}, startFailure?: { status: number; code: string }) {
   const root = mkdtempSync(join(tmpdir(), "codex-runexclusive-repair-"));
   paths.push(root);
-  const requests: Array<{ phase?: string; status?: string }> = [];
+  const requests: Array<{ phase?: string; status?: string; progress?: unknown }> = [];
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     async fetch(request) {
@@ -116,6 +116,33 @@ test("stalled turn with active MCP work fails closed without re-sending",async()
     expect(JSON.parse(await Bun.file(join(f.root,"runtime-incidents","ab12cd34ef56.json")).text()))
       .toMatchObject({outcome:"failed",activeToolCallsObserved:1, autoRepairAttempts:0});
   }finally{await f.server.stop(true)}
+});
+
+test("unknown MCP progress prevents in-band repair and preserves the original browser error", async () => {
+  const cases = [
+    { name: "missing", reader: undefined },
+    { name: "throwing", reader: { snapshot: () => { throw new Error("private progress reader exception"); } } },
+    { name: "invalid", reader: { snapshot: () => ({ activeToolCalls: Number.NaN }) } },
+  ];
+  for (const scenario of cases) {
+    const f = await fixture(async request => {
+      await request.onSubmitted?.();
+      throw new ChatGptWebAdapterError("Original browser failure", {
+        code: "chatgpt_stalled_same_turn", status: 503, errorType: "server_error", retryable: false,
+      });
+    });
+    try {
+      const t = turn({ traceId: "ff66aa77bb88", incidentJournalDirectory: join(f.root, "runtime-incidents"),
+        externalProgress: scenario.reader });
+      await expect(f.worker.runExclusive(t.base)).rejects.toThrow("Original browser failure");
+      expect(f.count()).toBe(1);
+      expect(f.requests.filter(request => request.phase === "heartbeat").every(request => !request.progress)).toBe(true);
+      const incident = JSON.parse(await Bun.file(join(f.root, "runtime-incidents", "ff66aa77bb88.json")).text());
+      expect(incident).toMatchObject({ classification: "response_stalled", phase: "after_submission",
+        activeToolCallsObserved: null, outcome: "failed", autoRepairAttempts: 0 });
+      expect(JSON.stringify(incident)).not.toContain("private progress reader exception");
+    } finally { await f.server.stop(true); }
+  }
 });
 
 test("authentication failure after acceptance is journaled without attempting recovery",async()=>{

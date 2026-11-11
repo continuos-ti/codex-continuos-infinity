@@ -19,6 +19,7 @@ describe("in-band event-driven repair guards", () => {
     for (const change of [
       { accepted: false }, { localTools: false }, { retained: false },
       { cancelled: true }, { compaction: true }, { activeToolCalls: 1 },
+      { activeToolCalls: undefined }, { activeToolCalls: -1 }, { activeToolCalls: Number.NaN },
     ]) expect(isSafeInBandAutoRepairFailure(stall, { ...eligible, ...change })).toBe(false);
   });
   test("does not recover auth, approval or arbitrary upstream errors", () => {

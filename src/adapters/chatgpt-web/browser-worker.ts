@@ -5472,12 +5472,15 @@ export class ChatGptBrowserWorker {
     let sendActivated = false;
     let autoRepairAttempts: 0 | 1 = 0;
     let recoveredFailure: ChatGptWebAdapterError | undefined;
+    const readActiveToolCalls = (): number | undefined => {
+      let count: number | undefined;
+      try { count = turn.externalProgress?.snapshot().activeToolCalls; }
+      catch { return undefined; }
+      return Number.isSafeInteger(count) && count! >= 0 ? count : undefined;
+    };
     const recordIncident = (error: unknown, outcome: "failed" | "inband_response_completed") => {
       if (!turn.incidentJournalDirectory) return;
       try {
-        let activeToolCalls: number | undefined;
-        try { activeToolCalls = turn.externalProgress?.snapshot().activeToolCalls; }
-        catch { /* A failed progress observation is unknown, never zero. */ }
         const result = recordRuntimeTurnIncident({
           directory: turn.incidentJournalDirectory,
           traceId: turn.traceId,
@@ -5485,7 +5488,7 @@ export class ChatGptBrowserWorker {
           error,
           sendActivated,
           accepted: acceptedSubmission,
-          activeToolCalls,
+          activeToolCalls: readActiveToolCalls(),
           outcome,
           autoRepairAttempts,
         });
@@ -5537,11 +5540,12 @@ export class ChatGptBrowserWorker {
       if (activityFinished) return;
       if (heartbeatInFlight) { heartbeatPending = true; return; }
       heartbeatInFlight = true;
+      const activeToolCalls = readActiveToolCalls();
       void notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
         phase: "heartbeat",
         traceId: turn.traceId,
         helperPid: process.pid,
-        progress: { stage: activityStage, activeToolCalls: turn.externalProgress?.snapshot().activeToolCalls ?? 0 },
+        ...(activeToolCalls === undefined ? {} : { progress: { stage: activityStage, activeToolCalls } }),
       }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS).catch(error => {
         if (activityFinished) return;
         const now = Date.now();
@@ -5590,7 +5594,9 @@ export class ChatGptBrowserWorker {
       try {
         return await this.runBrowserTurn(observedTurn, surfaceId, undefined, reused, lease.trackUsage === true);
       } catch (initialFailure) {
-        const progress = turn.externalProgress?.snapshot();
+        // A failed or absent progress reader cannot prove that no MCP call is active.
+        // Keep the original browser failure and defer repair until state is known.
+        const activeToolCalls = readActiveToolCalls();
         const repairAllowed = Boolean(turn.prepareRecovery)
           && isSafeInBandAutoRepairFailure(initialFailure, {
             accepted: acceptedSubmission,
@@ -5598,7 +5604,7 @@ export class ChatGptBrowserWorker {
             retained: turn.retainConversation === true && Boolean(turn.conversationKey),
             cancelled: turn.abortSignal?.aborted === true,
             compaction: turn.compaction === true || turn.captureLunaCheckpoint === true,
-            activeToolCalls: progress?.activeToolCalls ?? 0,
+            activeToolCalls,
           });
         if (!repairAllowed || !turn.prepareRecovery) throw initialFailure;
         const failure = initialFailure as ChatGptWebAdapterError;
@@ -6665,9 +6671,10 @@ export class ChatGptBrowserWorker {
         if (!(error instanceof TypeError) || observedThisIteration) throw error;
         internalObservationFaults += 1;
         if (internalObservationFaults > MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS) {
-          throw new Error(
+          throw new ChatGptWebAdapterError(
             `ChatGPT browser observation failed ${internalObservationFaults} times in a row: ${error.message}`,
-            { cause: error },
+            { status: 502, errorType: "server_error", code: "browser_dom_observation_failed",
+              retryable: false, cause: error },
           );
         }
         console.warn(

@@ -8,6 +8,14 @@ export type RuntimeFailureClass =
   | "response_incomplete"
   | "authentication_or_session"
   | "browser_owner_lost"
+  | "browser_observation_failure"
+  | "submission_or_delivery_uncertain"
+  | "connector_binding_failure"
+  | "model_control_failure"
+  | "model_or_upstream_failure"
+  | "upload_or_attachment_failure"
+  | "compaction_handoff_failure"
+  | "mcp_result_pending_or_unavailable"
   | "tool_or_permission_failure"
   | "connector_or_rate_limit"
   | "inband_repair_failed"
@@ -22,8 +30,34 @@ export function classifyRuntimeFailure(error: unknown): RuntimeFailureClass {
     case "chatgpt_response_incomplete": return "response_incomplete";
     case "chatgpt_inband_autorepair_failed": return "inband_repair_failed";
     case "chatgpt_sign_in_required":
+    case "chatgpt_session_expired":
+    case "chatgpt_security_check":
     case "compaction_source_unavailable": return "authentication_or_session";
     case "browser_turn_owner_lost": return "browser_owner_lost";
+    case "browser_stream_inconsistent":
+    case "browser_dom_observation_failed": return "browser_observation_failure";
+    case "chatgpt_delivery_timeout":
+    case "chatgpt_submission_ambiguous":
+    case "chatgpt_submitted_turn_failed": return "submission_or_delivery_uncertain";
+    case "connector_not_found": return "connector_binding_failure";
+    case "chatgpt_model_controls_unavailable":
+    case "chatgpt_capabilities_stale":
+    case "chatgpt_effort_locked":
+    case "model_version_unavailable": return "model_control_failure";
+    case "chatgpt_stopped_thinking":
+    case "chatgpt_subscription_unavailable":
+    case "upstream_server_error": return "model_or_upstream_failure";
+    case "chatgpt_attachment_unconfirmed":
+    case "chatgpt_attachment_queue_busy":
+    case "multipart_acknowledgement_mismatch":
+    case "prompt_attachment_integrity":
+    case "upload_quota_exceeded":
+    case "too_many_attachments": return "upload_or_attachment_failure";
+    case "compaction_handoff_missing":
+    case "compaction_handoff_timeout":
+    case "compaction_control_unavailable": return "compaction_handoff_failure";
+    case "codex_tool_in_progress":
+    case "codex_pending_result_unavailable": return "mcp_result_pending_or_unavailable";
     case "chatgpt_tool_approval_required":
     case "codex_tool_timeout": return "tool_or_permission_failure";
     case "rate_limit_exceeded": return "connector_or_rate_limit";
