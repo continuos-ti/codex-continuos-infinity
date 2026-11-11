@@ -22,6 +22,7 @@ import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
 import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
 import { recordTrustedPreflightIncident } from "./trusted-preflight-incident";
+import { resolveTrustedPreflightWithRecovery } from "./trusted-preflight-recovery";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
 import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
@@ -963,7 +964,14 @@ export function createChatGptWebAdapter(
         let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
         if (mode.localTools) {
           try {
-            environment = environmentStore.resolve(parsed);
+            const identity = extractChatGptTurnIdentity(parsed);
+            const resolved = await resolveTrustedPreflightWithRecovery(
+              identity, () => environmentStore.resolve(parsed), incoming.abortSignal,
+            );
+            environment = resolved.value;
+            if (resolved.recoveryAttempts > 0) {
+              console.warn(`[chatgpt-web] trusted_cwd_preflight_recovered trace=${chatGptWebTraceId(provider, parsed)} attempts=${resolved.recoveryAttempts}`);
+            }
           } catch (error) {
             const identity = extractChatGptTurnIdentity(parsed);
             // This attempt has not been submitted. Persist a bounded local incident before

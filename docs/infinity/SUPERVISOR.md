@@ -18,6 +18,8 @@ O pedido técnico de reparo usa somente o identificador sanitizado do incidente 
 
 Falhas de autenticação, aprovações manuais pendentes, CWD não comprovado, tarefas com ferramentas ativas e perda total do processo não têm autorização genérica de replay. Se o estado não puder ser provado, preservar o incidente e orientar a intervenção necessária. Retomada após crash total requer novo vínculo de sessão confiável.
 
+Uma janela limitada de recuperação do preflight aceita duas releituras da fonte nativa (150 ms e 300 ms) quando IDs nativos de thread e turno estão presentes e a única falha é a ausência de autoridade atual de CWD, permissão ou rollout. O ambiente só é liberado quando a verificação normal completa o vínculo de tarefa e permissões. Não há reenvio de prompt nem execução de ferramenta durante essa janela. Conflito, worktree removido, proprietário ambíguo e cancelamento interrompem o fluxo.
+
 ## Evidências
 
 Testes unitários do supervisor estão em tests/in-band-auto-repair.test.ts, tests/in-band-autorepair-runtime.test.ts e tests/in-band-autorepair-ipc.test.ts. A simulação tests/long-native-tool-polling-over90.test.ts verifica operação de longa duração sem repetição da chamada.
