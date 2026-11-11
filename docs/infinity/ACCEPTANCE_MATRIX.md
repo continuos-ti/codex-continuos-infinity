@@ -1,6 +1,6 @@
 # Matriz de aceite do Codex Continuos Infinity
 
-Estado observado em 11/11/2026. A base de código empacotada é o commit `3dec9cde6e324278562c71f31b39a4e312ddb0ad`, versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. A documentação do empacotamento foi adicionada posteriormente no commit `1c9abda`.
+Estado observado em 11/11/2026. A base de código empacotada mais recente é o commit `e6ac948c89a413290deb1f56ab6ad362c9d1f26e`, versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. Os builds de commits anteriores permanecem registrados como histórico de verificação.
 
 | Nº | Entregável do objetivo | Evidência verificável | Situação de aceite |
 | --- | --- | --- | --- |
@@ -16,10 +16,10 @@ Estado observado em 11/11/2026. A base de código empacotada é o commit `3dec9c
 | 10 | Instalação e configuração | `docs/infinity/INSTALLATION.md` e `EXAMPLE_CONFIG.md` | **Disponível**. A validação em staging permanece pendente. |
 | 11 | Migração | `docs/infinity/MIGRATION_ROLLBACK.md` | **Disponível**. Migração produtiva ainda não executada. |
 | 12 | Recuperação e rollback | `docs/infinity/MIGRATION_ROLLBACK.md` e `SUPERVISOR.md` | **Parcial**. Falta comprovar restauração de sessões reais após falha controlada. |
-| 13 | Testes e evidências | `tests/`, `launcher/tests/`, `bun run verify` e testes focados de recuperação | **Parcial**. Verificação estática e automatizada passaram no commit `3dec9cd`. Faltam testes E2E autenticados. |
-| 14 | Instalador Windows | `launcher/artifacts/` do worktree `E:/Projetos/codex-continuos-infinity-build-3dec9cd` | **Parcial**. Pacote, smoke portátil e `7z t` passaram. Authenticode `NotSigned`. Falta uso real no staging. |
-| 15 | CI e releases | `.github/workflows/ci.yml` e `release.yml` | **Parcial**. Windows, Ubuntu e actionlint passaram no PR em 11/11. macOS permaneceu pendente durante a consulta, e nenhuma release foi publicada. |
-| 16 | Manifestos e hashes | `launcher/artifacts/checksums-local.txt` e `THIRD_PARTY_NOTICES.txt` do build isolado | **Disponível para o build `3dec9cd`**. Hashes SHA-256 e NSIS conferidos. |
+| 13 | Testes e evidências | `tests/`, `launcher/tests/`, `bun run verify` e testes focados de recuperação | **Parcial**. Verificação integral no commit `e6ac948` concluída com exit 0, launcher 438 aprovados e quatro ignorados. Faltam testes E2E autenticados. |
+| 14 | Instalador Windows | `launcher/artifacts/` do worktree `E:/Projetos/codex-continuos-infinity-build-e6ac948` | **Parcial**. Pacote, smoke portátil e `7z t` passaram. Authenticode `NotSigned`. Falta uso real no staging. |
+| 15 | CI e releases | `.github/workflows/ci.yml` e `release.yml` | **Parcial**. Run 43079404506 do commit `b795bbc` passou em actionlint, Windows, Ubuntu e macOS. Run 43083332275 do commit `e6ac948` estava em execução na consulta de 11/11. Nenhuma release foi publicada. |
+| 16 | Manifestos e hashes | `launcher/artifacts/checksums-local.txt` e `THIRD_PARTY_NOTICES.txt` do build isolado | **Disponível para o build `e6ac948`**. Hashes SHA-256 e NSIS conferidos. |
 | 17 | Diferenças com upstream | `docs/infinity/UPSTREAM_AUDIT.md` e `CUSTOMIZATION_MATRIX.md` | **Disponível** para a base 6.1.18. Futuras atualizações exigem nova comparação de três vias. |
 
 ## Critérios ainda abertos
@@ -28,4 +28,4 @@ O aceite integral exige reconciliação independente dos efeitos externos de cha
 
 O teste DEV autenticado deve comprovar, com perfil próprio, seleção de `ContinuosWebIntegracao`, OAuth/PKCE, GPT-6 Sol (Web) quando disponível, duas, três e cinco conversas simultâneas, anexos independentes, ferramenta MCP real acima de 90 segundos, compaction, CWD confiável e recuperação de falhas controladas. O estado de onboarding do launcher DEV ainda não comprova login ChatGPT, configuração MCP nem essas execuções. A instalação produtiva deve continuar preservada durante a homologação.
 
-O pacote de `3dec9cd` está documentado em `INSTALLATION.md`, com SHA-256 do instalador `b2a915b169dd461a653e47f8953f3cd12146e020662bcfa99e3eef31a78bf3f0`. O smoke portátil terminou com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. Esses resultados validam o pacote isolado e seus contratos automatizados.
+O pacote de `e6ac948` está documentado em `INSTALLATION.md`, com SHA-256 do instalador `475e1e1fed7c4da467815c56fe7c4ffb1745079b58c52851e60a23e42235ce51` e SHA-256 do blockmap `8c8cb4f413a843eb0cd6c976422516694c9c96850dc98214ecb62a16b445239c`. O smoke portátil terminou com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. Esses resultados validam o pacote isolado e seus contratos automatizados.
