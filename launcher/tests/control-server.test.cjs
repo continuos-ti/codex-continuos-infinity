@@ -33,6 +33,12 @@ test("live task progress is owner-bound, preserves elapsed time, and clears on r
     const since = tab.activity.since;
     assert.equal((await send({ progress })).status, 200);
     assert.equal(tab.activity.since, since);
+    assert.equal((await send({ progress: { stage: "chatgpt", activeToolCalls: null } })).status, 200);
+    assert.equal(tab.activity.state, "unknown");
+    assert.equal(tab.activity.activeToolCalls, null);
+    assert.equal(host.tabSnapshot(tab).activity.state, "unknown");
+    assert.equal((await send({ progress })).status, 200);
+    assert.equal(tab.activity.state, "tools");
     host.setTurnApprovalPending(tab.traceId, tab.helperPid, true);
     assert.equal((await send({ progress })).status, 200);
     assert.equal(tab.activity.state, "approval");

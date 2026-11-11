@@ -5545,7 +5545,7 @@ export class ChatGptBrowserWorker {
         phase: "heartbeat",
         traceId: turn.traceId,
         helperPid: process.pid,
-        ...(activeToolCalls === undefined ? {} : { progress: { stage: activityStage, activeToolCalls } }),
+        progress: { stage: activityStage, activeToolCalls: activeToolCalls ?? null },
       }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS).catch(error => {
         if (activityFinished) return;
         const now = Date.now();

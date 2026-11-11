@@ -403,7 +403,8 @@ export type LauncherTurnActivity =
       refreshViewport?: boolean;
       progress?: {
         stage: "preparing" | "sending" | "chatgpt";
-        activeToolCalls: number;
+        /** Null means the current tool state could not be observed. */
+        activeToolCalls: number | null;
       };
     }
   | {

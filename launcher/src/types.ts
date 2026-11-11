@@ -70,7 +70,7 @@ export interface BrowserTabState {
     state: "preparing" | "sending" | "chatgpt" | "tools" | "approval" | "unknown";
     since: number;
     updatedAt: number;
-    activeToolCalls: number;
+    activeToolCalls: number | null;
   };
   manualState?: "awaiting-user" | "sent" | "running" | "completed" | "timed-out" | "cancelled" | "failed";
   manualDeadlineAt?: string;

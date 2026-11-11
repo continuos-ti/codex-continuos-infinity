@@ -8,6 +8,8 @@ A implementação atual de isSafeInBandAutoRepairFailure aceita chatgpt_stalled_
 
 A leitura do progresso MCP precisa confirmar explicitamente `activeToolCalls=0`. Leitor ausente, leitura com exceção ou valor inválido mantêm o número como desconhecido e bloqueiam o autorreparo desse evento, preservando a falha original no incidente. O teste integrado exerce as três condições, além de chamadas MCP ativas.
 
+O heartbeat do browser envia `activeToolCalls: null` quando a leitura é desconhecida, e o launcher apresenta a atividade como `unknown`. Somente contagens inteiras comprovadas podem representar `tools` ou a etapa atual. O contrato é verificado pelo teste HTTP do control server e pelo teste integrado de recuperação.
+
 O prompt original aceito nunca deve ser reenviado cegamente. Primeiro é obrigatório reconciliar chamadas mutáveis já aceitas e ler checkpoints e resultados. A execução de diagnóstico utiliza somente ferramentas com autorização atual. Tokens expirados não são reconstruídos.
 
 O pedido técnico de reparo usa somente o identificador sanitizado do incidente e o código validado da falha. O texto livre da exceção pode conter URLs, credenciais ou instruções não confiáveis; por isso ele não é incorporado ao prompt nem transportado pelo evento IPC `repair_prepare_requested`. Detalhes adicionais devem ser obtidos de diagnósticos locais autorizados e inspecionados separadamente. O teste `tests/in-band-auto-repair.test.ts` cobre vazamento de mensagem bruta, URL com token e instrução injetada, enquanto `tests/in-band-autorepair-ipc.test.ts` verifica o contrato de transporte.

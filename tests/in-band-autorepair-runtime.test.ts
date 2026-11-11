@@ -136,7 +136,10 @@ test("unknown MCP progress prevents in-band repair and preserves the original br
         externalProgress: scenario.reader });
       await expect(f.worker.runExclusive(t.base)).rejects.toThrow("Original browser failure");
       expect(f.count()).toBe(1);
-      expect(f.requests.filter(request => request.phase === "heartbeat").every(request => !request.progress)).toBe(true);
+      const heartbeats = f.requests.filter(request => request.phase === "heartbeat");
+      expect(heartbeats.length).toBeGreaterThan(0);
+      expect(heartbeats.every(request => (request.progress as { activeToolCalls?: unknown } | undefined)
+        ?.activeToolCalls === null)).toBe(true);
       const incident = JSON.parse(await Bun.file(join(f.root, "runtime-incidents", "ff66aa77bb88.json")).text());
       expect(incident).toMatchObject({ classification: "response_stalled", phase: "after_submission",
         activeToolCallsObserved: null, outcome: "failed", autoRepairAttempts: 0 });

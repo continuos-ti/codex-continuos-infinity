@@ -50,12 +50,13 @@ const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
 
 function recordTurnActivity(tab, now = Date.now()) {
   const state = tab.approvalPending ? "approval"
-    : tab.turnProgress?.activeToolCalls > 0 ? "tools" : tab.turnProgress?.stage ?? "unknown";
+    : tab.turnProgress?.activeToolCalls === null || tab.turnProgress === undefined ? "unknown"
+    : tab.turnProgress.activeToolCalls > 0 ? "tools" : tab.turnProgress.stage;
   tab.activity = {
     state,
     since: tab.activity?.state === state ? tab.activity.since : now,
     updatedAt: now,
-    activeToolCalls: tab.turnProgress?.activeToolCalls ?? 0,
+    activeToolCalls: tab.turnProgress?.activeToolCalls ?? null,
   };
 }
 
@@ -1537,7 +1538,8 @@ class BrowserHost {
       if (tab.interactionMode !== "automatic" || !progress || typeof progress !== "object"
         || Object.keys(progress).length !== 2
         || !["preparing", "sending", "chatgpt"].includes(progress.stage)
-        || !Number.isSafeInteger(progress.activeToolCalls) || progress.activeToolCalls < 0) {
+        || (progress.activeToolCalls !== null
+          && (!Number.isSafeInteger(progress.activeToolCalls) || progress.activeToolCalls < 0))) {
         throw new Error("Browser turn progress is invalid");
       }
       tab.turnProgress = { stage: progress.stage, activeToolCalls: progress.activeToolCalls };
