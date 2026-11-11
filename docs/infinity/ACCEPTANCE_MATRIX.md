@@ -1,6 +1,6 @@
 # Matriz de aceite do Codex Continuos Infinity
 
-Estado observado em 11/11/2026. A base de código empacotada mais recente é o commit `e6ac948c89a413290deb1f56ab6ad362c9d1f26e`, versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. Os builds de commits anteriores permanecem registrados como histórico de verificação.
+Estado observado em 11/11/2026. A base de código empacotada mais recente é o commit `0040eeb9d992b454e12c09056ae37d735670e7e1`, versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. Os builds de commits anteriores permanecem registrados como histórico de verificação.
 
 | Nº | Entregável do objetivo | Evidência verificável | Situação de aceite |
 | --- | --- | --- | --- |
@@ -17,14 +17,14 @@ Estado observado em 11/11/2026. A base de código empacotada mais recente é o c
 | 11 | Migração | `docs/infinity/MIGRATION_ROLLBACK.md` | **Disponível**. Migração produtiva ainda não executada. |
 | 12 | Recuperação e rollback | `docs/infinity/MIGRATION_ROLLBACK.md` e `SUPERVISOR.md` | **Parcial**. Falta comprovar restauração de sessões reais após falha controlada. |
 | 13 | Testes e evidências | `tests/`, `launcher/tests/`, `bun run verify` e testes focados de recuperação | **Parcial**. Em 11/11, a suíte runtime completa passou com **1.257 aprovados, 113 ignorados, zero falhas e 10.556 asserções**. Os testes direcionados de evidência nativa e broker somaram **31 aprovados e 96 asserções**, incluindo turnos intercalados e entradas sem identidade. A suíte launcher passou anteriormente com **438 aprovados, quatro ignorados e zero falhas**. Os dois testes de recompilação DEV passaram com oito asserções e o typecheck passou. O smoke do navegador DEV concluiu com `CODEX WEB GPT READY` e `smoke.completed`. Faltam testes E2E de um turno Codex autenticado no DEV. |
-| 14 | Instalador Windows | `launcher/artifacts/` do worktree `E:/Projetos/codex-continuos-infinity-build-e54d02a` | **Parcial**. Pacote gerado de `e54d02a`, smoke portátil, hashes SHA-256 e `7z t` aprovados. Authenticode `NotSigned`. Falta uso real no staging. |
+| 14 | Instalador Windows | `launcher/artifacts/` do worktree `E:/Projetos/codex-continuos-infinity-build-0040eeb` | **Parcial**. Pacote gerado de `0040eeb`, smoke portátil, hashes SHA-256 e `7z t` aprovados. Authenticode `NotSigned`. Falta uso real no staging. |
 | 15 | CI e releases | `.github/workflows/ci.yml` e `release.yml` | **Parcial**. Runs 43088770400 (`4322475`) e 43091735891 (`23a0147`) passaram em actionlint, Windows, Ubuntu e macOS. O run 43092432096 do commit documental `5b5e7f1` passou em actionlint e Windows, mas Ubuntu falhou na preparação de dependências após erro de rede ao acessar `mirrors.kernel.org`; macOS foi cancelado. O script de preparação agora tenta a transação completa em outros mirrors quando necessário. A correção de mirrors foi validada nos runs de PR e push do commit c74c7b6, com sucesso em Ubuntu, macOS, Windows e actionlint. Nenhuma release foi publicada. |
-| 16 | Manifestos e hashes | `launcher/artifacts/checksums-local.txt` e `THIRD_PARTY_NOTICES.txt` do build isolado | **Disponível para o build `23a0147`**. Hashes SHA-256 e NSIS conferidos. |
+| 16 | Manifestos e hashes | `launcher/artifacts/checksums-local.txt` e `THIRD_PARTY_NOTICES.txt` do build isolado | **Disponível para o build `0040eeb`**. Hashes SHA-256 do instalador (`5a0724aaaa453c066c058923baa1554b8ba2b9a499afabf6114b9ffc49733272`) e blockmap (`fa8e8a0507c03b7bbcffb4b18b03ada7c4ae06ab481a6e39921a9583bb210389`) conferidos. |
 | 17 | Diferenças com upstream | `docs/infinity/UPSTREAM_AUDIT.md` e `CUSTOMIZATION_MATRIX.md` | **Disponível** para a base 6.1.18. Futuras atualizações exigem nova comparação de três vias. |
 
 ## Validação adicional em 11/11/2026
 
-No worktree `feature/continuos-infinity-native`, a correção adicional de identidade da ferramenta em `native-rollout-call-evidence.ts` passou nos dois testes direcionados de evidência nativa e broker, com **33 testes aprovados, zero falhas e 104 asserções**. A execução completa de `bun run verify` terminou com código zero, incluindo auditoria de dependências, typecheck, testes, build e smoke de runtime relocável. Os runs PR `43099254982` e push `43099245246` do commit anterior `c74c7b6` concluíram com sucesso em `actionlint`, Ubuntu 24.04, macOS 15 e Windows. A execução de CI da correção adicional depende de seu commit e push.
+No worktree `feature/continuos-infinity-native`, a correção adicional de identidade da ferramenta em `native-rollout-call-evidence.ts` passou nos dois testes direcionados de evidência nativa e broker, com **33 testes aprovados, zero falhas e 104 asserções**. A execução completa de `bun run verify` terminou com código zero, incluindo auditoria de dependências, typecheck, testes, build e smoke de runtime relocável. Os runs PR `43099254982` e push `43099245246` do commit anterior `c74c7b6` concluíram com sucesso em `actionlint`, Ubuntu 24.04, macOS 15 e Windows. O run PR `43102321683` referente ao commit `0040eeb` também concluiu com sucesso em `actionlint`, Ubuntu 24.04, macOS 15 e Windows.
 
 ## Critérios ainda abertos
 
