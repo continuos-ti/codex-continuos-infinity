@@ -32,7 +32,8 @@ function invalid(): never {
 /**
  * Read a stopped broker's durable observation boundaries. The live owner, payloads and result
  * promises are gone after a crash. Even result_received means only that an owner presented a
- * result; its content was not persisted, and its effect cannot be inferred from this journal.
+ * result. An adjacent encrypted vault may retain the body, but this journal reader neither
+ * authenticates the current native owner nor decrypts results or infers effects from them.
  * No state returned here licenses re-execution, continuation or reuse of an old turn token.
  */
 export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[] {
