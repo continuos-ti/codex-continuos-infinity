@@ -272,6 +272,25 @@ test("recovery snapshot authenticates a mixed multi-trace inventory and each sea
   expect(JSON.stringify(observed)).not.toContain(turnId);
 });
 
+test("recovery snapshot does not attribute a native output to a different tool sharing a call ID", () => {
+  const rollout = nativeRollout();
+  journal();
+  seal();
+  appendFileSync(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { type: "response_item", payload: { type: "function_call", call_id: callId, name: "other_tool" } },
+    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "returned" } },
+  ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
+
+  const recovered = snapshot();
+  expect(recovered.status).toBe("verified_native_recovery_snapshot");
+  if (recovered.status !== "verified_native_recovery_snapshot") throw new Error("Missing snapshot");
+  expect(recovered.calls[0]?.resultEvidence.status).toBe("verified_result_evidence");
+  expect(recovered.calls[0]?.nativeOutputEvidence).toBe("unavailable");
+  expect(recovered.replayAuthorized).toBe(false);
+  expect(recovered.externalEffectsReconciled).toBe(false);
+});
+
 test("recovery snapshot refuses stale authority, ambiguous homes and unowned legacy records", () => {
   nativeRollout();
   journal();

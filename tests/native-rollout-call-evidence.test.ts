@@ -9,11 +9,14 @@ const otherTurn = "01a06c66-4310-75c6-a0df-318f890ef6de";
 const ordinaryCall = `call_${"A".repeat(32)}`;
 const customCall = `call_${"B".repeat(32)}`;
 const orphanCall = `call_${"C".repeat(32)}`;
+const toolName = (id: string) => id === ordinaryCall ? "ordinary_tool"
+  : id === customCall ? "custom_tool" : "orphan_tool";
 const taskStarted = (id: string) => ({ type: "event_msg", payload: { type: "task_started", turn_id: id } });
 const taskComplete = { type: "event_msg", payload: { type: "task_complete", turn_id: turn } };
 const foreignTaskComplete = { type: "event_msg", payload: { type: "task_complete", turn_id: otherTurn } };
-const tool = (type: string, call_id: string, owner?: string) => ({
+const tool = (type: string, call_id: string, owner?: string, name = toolName(call_id)) => ({
   type: "response_item", payload: { type, call_id, output: "private tool output",
+    ...(type === "function_call" || type === "custom_tool_call" ? { name } : {}),
     ...(owner ? { internal_chat_message_metadata_passthrough: { turn_id: owner } } : {}),
   },
 });
@@ -26,8 +29,24 @@ function write(records: unknown[]) {
   writeFileSync(path, records.map(item => JSON.stringify(item)).join("\n") + "\n");
 }
 function observed(...ids: string[]) {
-  return [...observeNativeCallOutputs(path, turn, ids)].sort();
+  return [...observeNativeCallOutputs(path, turn,
+    ids.map(callId => ({ callId, tool: toolName(callId) })))].sort();
 }
+
+test("native output evidence requires the journal's exact tool name", () => {
+  write([taskStarted(turn), tool("function_call", ordinaryCall, undefined, "different_tool"),
+    tool("function_call_output", ordinaryCall), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+
+  write([taskStarted(turn), { type: "response_item", payload: {
+    type: "function_call", call_id: ordinaryCall } },
+    tool("function_call_output", ordinaryCall), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([]);
+
+  write([taskStarted(turn), tool("function_call", ordinaryCall),
+    tool("function_call_output", ordinaryCall), taskComplete]);
+  expect(observed(ordinaryCall)).toEqual([ordinaryCall]);
+});
 
 test("native function and custom outputs are observed only within the authenticated task boundary", () => {
   write([

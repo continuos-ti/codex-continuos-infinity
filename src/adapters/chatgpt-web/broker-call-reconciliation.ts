@@ -361,7 +361,7 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   }));
   const beforeVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
   const nativeOutputs = observeNativeCallOutputs(initialOwner.rolloutPath, input.turnId,
-    owned.map(call => call.callId));
+    owned.map(call => ({ callId: call.callId, tool: call.tool })));
   let totalResultBytes = 0;
   const calls = owned.map(call => {
     let resultEvidence: AuthenticatedBrokerResultEvidence = {

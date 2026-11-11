@@ -3,6 +3,12 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 const MAX_ROLLOUT_BYTES = 128 * 1024 * 1024;
 const MAX_RECORD_BYTES = 16 * 1024 * 1024;
 const CALL_ID = /^call_[A-Za-z0-9_-]{32}$/;
+const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,256}$/;
+
+export interface NativeCallIdentity {
+  callId: string;
+  tool: string;
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -45,19 +51,20 @@ function stableRolloutBytes(path: string): Buffer | undefined {
 export function observeNativeCallOutputs(
   rolloutPath: string,
   turnId: string,
-  callIds: readonly string[],
+  identities: readonly NativeCallIdentity[],
 ): ReadonlySet<string> {
   const unavailable = (): ReadonlySet<string> => new Set();
-  if (new Set(callIds).size !== callIds.length || callIds.some(id => !CALL_ID.test(id))) {
+  if (new Set(identities.map(identity => identity.callId)).size !== identities.length
+    || identities.some(identity => !CALL_ID.test(identity.callId) || !TOOL_NAME.test(identity.tool))) {
     return unavailable();
   }
-  if (callIds.length === 0) return unavailable();
+  if (identities.length === 0) return unavailable();
 
   try {
     const bytes = stableRolloutBytes(rolloutPath);
     if (!bytes || bytes[bytes.length - 1] !== 0x0a) return unavailable();
 
-    const requested = new Set(callIds);
+    const requested = new Map(identities.map(identity => [identity.callId, identity.tool]));
     const calls = new Map<string, { expectedOutput: string; outputSeen: boolean }>();
     let active = false;
     let started = false;
@@ -111,7 +118,9 @@ export function observeNativeCallOutputs(
 
       const id = payload.call_id;
       if (payload.type === "function_call" || payload.type === "custom_tool_call") {
-        if (calls.has(id)) return unavailable();
+        // The broker's journal binds this ID to a wire tool. An unrelated native call
+        // with a reused ID cannot authenticate an output for the journal's tool.
+        if (calls.has(id) || payload.name !== requested.get(id)) return unavailable();
         calls.set(id, { expectedOutput: `${payload.type}_output`, outputSeen: false });
       } else if (payload.type === "function_call_output" || payload.type === "custom_tool_call_output") {
         const call = calls.get(id);
