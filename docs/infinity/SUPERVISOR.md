@@ -1,5 +1,7 @@
 # Supervisor por eventos — limites comprovados
 
+As leituras autenticadas `readAuthenticatedBrokerCallInventory`, `readAuthenticatedBrokerResultEvidence` e `readAuthenticatedBrokerRecoverySnapshot` retornam `unavailable` quando encontram qualquer publicação `.pending` preexistente no journal, mesmo em outro trace. O leitor diagnóstico `inspectBrokerCallJournal` continua sem tratar arquivos `.pending` como eventos confirmados. Arquivos órfãos exigem investigação da publicação antes de qualquer remoção. Esse bloqueio não concede autorização para replay nem reconciliação de efeitos externos.
+
 O supervisor do Codex Continuos Infinity inicia a partir de eventos internos do runtime. Não utiliza cron, Task Scheduler ou automações ChatGPT para repetir comandos.
 
 ## Elegibilidade

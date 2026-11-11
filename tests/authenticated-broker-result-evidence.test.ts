@@ -347,6 +347,29 @@ test("recovery snapshot detects a pending journal publication introduced during 
   }
 });
 
+test("pre-existing pending journal publication prevents every authenticated recovery view", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const otherTrace = join(directory, "012345abcdef");
+  mkdirSync(otherTrace, { recursive: true });
+  const pending = join(otherTrace, `.${"1".repeat(64)}.${"2".repeat(24)}.pending`);
+  writeFileSync(pending, "{incomplete");
+
+  expect(read()).toEqual(unavailable);
+  expect(snapshot()).toEqual(unavailable);
+  expect(readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory, lineage: lineage(), turnId,
+  })).toEqual(unavailable);
+
+  rmSync(pending);
+  expect(read().status).toBe("verified_result_evidence");
+  expect(snapshot().status).toBe("verified_native_recovery_snapshot");
+  expect(readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory, lineage: lineage(), turnId,
+  }).status).toBe("verified_native_call_inventory");
+});
+
 test("recovery snapshot rejects concurrent vault rewrites and pending publications", () => {
   nativeRollout();
   journal();

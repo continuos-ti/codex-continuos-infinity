@@ -48,8 +48,9 @@ function invalid(): never {
 function inspectBrokerCallJournalSnapshot(directory: string): {
   calls: BrokerRecoveryCall[];
   fingerprint: string;
+  pendingPublication: boolean;
 } {
-  if (!existsSync(directory)) return { calls: [], fingerprint: "" };
+  if (!existsSync(directory)) return { calls: [], fingerprint: "", pendingPublication: false };
   if (!lstatSync(directory).isDirectory()) invalid();
 
   const calls = new Map<string, { traceId: string; tool: string; nativeOwnerDigest?: string; events: Set<BrokerCallEvent> }>();
@@ -114,7 +115,7 @@ function inspectBrokerCallJournalSnapshot(directory: string): {
     return { traceId, callId, tool, ...(nativeOwnerDigest ? { nativeOwnerDigest } : {}), state,
       resultRecoverable: false as const, replayAuthorized: false as const };
   }).sort((a, b) => a.traceId.localeCompare(b.traceId) || a.callId.localeCompare(b.callId));
-  return { calls: observed, fingerprint: fingerprint.digest("hex") };
+  return { calls: observed, fingerprint: fingerprint.digest("hex"), pendingPublication: pendingCount > 0 };
 }
 
 export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[] {
@@ -185,6 +186,7 @@ export function readAuthenticatedBrokerCallInventory(input: {
   // Journal corruption is a recovery error, including corruption in another trace. Do not
   // silently turn it into an empty inventory that might be mistaken for a clean turn.
   const before = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (before.pendingPublication) return unavailable();
   const observedCalls = before.calls;
   // Legacy calls lack a native owner digest and might belong to this turn. Their identity
   // cannot be ruled out, even when other records are attributed to the current owner.
@@ -197,7 +199,8 @@ export function readAuthenticatedBrokerCallInventory(input: {
     return unavailable();
   }
   const after = inspectBrokerCallJournalSnapshot(input.journalDirectory);
-  if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
+  if (after.pendingPublication || after.fingerprint !== before.fingerprint
+    || !isDeepStrictEqual(after.calls, before.calls)) {
     return unavailable();
   }
   return {
@@ -247,6 +250,7 @@ export function readAuthenticatedBrokerResultEvidence(input: {
   }
 
   const before = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (before.pendingPublication) return unavailable();
   const call = before.calls.find(entry =>
     entry.traceId === input.traceId && entry.callId === input.callId);
   if (!call || call.state !== "result_unavailable" || call.nativeOwnerDigest !== ownerDigest) {
@@ -263,7 +267,8 @@ export function readAuthenticatedBrokerResultEvidence(input: {
   // A concurrent broker publication or rewrite invalidates this evidence even when the
   // authenticated native owner and the recovered ciphertext remain unchanged.
   const after = inspectBrokerCallJournalSnapshot(input.journalDirectory);
-  if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
+  if (after.pendingPublication || after.fingerprint !== before.fingerprint
+    || !isDeepStrictEqual(after.calls, before.calls)) {
     return unavailable();
   }
   const afterVault = captureBrokerResultFileEvidence(vaultDirectory, [identity]);
@@ -331,6 +336,7 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   }
 
   const before = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (before.pendingPublication) return unavailable();
   if (before.calls.some(call => !call.nativeOwnerDigest)) return unavailable();
   const owned = before.calls.filter(call => call.nativeOwnerDigest === ownerDigest);
   if (owned.length > MAX_AUTHENTICATED_SNAPSHOT_CALLS) {
@@ -368,7 +374,8 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   // Fingerprint covers every record's bytes and every pending filename, so modifications
   // that leave the logical states unchanged still invalidate the collected evidence.
   const after = inspectBrokerCallJournalSnapshot(input.journalDirectory);
-  if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
+  if (after.pendingPublication || after.fingerprint !== before.fingerprint
+    || !isDeepStrictEqual(after.calls, before.calls)) {
     return unavailable();
   }
   const afterVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
