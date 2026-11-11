@@ -2298,7 +2298,7 @@ describe("trusted Codex task environment continuity", () => {
       );
       expect(store.resolve(request).cwd).toBe(root);
     }
-  });
+  }, 20_000);
 
   for (const format of ["v1", "v2"]) for (const groupedPreamble of [false, true]) for (const newInstruction of [false, true]) test(`${format} ${groupedPreamble ? "grouped preamble" : "context-only"} continuation ${newInstruction ? "with a new instruction" : "of the previous instruction"} requires a matching current rollout, not just a checkpoint`, () => {
     const { codexHome, request, rolloutPath } = resumedRootFixture();

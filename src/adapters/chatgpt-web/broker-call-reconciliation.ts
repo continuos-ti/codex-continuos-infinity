@@ -16,6 +16,8 @@ const MAX_RECORDS = 20_000;
 const MAX_RECORD_BYTES = 4_096;
 const MAX_TRACES = 20_000;
 const MAX_PENDING_FILES = 20_000;
+const MAX_AUTHENTICATED_SNAPSHOT_CALLS = 64;
+const MAX_AUTHENTICATED_SNAPSHOT_RESULT_BYTES = 64 * 1024 * 1024;
 
 export type BrokerRecoveryState = "queued_unconfirmed" | "delivery_unknown"
   | "result_unavailable" | "compaction_resolution_unavailable" | "retired_uncertain";
@@ -42,22 +44,28 @@ function invalid(): never {
  * authenticates the current native owner nor decrypts results or infers effects from them.
  * No state returned here licenses re-execution, continuation or reuse of an old turn token.
  */
-export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[] {
-  if (!existsSync(directory)) return [];
+function inspectBrokerCallJournalSnapshot(directory: string): {
+  calls: BrokerRecoveryCall[];
+  fingerprint: string;
+} {
+  if (!existsSync(directory)) return { calls: [], fingerprint: "" };
   if (!lstatSync(directory).isDirectory()) invalid();
 
   const calls = new Map<string, { traceId: string; tool: string; nativeOwnerDigest?: string; events: Set<BrokerCallEvent> }>();
+  const fingerprint = createHash("sha256");
   let recordCount = 0;
   let traceCount = 0;
   let pendingCount = 0;
-  for (const folder of readdirSync(directory, { withFileTypes: true })) {
+  for (const folder of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (++traceCount > MAX_TRACES) invalid();
     if (!/^[0-9a-f]{12}$/.test(folder.name) || !folder.isDirectory() || folder.isSymbolicLink()) invalid();
     const folderPath = join(directory, folder.name);
-    for (const file of readdirSync(folderPath, { withFileTypes: true })) {
+    fingerprint.update(folder.name).update("\0");
+    for (const file of readdirSync(folderPath, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       // A crash before atomic publication leaves an uncommitted temporary record.
       if (/^\.[0-9a-f]{64}\.[0-9a-f]{24}\.pending$/.test(file.name)) {
         if (++pendingCount > MAX_PENDING_FILES || !file.isFile() || file.isSymbolicLink()) invalid();
+        fingerprint.update(file.name).update("\0");
         continue;
       }
       if (!/^[0-9a-f]{64}\.json$/.test(file.name) || !file.isFile() || file.isSymbolicLink()) invalid();
@@ -65,8 +73,11 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
       const path = join(folderPath, file.name);
       const stat = lstatSync(path);
       if (!stat.isFile() || stat.size < 2 || stat.size > MAX_RECORD_BYTES) invalid();
+      const raw = readFileSync(path);
+      if (raw.byteLength !== stat.size) invalid();
+      fingerprint.update(file.name).update("\0").update(raw).update("\0");
       let entry: BrokerCallEvidence;
-      try { entry = JSON.parse(readFileSync(path, "utf8")) as BrokerCallEvidence; }
+      try { entry = JSON.parse(raw.toString("utf8")) as BrokerCallEvidence; }
       catch { invalid(); }
       if (!entry || typeof entry !== "object" || Array.isArray(entry)
         || Object.keys(entry).sort().join(",") !== ["callId", "event", "recordedAt", "replayAuthorized", "resultRecoverable", "tool", "traceId", "version", ...(entry.nativeOwnerDigest === undefined ? [] : ["nativeOwnerDigest"])].sort().join(",")
@@ -89,7 +100,7 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
     }
   }
 
-  return [...calls].map(([callId, { traceId, tool, nativeOwnerDigest, events }]) => {
+  const observed = [...calls].map(([callId, { traceId, tool, nativeOwnerDigest, events }]) => {
     if (!events.has("queued")
       || (events.has("result_received") && !events.has("delivery_possible"))
       || (events.has("compaction_resolution_possible") && events.has("delivery_possible"))
@@ -102,6 +113,11 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
     return { traceId, callId, tool, ...(nativeOwnerDigest ? { nativeOwnerDigest } : {}), state,
       resultRecoverable: false as const, replayAuthorized: false as const };
   }).sort((a, b) => a.traceId.localeCompare(b.traceId) || a.callId.localeCompare(b.callId));
+  return { calls: observed, fingerprint: fingerprint.digest("hex") };
+}
+
+export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[] {
+  return inspectBrokerCallJournalSnapshot(directory).calls;
 }
 
 export type AuthenticatedBrokerResultEvidence = {
@@ -243,6 +259,101 @@ export function readAuthenticatedBrokerResultEvidence(input: {
   }
   return {
     status: "verified_result_evidence", result,
+    replayAuthorized: false, externalEffectsReconciled: false,
+  };
+}
+
+export type AuthenticatedBrokerRecoverySnapshot = {
+  status: "unavailable";
+  replayAuthorized: false;
+  externalEffectsReconciled: false;
+} | {
+  status: "verified_native_recovery_snapshot";
+  /** Complete bounded inventory for the current native owner, with individually sealed results. */
+  calls: Array<{ call: BrokerRecoveryCall; resultEvidence: AuthenticatedBrokerResultEvidence }>;
+  replayAuthorized: false;
+  externalEffectsReconciled: false;
+};
+
+/**
+ * Collect one bounded, authenticated observation of a stopped broker across traces.
+ * Verify native ownership before and after vault reads and reject any concurrent journal
+ * publication. Results are evidence only. In particular, this API cannot authorize a new
+ * Codex turn binding, infer external effects or re-dispatch a mutating tool.
+ */
+export function readAuthenticatedBrokerRecoverySnapshot(input: {
+  journalDirectory: string;
+  codexHome: string;
+  additionalCodexHomes?: readonly string[];
+  sqliteHome?: string;
+  lineage: ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
+  turnId: string;
+}): AuthenticatedBrokerRecoverySnapshot {
+  const unavailable = (): AuthenticatedBrokerRecoverySnapshot => ({
+    status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+  });
+  const ownerDigest = nativeBrokerOwnerDigest({ threadId: input.lineage.threadId, turnId: input.turnId });
+  if (!ownerDigest || !existsSync(input.journalDirectory)) return unavailable();
+
+  const ownerOptions = {
+    codexHome: input.codexHome,
+    ...(input.additionalCodexHomes ? { additionalCodexHomes: input.additionalCodexHomes } : {}),
+    ...(input.sqliteHome ? { sqliteHome: input.sqliteHome } : {}),
+    lineage: input.lineage,
+    turnId: input.turnId,
+  };
+  let initialOwner: ReturnType<typeof resolveCurrentCodexRolloutEnvironment>;
+  try {
+    initialOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
+    if (!initialOwner) return unavailable();
+  } catch {
+    return unavailable();
+  }
+
+  const before = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (before.calls.some(call => !call.nativeOwnerDigest)) return unavailable();
+  const owned = before.calls.filter(call => call.nativeOwnerDigest === ownerDigest);
+  if (owned.length > MAX_AUTHENTICATED_SNAPSHOT_CALLS) {
+    throw new Error("Broker recovery snapshot exceeds the bounded call count");
+  }
+  const vault = new BrokerResultVault(vaultDirectoryForJournal(input.journalDirectory));
+  let totalResultBytes = 0;
+  const calls = owned.map(call => {
+    let resultEvidence: AuthenticatedBrokerResultEvidence = {
+      status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+    };
+    if (call.state === "result_unavailable") {
+      const result = vault.read({
+        traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
+      });
+      if (result) {
+        totalResultBytes += Buffer.byteLength(JSON.stringify(result));
+        if (totalResultBytes > MAX_AUTHENTICATED_SNAPSHOT_RESULT_BYTES) {
+          throw new Error("Broker recovery snapshot exceeds the bounded result size");
+        }
+        resultEvidence = {
+          status: "verified_result_evidence", result,
+          replayAuthorized: false, externalEffectsReconciled: false,
+        };
+      }
+    }
+    return { call, resultEvidence };
+  });
+
+  // Fingerprint covers every record's bytes and every pending filename, so modifications
+  // that leave the logical states unchanged still invalidate the collected evidence.
+  const after = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
+    return unavailable();
+  }
+  try {
+    const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
+    if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();
+  } catch {
+    return unavailable();
+  }
+  return {
+    status: "verified_native_recovery_snapshot", calls,
     replayAuthorized: false, externalEffectsReconciled: false,
   };
 }

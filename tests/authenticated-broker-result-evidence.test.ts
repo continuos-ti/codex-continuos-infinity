@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realp
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
-import { readAuthenticatedBrokerCallInventory, readAuthenticatedBrokerResultEvidence, type AuthenticatedBrokerResultEvidence } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { readAuthenticatedBrokerCallInventory, readAuthenticatedBrokerRecoverySnapshot, readAuthenticatedBrokerResultEvidence, type AuthenticatedBrokerResultEvidence } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "../src/adapters/chatgpt-web/environment";
 import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
@@ -88,6 +88,15 @@ function read(options: { owner?: ChatGptRootThreadMetadata | ChatGptThreadSpawnL
   });
 }
 
+function snapshot(options: { owner?: ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
+  currentTurn?: string; additionalCodexHomes?: string[] } = {}) {
+  return readAuthenticatedBrokerRecoverySnapshot({
+    codexHome: home, journalDirectory: directory, lineage: options.owner ?? lineage(),
+    turnId: options.currentTurn ?? turnId,
+    ...(options.additionalCodexHomes ? { additionalCodexHomes: options.additionalCodexHomes } : {}),
+  });
+}
+
 const unavailable: AuthenticatedBrokerResultEvidence = {
   status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
 };
@@ -136,6 +145,147 @@ test("native call inventory authenticates ownership across traces without exposi
   expect(JSON.stringify(inventory)).not.toContain(foreignCallId);
   expect(JSON.stringify(inventory)).not.toContain(threadId);
   expect(JSON.stringify(inventory)).not.toContain(turnId);
+});
+
+test("recovery snapshot authenticates a mixed multi-trace inventory and each sealed result", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const pendingCallId = `call_${"B".repeat(32)}`;
+  const missingResultCallId = `call_${"C".repeat(32)}`;
+  const foreignCallId = `call_${"D".repeat(32)}`;
+  const alternateTrace = "012345abcdef";
+  const owner = nativeBrokerOwnerDigest({ threadId, turnId })!;
+  for (const event of ["queued", "delivery_possible", "result_received"] as const) {
+    recordBrokerCallEvent({ directory, traceId: alternateTrace, callId: missingResultCallId,
+      wireName: "read_tool", event, nativeOwnerDigest: owner });
+  }
+  recordBrokerCallEvent({ directory, traceId: alternateTrace, callId: pendingCallId,
+    wireName: "pending_tool", event: "queued", nativeOwnerDigest: owner });
+  recordBrokerCallEvent({ directory, traceId: alternateTrace, callId: foreignCallId,
+    wireName: "foreign_tool", event: "queued", nativeOwnerDigest: "f".repeat(64) });
+
+  const observed = snapshot();
+  expect(observed.status).toBe("verified_native_recovery_snapshot");
+  if (observed.status !== "verified_native_recovery_snapshot") throw new Error("Missing snapshot");
+  expect(observed.calls.map(entry => [entry.call.callId, entry.call.state, entry.resultEvidence.status]))
+    .toEqual([
+      [pendingCallId, "queued_unconfirmed", "unavailable"],
+      [missingResultCallId, "result_unavailable", "unavailable"],
+      [callId, "result_unavailable", "verified_result_evidence"],
+    ]);
+  const sealed = observed.calls[2]!.resultEvidence;
+  if (sealed.status !== "verified_result_evidence") throw new Error("Missing sealed result");
+  expect(sealed.result).toEqual(result);
+  expect(observed.replayAuthorized).toBe(false);
+  expect(observed.externalEffectsReconciled).toBe(false);
+  expect(JSON.stringify(observed)).not.toContain(foreignCallId);
+  expect(JSON.stringify(observed)).not.toContain(threadId);
+  expect(JSON.stringify(observed)).not.toContain(turnId);
+});
+
+test("recovery snapshot refuses stale authority, ambiguous homes and unowned legacy records", () => {
+  nativeRollout();
+  journal();
+  seal();
+  expect(snapshot({ currentTurn: staleTurnId }).status).toBe("unavailable");
+  expect(snapshot({ owner: lineage(true) }).status).toBe("unavailable");
+  const secondHome = join(root, "secondary");
+  nativeRollout({ alternateHome: secondHome });
+  expect(snapshot({ additionalCodexHomes: [secondHome] }).status).toBe("unavailable");
+  recordBrokerCallEvent({ directory, traceId: "012345abcdef", callId: `call_${"E".repeat(32)}`,
+    wireName: "legacy_tool", event: "queued" });
+  expect(snapshot().status).toBe("unavailable");
+});
+
+test("recovery snapshot rejects native CWD changes during a vault read", () => {
+  const rollout = nativeRollout();
+  journal();
+  seal();
+  const movedCwd = join(cwd, "other-worktree");
+  mkdirSync(movedCwd);
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    appendFileSync(rollout, JSON.stringify({ type: "turn_context", payload: {
+      turn_id: turnId, cwd: movedCwd,
+      sandbox_policy: { type: "danger-full-access" }, permission_profile: { type: "disabled" },
+    } }) + "\n");
+    return value;
+  };
+  try {
+    expect(snapshot().status).toBe("unavailable");
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+});
+
+test("recovery snapshot rejects journal additions or same-state record modifications during a read", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const originalRead = BrokerResultVault.prototype.read;
+  const eventPath = join(directory, traceId,
+    `${createHash("sha256").update(`v1:${callId}:result_received`).digest("hex")}.json`);
+  let change: "add" | "rewrite" = "add";
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    if (change === "add") {
+      recordBrokerCallEvent({ directory, traceId, callId: `call_${"F".repeat(32)}`,
+        wireName: "another_tool", event: "queued",
+        nativeOwnerDigest: nativeBrokerOwnerDigest({ threadId, turnId }) });
+    } else {
+      const record = JSON.parse(readFileSync(eventPath, "utf8")) as { recordedAt: string };
+      record.recordedAt = "2026-11-10T01:02:03.000Z";
+      writeFileSync(eventPath, JSON.stringify(record));
+    }
+    return value;
+  };
+  try {
+    expect(snapshot().status).toBe("unavailable");
+    change = "rewrite";
+    expect(snapshot().status).toBe("unavailable");
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+});
+
+test("recovery snapshot detects a pending journal publication introduced during result recovery", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    writeFileSync(join(directory, traceId, `.${"1".repeat(64)}.${"2".repeat(24)}.pending`), "{}");
+    return value;
+  };
+  try {
+    expect(snapshot().status).toBe("unavailable");
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+});
+
+test("recovery snapshot bounds accumulated call count and preserves vault authentication errors", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const owner = nativeBrokerOwnerDigest({ threadId, turnId })!;
+  for (let index = 0; index < 64; index++) {
+    const call = `call_${index.toString(36).padStart(32, "0")}`;
+    recordBrokerCallEvent({ directory, traceId, callId: call,
+      wireName: "additional_tool", event: "queued", nativeOwnerDigest: owner });
+  }
+  expect(() => snapshot()).toThrow("bounded call count");
+  rmSync(join(directory, traceId), { recursive: true, force: true });
+  journal();
+  const vaultPath = join(vaultDirectoryForJournal(directory), traceId,
+    `${createHash("sha256").update(`v1:${callId}:sealed_result`).digest("hex")}.json`);
+  const envelope = JSON.parse(readFileSync(vaultPath, "utf8")) as { ciphertext: string };
+  envelope.ciphertext = `${envelope.ciphertext.startsWith("A") ? "B" : "A"}${envelope.ciphertext.slice(1)}`;
+  writeFileSync(vaultPath, JSON.stringify(envelope));
+  expect(() => snapshot()).toThrow("authentication or payload validation failed");
 });
 
 test("native call inventory fails closed for stale turn, mismatched lineage, ambiguous home and corrupt journal", () => {
