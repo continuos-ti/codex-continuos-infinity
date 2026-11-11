@@ -7,7 +7,7 @@ import {
   CompactionTransactionStore,
   type CompactionTransactionHandle,
 } from "./compaction-transaction";
-import type { ChatGptTurnEnvironment } from "./environment";
+import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment";
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
@@ -102,6 +102,7 @@ interface SafeTurnControl {
 interface TurnChannel {
   traceId: string;
   journalNonce: string;
+  nativeOwnerDigest?: string;
   externalOwner: boolean;
   environment: PendingTurn;
   bindingId?: string;
@@ -163,6 +164,7 @@ interface BrokerRequest {
   environment?: ChatGptTurnEnvironment;
   ttlMs?: number;
   traceId?: string;
+  nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">;
   callId?: string;
   activityId?: string;
   revision?: number;
@@ -239,6 +241,16 @@ function handleFingerprint(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
+const NATIVE_CODEX_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function nativeOwnerDigest(identity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">): string | undefined {
+  if (typeof identity?.threadId !== "string" || !NATIVE_CODEX_ID.test(identity.threadId)
+    || typeof identity.turnId !== "string" || !NATIVE_CODEX_ID.test(identity.turnId)) return undefined;
+  return createHash("sha256")
+    .update(JSON.stringify([identity.threadId.toLowerCase(), identity.turnId.toLowerCase()]))
+    .digest("hex");
+}
+
 function errorOf(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
@@ -283,12 +295,14 @@ function assertSurfaceNonce(value: unknown): asserts value is string {
 }
 
 export interface TurnBrokerOwner {
-  register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string): Promise<string>;
+  register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string,
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">): Promise<string>;
   registerSafe(
     environment: ChatGptTurnEnvironment,
     surfaceNonce: string,
     ttlMs?: number,
     traceId?: string,
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
   ): Promise<string>;
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void | Promise<void>;
   confirmSafeTurnSent(
@@ -363,6 +377,7 @@ export class TurnBroker implements TurnBrokerOwner {
     recordBrokerCallEvent({
       directory: this.callJournalDirectory,
       traceId, callId: request.callId, wireName: request.wireName, event,
+      ...(channel.nativeOwnerDigest ? { nativeOwnerDigest: channel.nativeOwnerDigest } : {}),
     });
   }
 
@@ -380,6 +395,7 @@ export class TurnBroker implements TurnBrokerOwner {
     environment: ChatGptTurnEnvironment,
     ttlMs?: number,
     traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
     externalOwner = false,
     handlePrefix = "turn",
   ): Promise<string> {
@@ -392,9 +408,11 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error("ChatGPT web turn broker TTL must be a positive finite number");
     }
     const token = opaqueId(handlePrefix);
+    const ownerDigest = nativeOwnerDigest(nativeIdentity);
     const channel: TurnChannel = {
       traceId,
       journalNonce: token,
+      ...(ownerDigest ? { nativeOwnerDigest: ownerDigest } : {}),
       externalOwner,
       environment: {
         ...environment,
@@ -424,10 +442,11 @@ export class TurnBroker implements TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
     externalOwner = false,
   ): Promise<string> {
     assertSurfaceNonce(surfaceNonce);
-    const token = await this.register(environment, ttlMs, traceId, externalOwner, "request");
+    const token = await this.register(environment, ttlMs, traceId, nativeIdentity, externalOwner, "request");
     const channel = this.channels.get(token);
     if (!channel) throw new Error("Zero Risk turn registration was revoked before initialization");
     channel.safe = {
@@ -1090,7 +1109,8 @@ export class TurnBroker implements TurnBrokerOwner {
       if (request.traceId !== undefined && !/^[A-Za-z0-9_-]{6,128}$/.test(request.traceId)) {
         throw new Error("turn owner trace id is invalid");
       }
-      return this.register(environment, request.ttlMs, request.traceId, true).then(token => ({ token }));
+      return this.register(environment, request.ttlMs, request.traceId, request.nativeIdentity, true)
+        .then(token => ({ token }));
     }
     if (request.method === "owner_register_safe") {
       const environment = ownerEnvironment(request.environment);
@@ -1103,6 +1123,7 @@ export class TurnBroker implements TurnBrokerOwner {
         request.surfaceNonce,
         request.ttlMs,
         request.traceId,
+        request.nativeIdentity,
         true,
       ).then(token => ({ token }));
     }
@@ -1540,12 +1561,14 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     }
   }
 
-  async register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId = "unknown"): Promise<string> {
+  async register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">): Promise<string> {
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
       method: "owner_register",
       environment,
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
+      ...(nativeIdentity ? { nativeIdentity } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("turn_")) {
       throw new Error("DEV turn owner received an invalid broker token");
@@ -1558,6 +1581,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
   ): Promise<string> {
     assertSurfaceNonce(surfaceNonce);
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
@@ -1566,6 +1590,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       surfaceNonce,
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
+      ...(nativeIdentity ? { nativeIdentity } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("request_")) {
       throw new Error("DEV Zero Risk turn owner received an invalid broker request id");

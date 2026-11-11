@@ -18,6 +18,7 @@ export interface BrokerRecoveryCall {
   traceId: string;
   callId: string;
   tool: string;
+  nativeOwnerDigest?: string;
   state: BrokerRecoveryState;
   /** Reconciliation is observational. It cannot grant a new capability after process death. */
   resultRecoverable: false;
@@ -38,7 +39,7 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
   if (!existsSync(directory)) return [];
   if (!lstatSync(directory).isDirectory()) invalid();
 
-  const calls = new Map<string, { traceId: string; tool: string; events: Set<BrokerCallEvent> }>();
+  const calls = new Map<string, { traceId: string; tool: string; nativeOwnerDigest?: string; events: Set<BrokerCallEvent> }>();
   let recordCount = 0;
   let traceCount = 0;
   let pendingCount = 0;
@@ -61,10 +62,11 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
       try { entry = JSON.parse(readFileSync(path, "utf8")) as BrokerCallEvidence; }
       catch { invalid(); }
       if (!entry || typeof entry !== "object" || Array.isArray(entry)
-        || Object.keys(entry).sort().join(",") !== ["callId", "event", "recordedAt", "replayAuthorized", "resultRecoverable", "tool", "traceId", "version"].sort().join(",")
+        || Object.keys(entry).sort().join(",") !== ["callId", "event", "recordedAt", "replayAuthorized", "resultRecoverable", "tool", "traceId", "version", ...(entry.nativeOwnerDigest === undefined ? [] : ["nativeOwnerDigest"])].sort().join(",")
         || entry.version !== 1 || entry.traceId !== folder.name
         || typeof entry.callId !== "string" || !/^call_[A-Za-z0-9_-]{32}$/.test(entry.callId)
         || typeof entry.tool !== "string" || !/^[A-Za-z0-9_.:-]{1,256}$/.test(entry.tool)
+        || (entry.nativeOwnerDigest !== undefined && (typeof entry.nativeOwnerDigest !== "string" || !/^[0-9a-f]{64}$/.test(entry.nativeOwnerDigest)))
         || !EVENTS.has(entry.event) || typeof entry.recordedAt !== "string"
         || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(entry.recordedAt)
         || Number.isNaN(Date.parse(entry.recordedAt))
@@ -72,13 +74,15 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
         || entry.replayAuthorized !== false || entry.resultRecoverable !== false
         || `${createHash("sha256").update(`v1:${entry.callId}:${entry.event}`).digest("hex")}.json` !== file.name) invalid();
       const prior = calls.get(entry.callId);
-      if (prior && (prior.traceId !== entry.traceId || prior.tool !== entry.tool || prior.events.has(entry.event))) invalid();
+      if (prior && (prior.traceId !== entry.traceId || prior.tool !== entry.tool
+        || prior.nativeOwnerDigest !== entry.nativeOwnerDigest || prior.events.has(entry.event))) invalid();
       if (prior) prior.events.add(entry.event);
-      else calls.set(entry.callId, { traceId: entry.traceId, tool: entry.tool, events: new Set([entry.event]) });
+      else calls.set(entry.callId, { traceId: entry.traceId, tool: entry.tool,
+        ...(entry.nativeOwnerDigest ? { nativeOwnerDigest: entry.nativeOwnerDigest } : {}), events: new Set([entry.event]) });
     }
   }
 
-  return [...calls].map(([callId, { traceId, tool, events }]) => {
+  return [...calls].map(([callId, { traceId, tool, nativeOwnerDigest, events }]) => {
     if (!events.has("queued")
       || (events.has("result_received") && !events.has("delivery_possible"))
       || (events.has("compaction_resolution_possible") && events.has("delivery_possible"))
@@ -88,6 +92,7 @@ export function inspectBrokerCallJournal(directory: string): BrokerRecoveryCall[
       : events.has("delivery_possible") ? "delivery_unknown"
       : events.has("compaction_resolution_possible") ? "compaction_resolution_unavailable"
       : "queued_unconfirmed";
-    return { traceId, callId, tool, state, resultRecoverable: false as const, replayAuthorized: false as const };
+    return { traceId, callId, tool, ...(nativeOwnerDigest ? { nativeOwnerDigest } : {}), state,
+      resultRecoverable: false as const, replayAuthorized: false as const };
   }).sort((a, b) => a.traceId.localeCompare(b.traceId) || a.callId.localeCompare(b.callId));
 }

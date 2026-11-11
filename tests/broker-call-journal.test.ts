@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import { inspectBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { publishPrivateIncident } from "../src/adapters/chatgpt-web/private-incident-journal";
-import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, RemoteTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 
 const roots: string[] = [];
@@ -81,6 +81,88 @@ test("startup reconciles observation boundaries without granting replay or claim
   expect(JSON.stringify(recovered)).not.toContain("private tool output");
   // A second process sees the same conservative classification: this is never live state.
   expect(inspectBrokerCallJournal(directory)).toEqual(recovered);
+});
+
+test("native thread and turn identities are linked to calls through direct and socket owners", async () => {
+  const { root, directory } = fixture();
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "socket")));
+  const remote = new RemoteTurnBroker(broker.socketPath);
+  broker.enableCallJournal(directory);
+  const environment = { cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [] };
+  const firstIdentity = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+  };
+  const secondIdentity = {
+    threadId: "33333333-3333-4333-8333-333333333333",
+    turnId: "44444444-4444-4444-8444-444444444444",
+  };
+  const digestOf = ({ threadId, turnId }: typeof firstIdentity) =>
+    createHash("sha256").update(JSON.stringify([threadId, turnId])).digest("hex");
+  try {
+    const directToken = await broker.register(environment, 20_000, traceId, firstIdentity);
+    const remoteToken = await remote.register(environment, 20_000, traceId, secondIdentity);
+    const legacyToken = await broker.register(environment, 20_000, traceId);
+    const tokens = [directToken, remoteToken, legacyToken];
+    const claims = await Promise.all(tokens.map(token =>
+      callTurnBroker<{ bindingId: string }>(broker.socketPath, { method: "claim", token })));
+    const pending = claims.map(({ bindingId }) => callTurnBroker<BrokerToolResult>(broker.socketPath, {
+      method: "invoke", bindingId, wireName: "test_tool", arguments: { password: "secret" },
+    }, 15_000));
+    const batches = await Promise.all([
+      broker.nextToolBatch(directToken),
+      remote.nextToolBatch(remoteToken),
+      broker.nextToolBatch(legacyToken),
+    ]);
+    expect(batches.every(batch => batch.length === 1)).toBe(true);
+    const callIds = batches.map(batch => batch[0]!.callId);
+    expect(() => broker.completeTool(directToken, callIds[1]!, result)).toThrow("not pending");
+    broker.completeTool(directToken, callIds[0]!, result);
+    await remote.completeTool(remoteToken, callIds[1]!, result);
+    broker.completeTool(legacyToken, callIds[2]!, result);
+    expect(await Promise.all(pending)).toEqual([result, result, result]);
+
+    const calls = inspectBrokerCallJournal(directory);
+    expect(calls).toHaveLength(3);
+    expect(calls.find(call => call.callId === callIds[0])?.nativeOwnerDigest).toBe(digestOf(firstIdentity));
+    expect(calls.find(call => call.callId === callIds[1])?.nativeOwnerDigest).toBe(digestOf(secondIdentity));
+    expect(calls.find(call => call.callId === callIds[2])?.nativeOwnerDigest).toBeUndefined();
+    expect(calls.every(call => call.state === "result_unavailable"
+      && call.resultRecoverable === false && call.replayAuthorized === false)).toBe(true);
+    const persisted = JSON.stringify(evidenceFiles(directory));
+    expect(persisted).not.toContain(firstIdentity.threadId);
+    expect(persisted).not.toContain(firstIdentity.turnId);
+    expect(persisted).not.toContain(secondIdentity.threadId);
+    expect(persisted).not.toContain(secondIdentity.turnId);
+    expect(persisted).not.toContain("secret");
+    expect(persisted).not.toContain("private tool output");
+  } finally {
+    await broker.close();
+  }
+});
+
+test("native owner digest is consistent, strictly formatted, and rejects conflicting journal evidence", () => {
+  const { directory } = fixture();
+  const digest = "a".repeat(64);
+  const otherDigest = "b".repeat(64);
+  expect(() => recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool",
+    event: "queued", nativeOwnerDigest: digest.toUpperCase() })).toThrow("Invalid broker native owner digest");
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool",
+    event: "queued", nativeOwnerDigest: digest });
+  expect(() => recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool",
+    event: "queued", nativeOwnerDigest: otherDigest })).toThrow("Conflicting broker call journal event");
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool",
+    event: "delivery_possible", nativeOwnerDigest: digest });
+  expect(inspectBrokerCallJournal(directory)[0]?.nativeOwnerDigest).toBe(digest);
+  const deliveryPath = eventPath(directory, traceId, callId, "delivery_possible");
+  const delivery = readFileSync(deliveryPath, "utf8");
+  writeFileSync(deliveryPath, delivery.replace(digest, otherDigest));
+  expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+  writeFileSync(deliveryPath, delivery.replace(digest, "x".repeat(64)));
+  expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+  writeFileSync(deliveryPath, delivery);
+  expect(inspectBrokerCallJournal(directory)).toHaveLength(1);
 });
 
 test("reconciliation fails closed on tampering, inconsistent transitions and missing records", () => {

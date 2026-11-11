@@ -595,7 +595,9 @@ export function createChatGptWebAdapter(
       };
       const runManual = async (): Promise<string> => {
         try {
-          activeToken = await broker.registerSafe(environment, surfaceNonce, undefined, traceId);
+          activeToken = await broker.registerSafe(
+            environment, surfaceNonce, undefined, traceId, extractChatGptTurnIdentity(parsed),
+          );
           observeCapabilityRetirement(activeToken, externalProgress);
           const compiled = compileChatGptWebPrompt(
             checkpointInput.parsed,
@@ -788,6 +790,7 @@ export function createChatGptWebAdapter(
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
+        extractChatGptTurnIdentity(parsed),
       );
       activeToken = turnToken;
       try {
