@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
+import { inspectBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { publishPrivateIncident } from "../src/adapters/chatgpt-web/private-incident-journal";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
@@ -53,6 +54,53 @@ test("durable event records contain no arguments, results, paths, or unvalidated
     expect(statSync(first.path).mode & 0o777).toBe(0o600);
     expect(statSync(join(directory, traceId)).mode & 0o777).toBe(0o700);
   }
+});
+
+test("startup reconciles observation boundaries without granting replay or claiming stored results", () => {
+  const { directory } = fixture();
+  expect(inspectBrokerCallJournal(directory)).toEqual([]);
+  const ids = Array.from({ length: 5 }, (_, i) => `call_${String(i).repeat(32)}`);
+  const add = (i: number, event: "queued" | "delivery_possible" | "result_received"
+    | "compaction_resolution_possible" | "retired_uncertain") => recordBrokerCallEvent({
+      directory, traceId, callId: ids[i]!, wireName: "test_tool", event,
+  });
+  for (let i = 0; i < ids.length; i++) add(i, "queued");
+  for (const i of [1, 2, 4]) add(i, "delivery_possible");
+  add(2, "result_received");
+  add(3, "compaction_resolution_possible");
+  add(4, "retired_uncertain");
+  mkdirSync(join(directory, traceId), { recursive: true });
+  writeFileSync(join(directory, traceId, "." + "a".repeat(64) + "." + "b".repeat(24) + ".pending"), "{unfinished");
+
+  const recovered = inspectBrokerCallJournal(directory);
+  expect(recovered.map(e => e.state)).toEqual([
+    "queued_unconfirmed", "delivery_unknown", "result_unavailable",
+    "compaction_resolution_unavailable", "retired_uncertain",
+  ]);
+  expect(recovered.every(entry => entry.replayAuthorized === false && entry.resultRecoverable === false)).toBe(true);
+  expect(JSON.stringify(recovered)).not.toContain("private tool output");
+  // A second process sees the same conservative classification: this is never live state.
+  expect(inspectBrokerCallJournal(directory)).toEqual(recovered);
+});
+
+test("reconciliation fails closed on tampering, inconsistent transitions and missing records", () => {
+  const { directory } = fixture();
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "queued" });
+  const path = eventPath(directory, traceId, callId, "queued");
+  const original = readFileSync(path, "utf8");
+  writeFileSync(path, original.replace('"replayAuthorized":false', '"replayAuthorized":true'));
+  expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+  writeFileSync(path, original);
+  // A syntactically valid timestamp must also represent that exact UTC instant.
+  writeFileSync(path, original.replace(/"recordedAt":"[^"]+"/, '"recordedAt":"2026-02-31T10:00:00.000Z"'));
+  expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+  writeFileSync(path, original);
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "result_received" });
+  expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "delivery_possible" });
+  expect(inspectBrokerCallJournal(directory)).toHaveLength(1);
+  writeFileSync(join(directory, traceId, "0".repeat(64) + ".json"), "{broken");
+  expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
 });
 
 test("rejects malformed identities and preserves an orphan pending file without treating it as a completed event", () => {
