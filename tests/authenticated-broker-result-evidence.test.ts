@@ -114,6 +114,40 @@ test("current native owner may recover authenticated result evidence without obt
   expect(records).not.toContain(turnId);
 });
 
+test("individual authenticated result read rejects journal changes during decryption", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const originalRead = BrokerResultVault.prototype.read;
+  const eventPath = join(directory, traceId,
+    `${createHash("sha256").update(`v1:${callId}:result_received`).digest("hex")}.json`);
+  let change: "new_call" | "same_state_rewrite" | "pending" = "new_call";
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    if (change === "new_call") {
+      recordBrokerCallEvent({ directory, traceId, callId: `call_${"B".repeat(32)}`,
+        wireName: "independent_tool", event: "queued",
+        nativeOwnerDigest: nativeBrokerOwnerDigest({ threadId, turnId }) });
+    } else if (change === "same_state_rewrite") {
+      const record = JSON.parse(readFileSync(eventPath, "utf8")) as { recordedAt: string };
+      record.recordedAt = "2026-11-10T01:02:03.000Z";
+      writeFileSync(eventPath, JSON.stringify(record));
+    } else {
+      writeFileSync(join(directory, traceId, `.${"1".repeat(64)}.${"2".repeat(24)}.pending`), "{}");
+    }
+    return value;
+  };
+  try {
+    expect(read()).toEqual(unavailable);
+    change = "same_state_rewrite";
+    expect(read()).toEqual(unavailable);
+    change = "pending";
+    expect(read()).toEqual(unavailable);
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+});
+
 test("native call inventory authenticates ownership across traces without exposing results or replay rights", () => {
   nativeRollout();
   journal();
@@ -145,6 +179,31 @@ test("native call inventory authenticates ownership across traces without exposi
   expect(JSON.stringify(inventory)).not.toContain(foreignCallId);
   expect(JSON.stringify(inventory)).not.toContain(threadId);
   expect(JSON.stringify(inventory)).not.toContain(turnId);
+});
+
+test("native call inventory rejects a concurrent journal publication during owner validation", () => {
+  nativeRollout();
+  journal();
+  let rootReads = 0;
+  const owner: ChatGptRootThreadMetadata = {
+    threadId,
+    sandboxType: "dangerFullAccess",
+    get workspaceRoots() {
+      rootReads += 1;
+      // The first owner resolution reads the roots twice. Publish a new call during the
+      // second owner resolution, after the inventory's initial journal snapshot.
+      if (rootReads === 3) {
+        recordBrokerCallEvent({ directory, traceId: "012345abcdef",
+          callId: `call_${"B".repeat(32)}`, wireName: "independent_tool", event: "queued",
+          nativeOwnerDigest: nativeBrokerOwnerDigest({ threadId, turnId }) });
+      }
+      return [cwd];
+    },
+  };
+  expect(readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory, lineage: owner, turnId,
+  })).toEqual({ status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false });
+  expect(rootReads).toBeGreaterThanOrEqual(3);
 });
 
 test("recovery snapshot authenticates a mixed multi-trace inventory and each sealed result", () => {

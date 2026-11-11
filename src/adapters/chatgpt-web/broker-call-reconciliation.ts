@@ -183,7 +183,8 @@ export function readAuthenticatedBrokerCallInventory(input: {
 
   // Journal corruption is a recovery error, including corruption in another trace. Do not
   // silently turn it into an empty inventory that might be mistaken for a clean turn.
-  const observedCalls = inspectBrokerCallJournal(input.journalDirectory);
+  const before = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  const observedCalls = before.calls;
   // Legacy calls lack a native owner digest and might belong to this turn. Their identity
   // cannot be ruled out, even when other records are attributed to the current owner.
   if (observedCalls.some(call => !call.nativeOwnerDigest)) return unavailable();
@@ -192,6 +193,10 @@ export function readAuthenticatedBrokerCallInventory(input: {
     const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
     if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();
   } catch {
+    return unavailable();
+  }
+  const after = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
     return unavailable();
   }
   return {
@@ -240,7 +245,8 @@ export function readAuthenticatedBrokerResultEvidence(input: {
     return unavailable();
   }
 
-  const call = inspectBrokerCallJournal(input.journalDirectory).find(entry =>
+  const before = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  const call = before.calls.find(entry =>
     entry.traceId === input.traceId && entry.callId === input.callId);
   if (!call || call.state !== "result_unavailable" || call.nativeOwnerDigest !== ownerDigest) {
     return unavailable();
@@ -249,6 +255,13 @@ export function readAuthenticatedBrokerResultEvidence(input: {
     traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
   });
   if (!result) return unavailable();
+
+  // A concurrent broker publication or rewrite invalidates this evidence even when the
+  // authenticated native owner and the recovered ciphertext remain unchanged.
+  const after = inspectBrokerCallJournalSnapshot(input.journalDirectory);
+  if (after.fingerprint !== before.fingerprint || !isDeepStrictEqual(after.calls, before.calls)) {
+    return unavailable();
+  }
 
   // The owner could have moved to another native turn while the journal/vault were read.
   try {
