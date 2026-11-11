@@ -36,7 +36,7 @@ async function fixture(stub: (turn: any, reused: boolean, call: number) => Promi
     surfaceId:"launcher_surface_id_0123456789AB",
     surfaceTargets:{launcher_surface_id_0123456789AB:"native-owned-target"},
     createdAt:new Date().toISOString(),
-  }));
+  }), { mode: 0o600 });
   let count = 0;
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: {browserHost:"launcher", browserHostDescriptorPath:descriptorPath, appName:"ContinuosWebIntegracao"},

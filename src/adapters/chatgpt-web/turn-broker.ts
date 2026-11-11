@@ -424,6 +424,11 @@ export class TurnBroker implements TurnBrokerOwner {
       }
       return [];
     }
+    // A legacy call without native ownership may belong to this turn, even when its
+    // diagnostic trace differs. Keep the startup fence closed until independently reconciled.
+    if (this.startupCallEvidence.some(call => !call.nativeOwnerDigest)) {
+      throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+    }
     return this.startupCallEvidence.filter(call => call.nativeOwnerDigest === ownerDigest)
       .map(call => call.state);
   }

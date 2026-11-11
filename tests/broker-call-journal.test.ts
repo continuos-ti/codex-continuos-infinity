@@ -1,7 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import { inspectBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
@@ -10,6 +9,7 @@ import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/cha
 import { publishPrivateIncident } from "../src/adapters/chatgpt-web/private-incident-journal";
 import { callTurnBroker, RemoteTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
+import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 const roots: string[] = [];
 const traceId = "ab12cd34ef56";
@@ -18,7 +18,7 @@ const result: BrokerToolResult = { content: [{ type: "text", text: "private tool
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true }); });
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), "infinity-broker-call-"));
+  const root = socketFixtureRoot("infinity-broker-call-");
   roots.push(root);
   return { root, directory: join(root, "diagnostics", "broker-calls") };
 }
@@ -119,6 +119,24 @@ test("startup broker fences earlier native MCP calls but ignores calls made by i
       wireName: "read_tool", event: "queued", nativeOwnerDigest: digest });
     expect(broker.priorNativeCallStates("000000000001", identity)).toEqual(["delivery_unknown"]);
     expect(broker.priorNativeCallStates(traceId, identity)).toEqual(["delivery_unknown"]);
+  } finally {
+    await broker.close();
+  }
+});
+
+test("legacy call ownership remains ambiguous across changed diagnostic traces", async () => {
+  const { root, directory } = fixture();
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "legacy_mutation", event: "queued" });
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "legacy-fence")));
+  try {
+    broker.enableCallJournal(directory);
+    expect(() => broker.priorNativeCallStates("abcdef123456", identity))
+      .toThrow("ownership cannot be authenticated");
+    await expect(broker.register({ cwd: root, roots: [root], writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" }, tools: [] }, 20_000,
+    "abcdef123456", identity)).rejects.toThrow("ownership cannot be authenticated");
   } finally {
     await broker.close();
   }

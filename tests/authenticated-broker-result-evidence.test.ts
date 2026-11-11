@@ -165,6 +165,18 @@ test("a missing broker journal cannot be treated as a verified empty inventory",
   })).toEqual({ status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false });
 });
 
+test("legacy calls without native ownership make the authenticated inventory unavailable", () => {
+  nativeRollout();
+  journal();
+  recordBrokerCallEvent({
+    directory, traceId: "012345abcdef", callId: `call_${"D".repeat(32)}`,
+    wireName: "legacy_mutation", event: "queued",
+  });
+  expect(readAuthenticatedBrokerCallInventory({
+    codexHome: home, journalDirectory: directory, lineage: lineage(), turnId,
+  })).toEqual({ status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false });
+});
+
 test("missing journal boundary or missing ciphertext never enables recovering a result", () => {
   nativeRollout();
   expect(read()).toEqual(unavailable);

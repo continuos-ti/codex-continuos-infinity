@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -22,11 +21,12 @@ import {
 } from "../src/dev-chat/session";
 import { startDevChatTransport } from "../src/dev-chat/transport";
 import type { CodexProviderConfig } from "../src/types";
+import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 const roots: string[] = [];
 
 function scratch(name: string): string {
-  const root = mkdtempSync(join(tmpdir(), `${name}-`));
+  const root = socketFixtureRoot(`${name}-`);
   roots.push(root);
   return root;
 }

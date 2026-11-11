@@ -167,8 +167,11 @@ export function readAuthenticatedBrokerCallInventory(input: {
 
   // Journal corruption is a recovery error, including corruption in another trace. Do not
   // silently turn it into an empty inventory that might be mistaken for a clean turn.
-  const calls = inspectBrokerCallJournal(input.journalDirectory)
-    .filter(call => call.nativeOwnerDigest === ownerDigest);
+  const observedCalls = inspectBrokerCallJournal(input.journalDirectory);
+  // Legacy calls lack a native owner digest and might belong to this turn. Their identity
+  // cannot be ruled out, even when other records are attributed to the current owner.
+  if (observedCalls.some(call => !call.nativeOwnerDigest)) return unavailable();
+  const calls = observedCalls.filter(call => call.nativeOwnerDigest === ownerDigest);
   try {
     const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
     if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();

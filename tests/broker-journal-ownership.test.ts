@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { defaultBrokerEndpoint } from "../src/config";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 test("brokers with different sockets cannot share one call journal, including after listening", async () => {
-  const root = mkdtempSync(join(tmpdir(), "infinity-journal-owner-"));
+  const root = socketFixtureRoot("infinity-journal-owner-");
   const directory = join(root, "diagnostics", "broker-calls");
   const first = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "first")));
   const second = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "second")));
@@ -27,7 +27,7 @@ test("brokers with different sockets cannot share one call journal, including af
 });
 
 test("a journal directory alias cannot acquire a second writer lock", async () => {
-  const root = mkdtempSync(join(tmpdir(), "infinity-journal-alias-"));
+  const root = socketFixtureRoot("infinity-journal-alias-");
   const directory = join(root, "diagnostics", "broker-calls");
   const alias = join(root, "broker-calls-alias");
   const first = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "canonical")));
@@ -48,7 +48,7 @@ test("a journal directory alias cannot acquire a second writer lock", async () =
 });
 
 test("closing during broker startup releases journal ownership only after startup settles", async () => {
-  const root = mkdtempSync(join(tmpdir(), "infinity-journal-start-close-"));
+  const root = socketFixtureRoot("infinity-journal-start-close-");
   const directory = join(root, "diagnostics", "broker-calls");
   const first = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "first")));
   const successor = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "successor")));
@@ -72,7 +72,7 @@ test("closing during broker startup releases journal ownership only after startu
 });
 
 test("a crashed broker releases its cross-process journal lock and preserves the native replay fence", async () => {
-  const root = mkdtempSync(join(tmpdir(), "infinity-journal-crash-"));
+  const root = socketFixtureRoot("infinity-journal-crash-");
   const directory = join(root, "diagnostics", "broker-calls");
   const readyPath = join(root, "child-ready");
   const childSocket = defaultBrokerEndpoint(join(root, "child"));
