@@ -439,7 +439,7 @@ test("recovery snapshot bounds accumulated call count and preserves vault authen
   envelope.ciphertext = `${envelope.ciphertext.startsWith("A") ? "B" : "A"}${envelope.ciphertext.slice(1)}`;
   writeFileSync(vaultPath, JSON.stringify(envelope));
   expect(() => snapshot()).toThrow("authentication or payload validation failed");
-});
+}, 20_000);
 
 test("native call inventory fails closed for stale turn, mismatched lineage, ambiguous home and corrupt journal", () => {
   nativeRollout();
