@@ -354,6 +354,8 @@ export class TurnBroker implements TurnBrokerOwner {
   private resultVault?: BrokerResultVault;
   private startupCallEvidence: BrokerRecoveryCall[] = [];
   private startupJournalUnreadable = false;
+  private nativeOwnersWithCalls = new Set<string>();
+  private recordedCallsInProcess = false;
 
   private constructor(readonly socketPath: string) {}
 
@@ -400,7 +402,7 @@ export class TurnBroker implements TurnBrokerOwner {
   /** Fence a fresh browser owner if this exact native turn previously dispatched MCP work. */
   priorNativeCallStates(
     traceId: string,
-    identity: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
+    identity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
   ): BrokerRecoveryState[] {
     if (!this.callJournalDirectory) return [];
     if (this.startupJournalUnreadable) {
@@ -414,7 +416,14 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     // The provider configuration can change across restarts and change the diagnostic trace.
     // Native ownership remains stable and must fence all earlier calls across trace folders.
-    if (!ownerDigest) return [];
+    // A changed diagnostic trace cannot establish that an unauthenticated registration is
+    // unrelated to a previous call. Require native identity once any old calls exist.
+    if (!ownerDigest) {
+      if (this.startupCallEvidence.length > 0) {
+        throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+      }
+      return [];
+    }
     return this.startupCallEvidence.filter(call => call.nativeOwnerDigest === ownerDigest)
       .map(call => call.state);
   }
@@ -430,6 +439,10 @@ export class TurnBroker implements TurnBrokerOwner {
       traceId, callId: request.callId, wireName: request.wireName, event,
       ...(channel.nativeOwnerDigest ? { nativeOwnerDigest: channel.nativeOwnerDigest } : {}),
     });
+    if (event === "queued") {
+      this.recordedCallsInProcess = true;
+      if (channel.nativeOwnerDigest) this.nativeOwnersWithCalls.add(channel.nativeOwnerDigest);
+    }
   }
 
   /**
@@ -459,8 +472,21 @@ export class TurnBroker implements TurnBrokerOwner {
     if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
       throw new Error("ChatGPT web turn broker TTL must be a positive finite number");
     }
-    const token = opaqueId(handlePrefix);
+    // Every owner entry point (including remote IPC and Zero Risk) must respect the
+    // startup fence. The adapter's preflight alone cannot protect direct registrations.
+    const priorStates = this.priorNativeCallStates(traceId, nativeIdentity);
+    if (priorStates.length > 0) {
+      throw new Error("Previous native broker calls require reconciliation before registering a new turn owner");
+    }
     const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity);
+    if (ownerDigest && (this.nativeOwnersWithCalls.has(ownerDigest)
+      || [...this.channels.values()].some(channel => channel.nativeOwnerDigest === ownerDigest))) {
+      throw new Error("Native Codex turn already owns or previously queued broker calls; reconciliation is required");
+    }
+    if (!ownerDigest && this.recordedCallsInProcess) {
+      throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+    }
+    const token = opaqueId(handlePrefix);
     const channel: TurnChannel = {
       traceId,
       journalNonce: token,

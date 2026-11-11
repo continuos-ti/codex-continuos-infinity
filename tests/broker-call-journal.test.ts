@@ -124,6 +124,80 @@ test("startup broker fences earlier native MCP calls but ignores calls made by i
   }
 });
 
+test("registration fences earlier native calls at direct, IPC, and Zero Risk broker boundaries", async () => {
+  const { root, directory } = fixture();
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  const earlierTrace = traceId;
+  const changedTrace = "abcdef123456";
+  recordBrokerCallEvent({ directory, traceId: earlierTrace,
+    callId: `call_${"E".repeat(32)}`, wireName: "mutating_tool", event: "queued",
+    nativeOwnerDigest: nativeBrokerOwnerDigest(identity) });
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "registration-fence")));
+  const remote = new RemoteTurnBroker(broker.socketPath);
+  const environment = { cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [] };
+  const nonce = "A".repeat(32);
+  try {
+    broker.enableCallJournal(directory);
+    await expect(broker.register(environment, 20_000, earlierTrace, identity))
+      .rejects.toThrow("require reconciliation");
+    await expect(remote.register(environment, 20_000, changedTrace, identity))
+      .rejects.toThrow("require reconciliation");
+    await expect(broker.registerSafe(environment, nonce, 20_000, earlierTrace, identity))
+      .rejects.toThrow("require reconciliation");
+    await expect(remote.registerSafe(environment, nonce, 20_000, changedTrace, identity))
+      .rejects.toThrow("require reconciliation");
+    await expect(remote.register(environment, 20_000, earlierTrace))
+      .rejects.toThrow("ownership cannot be authenticated");
+    await expect(remote.register(environment, 20_000, changedTrace))
+      .rejects.toThrow("ownership cannot be authenticated");
+    await expect(broker.register(environment, 20_000, earlierTrace,
+      { ...identity, turnId: "33333333-3333-4333-8333-333333333333" }))
+      .rejects.toThrow("ownership cannot be authenticated");
+    const next = { ...identity, turnId: "33333333-3333-4333-8333-333333333333" };
+    const token = await remote.register(environment, 20_000, changedTrace, next);
+    expect(token).toStartWith("turn_");
+    await remote.revoke(token);
+  } finally {
+    await broker.close();
+  }
+});
+
+test("live broker refuses duplicate native owners and re-registration after a queued call", async () => {
+  const { root, directory } = fixture();
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "live-owner-fence")));
+  const remote = new RemoteTurnBroker(broker.socketPath);
+  const environment = { cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [] };
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  try {
+    broker.enableCallJournal(directory);
+    const token = await broker.register(environment, 20_000, traceId, identity);
+    await expect(remote.register(environment, 20_000, "abcdef123456", identity))
+      .rejects.toThrow("already owns");
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(broker.socketPath,
+      { method: "claim", token });
+    const pending = callTurnBroker<BrokerToolResult>(broker.socketPath,
+      { method: "invoke", bindingId, wireName: "read_tool", arguments: {} }, 15_000);
+    const [call] = await broker.nextToolBatch(token);
+    expect(call).toBeDefined();
+    broker.completeTool(token, call!.callId, result);
+    await pending;
+    broker.revoke(token);
+    await expect(remote.register(environment, 20_000, "abcdef123456", identity))
+      .rejects.toThrow("previously queued");
+    await expect(remote.register(environment, 20_000, "abcdef123456"))
+      .rejects.toThrow("ownership cannot be authenticated");
+    const freshIdentity = { ...identity, turnId: "33333333-3333-4333-8333-333333333333" };
+    const freshToken = await remote.register(environment, 20_000, "abcdef123456", freshIdentity);
+    await remote.revoke(freshToken);
+  } finally {
+    await broker.close();
+  }
+});
+
 test("startup broker refuses a corrupt journal before creating any new browser owner", async () => {
   const { root, directory } = fixture();
   mkdirSync(directory, { recursive: true });
@@ -135,6 +209,13 @@ test("startup broker refuses a corrupt journal before creating any new browser o
       threadId: "11111111-1111-4111-8111-111111111111",
       turnId: "22222222-2222-4222-8222-222222222222",
     })).toThrow("invalid or unreadable");
+    const environment = { cwd: root, roots: [root], writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [] };
+    await expect(broker.register(environment, 20_000, traceId))
+      .rejects.toThrow("invalid or unreadable");
+    await expect(new RemoteTurnBroker(broker.socketPath).registerSafe(
+      environment, "A".repeat(32), 20_000, traceId))
+      .rejects.toThrow("invalid or unreadable");
   } finally {
     await broker.close();
   }
