@@ -18,6 +18,12 @@ describe("in-band event-driven repair guards", () => {
       code: "browser_dom_observation_failed", status: 502, errorType: "server_error", retryable: false,
     });
     expect(isSafeInBandAutoRepairFailure(observationFailed, eligible)).toBe(true);
+    const inconsistentStream = new ChatGptWebAdapterError("Inconsistent streamed Markdown", {
+      code: "browser_stream_inconsistent", status: 502, errorType: "server_error", retryable: false,
+    });
+    expect(isSafeInBandAutoRepairFailure(inconsistentStream, eligible)).toBe(true);
+    expect(isSafeInBandAutoRepairFailure(inconsistentStream, { ...eligible, activeToolCalls: undefined })).toBe(false);
+    expect(isSafeInBandAutoRepairFailure(inconsistentStream, { ...eligible, activeToolCalls: 1 })).toBe(false);
     for (const change of [{ accepted: false }, { retained: false }, { activeToolCalls: 1 },
       { activeToolCalls: undefined }, { compaction: true }]) {
       expect(isSafeInBandAutoRepairFailure(observationFailed, { ...eligible, ...change })).toBe(false);

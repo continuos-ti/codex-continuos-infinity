@@ -6,7 +6,7 @@ O supervisor do Codex Continuos Infinity inicia a partir de eventos internos do 
 
 ## Elegibilidade
 
-A implementação atual de isSafeInBandAutoRepairFailure aceita `chatgpt_stalled_same_turn`, `chatgpt_response_incomplete` ou `browser_dom_observation_failed` apenas quando houve envio confirmado, o turno usa ferramentas locais, a conversa original está retida, não há cancelamento nem compaction e existem zero ferramentas MCP ativas. Nessa condição, a recuperação envia uma mensagem diagnóstica nova, identificando o trace, com limite de UMA tentativa. A elegibilidade da falha de observação DOM é limitada ao código tipado emitido depois de tentativas internas consecutivas de leitura da página, preservando as mesmas condições de vínculo com a conversa original.
+A implementação atual de isSafeInBandAutoRepairFailure aceita `chatgpt_stalled_same_turn`, `chatgpt_response_incomplete`, `browser_stream_inconsistent` ou `browser_dom_observation_failed` apenas quando houve envio confirmado, o turno usa ferramentas locais, a conversa original está retida, não há cancelamento nem compaction e existem zero ferramentas MCP ativas. Nessa condição, a recuperação envia uma mensagem diagnóstica nova, identificando o trace, com limite de UMA tentativa. A elegibilidade das falhas de streaming e observação DOM é limitada aos códigos tipados emitidos pelo observador, preservando as mesmas condições de vínculo com a conversa original.
 
 A leitura do progresso MCP precisa confirmar explicitamente `activeToolCalls=0`. Leitor ausente, leitura com exceção ou valor inválido mantêm o número como desconhecido e bloqueiam o autorreparo desse evento, preservando a falha original no incidente. O teste integrado exerce as três condições, além de chamadas MCP ativas.
 
