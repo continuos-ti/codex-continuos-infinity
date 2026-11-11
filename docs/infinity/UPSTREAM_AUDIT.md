@@ -8,6 +8,8 @@ A auditoria anterior registrou 28 alterações e 12 novos arquivos relativos ao 
 
 | Verificação | Resultado |
 | --- | --- |
+| Suíte integral em 11/11/2026 após `490db74` | `bun run verify` código 0; runtime 1.245 aprovados, 113 ignorados e zero falhas (1.358 testes, 107 arquivos); launcher 437 aprovados, 4 ignorados e zero falhas (441 testes); Vite 444 módulos e `RELOCATABLE_RUNTIME_SMOKE_OK` |
+| Proteção do rebuild em 11/11/2026 | Teste novo passou, preservando o executável Bun e os arquivos do bundle quando o executável em uso fica dentro do diretório de saída; TypeScript e `git diff --check` passaram |
 | TypeScript raiz após merge | Passou |
 | Runtime build 6.1.18-continuos.1 | Passou |
 | Launcher build | Passou |
