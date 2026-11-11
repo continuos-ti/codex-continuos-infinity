@@ -11,6 +11,7 @@ import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment"
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
+import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
 import { cwdWithinRealRoots } from "./trusted-cwd-path";
 
 interface BrokerRetirementFailure {
@@ -354,6 +355,7 @@ export class TurnBroker implements TurnBrokerOwner {
   private startPromise?: Promise<void>;
   private socketIdentity?: { dev: number; ino: number };
   private callJournalDirectory?: string;
+  private resultVault?: BrokerResultVault;
 
   private constructor(readonly socketPath: string) {}
 
@@ -366,6 +368,7 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error("Broker call journal cannot be enabled or changed after turn registration");
     }
     this.callJournalDirectory = normalized;
+    this.resultVault = new BrokerResultVault(vaultDirectoryForJournal(normalized));
   }
 
   private recordCall(channel: TurnChannel, request: BrokerToolRequest, event: BrokerCallEvent): void {
@@ -568,6 +571,17 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error(`tool call was completed before it was delivered: ${callId}`);
     }
     const digest = resultDigest(result);
+    // The native owner digest binds ciphertext to the original thread and turn. A retry after
+    // the journal write failed must find the exact same sealed result, never replace it.
+    // Other platforms can opt in with a user-managed key; the metadata journal remains usable
+    // without it. A call without authoritative native identity cannot become recoverable.
+    if (channel.nativeOwnerDigest && this.resultVault
+      && (process.platform === "win32" || process.env.CODEX_INFINITY_RESULT_VAULT_KEY)) {
+      const traceId = /^[0-9a-f]{12}$/.test(channel.traceId)
+        ? channel.traceId : createHash("sha256").update(`broker:${channel.journalNonce}`).digest("hex").slice(0, 12);
+      this.resultVault.seal({ traceId, callId, tool: /^[A-Za-z0-9_.:-]{1,256}$/.test(invocation.request.wireName)
+        ? invocation.request.wireName : "unclassified_tool", nativeOwnerDigest: channel.nativeOwnerDigest }, result);
+    }
     // If persistence fails, retain the pending invocation for an owner retry.
     this.recordCall(channel, invocation.request, "result_received");
     channel.deliveredCallIds.delete(callId);

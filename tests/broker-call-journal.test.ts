@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import { inspectBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
 import { publishPrivateIncident } from "../src/adapters/chatgpt-web/private-incident-journal";
 import { callTurnBroker, RemoteTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
@@ -29,6 +30,11 @@ function evidenceFiles(directory: string, trace = traceId) {
 function eventPath(directory: string, trace: string, id: string, event: string) {
   const digest = createHash("sha256").update(`v1:${id}:${event}`).digest("hex");
   return join(directory, trace, `${digest}.json`);
+}
+
+function sealedPath(directory: string, trace: string, id: string) {
+  return join(vaultDirectoryForJournal(directory), trace,
+    `${createHash("sha256").update(`v1:${id}:sealed_result`).digest("hex")}.json`);
 }
 
 test("durable event records contain no arguments, results, paths, or unvalidated tool names", () => {
@@ -130,6 +136,16 @@ test("native thread and turn identities are linked to calls through direct and s
     expect(calls.find(call => call.callId === callIds[2])?.nativeOwnerDigest).toBeUndefined();
     expect(calls.every(call => call.state === "result_unavailable"
       && call.resultRecoverable === false && call.replayAuthorized === false)).toBe(true);
+    const vault = new BrokerResultVault(vaultDirectoryForJournal(directory));
+    const restored = { traceId, callId: callIds[0]!, tool: "test_tool",
+      nativeOwnerDigest: digestOf(firstIdentity) };
+    if (process.platform === "win32" || process.env.CODEX_INFINITY_RESULT_VAULT_KEY) {
+      expect(vault.read(restored)).toEqual(result);
+      expect(() => vault.read({ ...restored, nativeOwnerDigest: digestOf(secondIdentity) }))
+        .toThrow("identity mismatch");
+      expect(readFileSync(sealedPath(directory, traceId, callIds[0]!), "utf8"))
+        .not.toContain("private tool output");
+    }
     const persisted = JSON.stringify(evidenceFiles(directory));
     expect(persisted).not.toContain(firstIdentity.threadId);
     expect(persisted).not.toContain(firstIdentity.turnId);
@@ -140,6 +156,127 @@ test("native thread and turn identities are linked to calls through direct and s
   } finally {
     await broker.close();
   }
+});
+
+test("encrypted results persist across vault instances, reject conflicting receipts and fail closed on tampering", () => {
+  const { directory } = fixture();
+  const priorKey = process.env.CODEX_INFINITY_RESULT_VAULT_KEY;
+  if (process.platform !== "win32") process.env.CODEX_INFINITY_RESULT_VAULT_KEY = "ab".repeat(32);
+  try {
+    const identity = { traceId, callId, tool: "test_tool", nativeOwnerDigest: "b".repeat(64) };
+    const vault = new BrokerResultVault(vaultDirectoryForJournal(directory));
+    vault.seal(identity, result);
+    const restored = new BrokerResultVault(vaultDirectoryForJournal(directory));
+    expect(restored.read(identity)).toEqual(result);
+    expect(restored.read({ nativeOwnerDigest: identity.nativeOwnerDigest, tool: identity.tool,
+      callId: identity.callId, traceId: identity.traceId })).toEqual(result);
+    expect(readFileSync(sealedPath(directory, traceId, callId), "utf8"))
+      .not.toContain("private tool output");
+    restored.seal(identity, structuredClone(result));
+    expect(() => restored.seal(identity, { content: [{ type: "text", text: "different" }] }))
+      .toThrow("Conflicting durable broker tool result");
+    expect(() => restored.read({ ...identity, nativeOwnerDigest: "a".repeat(64) }))
+      .toThrow("identity mismatch");
+    const path = sealedPath(directory, traceId, callId);
+    const original = readFileSync(path, "utf8");
+    const record = JSON.parse(original) as { ciphertext: string };
+    record.ciphertext = `${record.ciphertext[0] === "A" ? "B" : "A"}${record.ciphertext.slice(1)}`;
+    writeFileSync(path, JSON.stringify(record));
+    expect(() => new BrokerResultVault(vaultDirectoryForJournal(directory)).read(identity))
+      .toThrow("authentication or payload validation failed");
+    writeFileSync(path, original);
+    expect(restored.read(identity)).toEqual(result);
+    writeFileSync(path, "null");
+    expect(() => new BrokerResultVault(vaultDirectoryForJournal(directory)).read(identity))
+      .toThrow("identity mismatch or invalid envelope");
+    writeFileSync(path, original);
+    const nonCanonical = JSON.parse(original) as { ciphertext: string };
+    nonCanonical.ciphertext += "\n";
+    writeFileSync(path, JSON.stringify(nonCanonical));
+    expect(() => restored.read(identity)).toThrow("authentication or payload validation failed");
+    writeFileSync(path, original);
+    if (process.platform !== "win32") {
+      process.env.CODEX_INFINITY_RESULT_VAULT_KEY = "cd".repeat(32);
+      expect(() => new BrokerResultVault(vaultDirectoryForJournal(directory)).read(identity))
+        .toThrow("authentication or payload validation failed");
+      process.env.CODEX_INFINITY_RESULT_VAULT_KEY = "ab".repeat(32);
+    }
+  } finally {
+    if (priorKey === undefined) delete process.env.CODEX_INFINITY_RESULT_VAULT_KEY;
+    else process.env.CODEX_INFINITY_RESULT_VAULT_KEY = priorKey;
+  }
+});
+
+test("result vault rejects oversized bodies and malformed identities before publication", () => {
+  const { directory } = fixture();
+  const identity = { traceId, callId, tool: "test_tool", nativeOwnerDigest: "b".repeat(64) };
+  const vault = new BrokerResultVault(vaultDirectoryForJournal(directory));
+  expect(() => vault.seal({ ...identity, nativeOwnerDigest: "INVALID" }, result))
+    .toThrow("Invalid broker result identity");
+  expect(() => vault.seal(identity, { content: [{ type: "text", text: "x".repeat(64 * 1024 * 1024) }] }))
+    .toThrow("exceeds the durable result limit");
+  expect(existsSync(sealedPath(directory, traceId, callId))).toBe(false);
+});
+
+test("sealed result survives a failed result journal boundary and the exact owner retries", async () => {
+  if (process.platform !== "win32" && !process.env.CODEX_INFINITY_RESULT_VAULT_KEY) return;
+  const { root, directory } = fixture();
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "socket")));
+  broker.enableCallJournal(directory);
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  const owner = createHash("sha256")
+    .update(JSON.stringify([identity.threadId, identity.turnId])).digest("hex");
+  const token = await broker.register({ cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" }, tools: [] }, 20_000, traceId, identity);
+  const { bindingId } = await callTurnBroker<{ bindingId: string }>(broker.socketPath, { method: "claim", token });
+  try {
+    const pending = callTurnBroker<BrokerToolResult>(broker.socketPath,
+      { method: "invoke", bindingId, wireName: "mutating_tool" }, 15_000);
+    const [delivered] = await broker.nextToolBatch(token);
+    const journalPath = eventPath(directory, traceId, delivered!.callId, "result_received");
+    mkdirSync(journalPath, { recursive: true });
+    expect(() => broker.completeTool(token, delivered!.callId, result)).toThrow();
+    expect(new BrokerResultVault(vaultDirectoryForJournal(directory)).read({
+      traceId, callId: delivered!.callId, tool: "mutating_tool", nativeOwnerDigest: owner,
+    })).toEqual(result);
+    rmSync(journalPath, { recursive: true });
+    expect(inspectBrokerCallJournal(directory)[0]?.state).toBe("delivery_unknown");
+    broker.completeTool(token, delivered!.callId, result);
+    expect(await pending).toEqual(result);
+    expect(inspectBrokerCallJournal(directory)[0]?.state).toBe("result_unavailable");
+  } finally { await broker.close(); }
+});
+
+test("failed encrypted publication leaves native invocation pending until the same owner retries", async () => {
+  if (process.platform !== "win32" && !process.env.CODEX_INFINITY_RESULT_VAULT_KEY) return;
+  const { root, directory } = fixture();
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "socket")));
+  broker.enableCallJournal(directory);
+  const identity = { threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222" };
+  const owner = createHash("sha256")
+    .update(JSON.stringify([identity.threadId, identity.turnId])).digest("hex");
+  const token = await broker.register({ cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" }, tools: [] }, 20_000, traceId, identity);
+  const { bindingId } = await callTurnBroker<{ bindingId: string }>(broker.socketPath, { method: "claim", token });
+  try {
+    const pending = callTurnBroker<BrokerToolResult>(broker.socketPath,
+      { method: "invoke", bindingId, wireName: "mutating_tool" }, 15_000);
+    const [delivered] = await broker.nextToolBatch(token);
+    const path = sealedPath(directory, traceId, delivered!.callId);
+    mkdirSync(path, { recursive: true });
+    expect(() => broker.completeTool(token, delivered!.callId, result)).toThrow();
+    expect(inspectBrokerCallJournal(directory)[0]?.state).toBe("delivery_unknown");
+    expect((await broker.nextToolBatch(token))[0]!.callId).toBe(delivered!.callId);
+    rmSync(path, { recursive: true });
+    broker.completeTool(token, delivered!.callId, result);
+    expect(await pending).toEqual(result);
+    expect(new BrokerResultVault(vaultDirectoryForJournal(directory)).read({
+      traceId, callId: delivered!.callId, tool: "mutating_tool", nativeOwnerDigest: owner,
+    })).toEqual(result);
+    expect(inspectBrokerCallJournal(directory)[0]?.state).toBe("result_unavailable");
+  } finally { await broker.close(); }
 });
 
 test("native owner digest is consistent, strictly formatted, and rejects conflicting journal evidence", () => {
