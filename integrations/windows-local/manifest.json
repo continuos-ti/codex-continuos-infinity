@@ -33,7 +33,7 @@
     "effectScope":  "The tracked PowerShell wrapper process. Detached processes and external services require resource-specific reconciliation.",
     "installState":  "staged-not-applied-to-real-provider",
     "validation":  {
-                       "pythonTests":  24,
+                       "pythonTests":  25,
                        "adapterTests":  11,
                        "dryRunAgainstRealProviderSource":  "passed",
                        "fixtureApplyAndRollback":  "passed",
@@ -44,7 +44,7 @@
                       "path":  "durable_command_jobs.py",
                       "role":  "provider-ledger",
                       "packaged":  true,
-                      "sha256":  "2170cc7c8d8d338231671b571e95970becf01031dca435b8040fc58b95c2e820"
+                      "sha256":  "fb9c0590661b719f49f0e4b4b4d6bd9cfae7739332e5f833c8f5d4258e81f635"
                   },
                   {
                       "path":  "apply-durable-command-jobs.ps1",
@@ -62,7 +62,7 @@
                       "path":  "tests/test_durable_command_jobs.py",
                       "role":  "provider-tests",
                       "packaged":  false,
-                      "sha256":  "dee45460302ecb3e4aaea41953d0e3946cc2d83cb6cc8033efc7faed81267820"
+                      "sha256":  "b3aa82c403357e0afcddcebd39897fb5ff487e7e561d029e20844d005df2c648"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",

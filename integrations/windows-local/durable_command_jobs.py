@@ -260,7 +260,7 @@ class DurableCommandJobs:
     ) -> tuple[dict[str, Any], bool]:
         if operation_id is not None and provider_epoch is None:
             raise ValueError("provider_epoch is required for an explicit operation_id")
-        identifier = operation_id or str(uuid.uuid4())
+        identifier = str(uuid.uuid4()) if operation_id is None else operation_id
         if not _OPERATION_ID_PATTERN.fullmatch(identifier):
             raise ValueError("operation_id has an unsupported format")
         if provider_epoch is not None and provider_epoch != self.epoch:

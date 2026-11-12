@@ -172,6 +172,12 @@ class DurableCommandJobsTests(unittest.TestCase):
 
         self.assertIsNone(self.store._load(self.operation_id))
 
+    def test_empty_explicit_operation_id_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "unsupported format"):
+            self.store.reserve("", self.store.epoch, "Get-Date", r"E:\Projetos")
+
+        self.assertIsNone(self.store._load(""))
+
     def test_legacy_command_without_operation_id_uses_new_uuid(self):
         record, created = self.store.reserve(None, None, "Get-Date", r"E:\Projetos")
 
