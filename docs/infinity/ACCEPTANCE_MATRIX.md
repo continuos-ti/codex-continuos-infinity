@@ -32,6 +32,10 @@ No worktree `feature/continuos-infinity-native`, a correção adicional de ident
 
 ## Critérios ainda abertos
 
+### Proteção adicional do perfil DEV (11/11/2026)
+
+O perfil de desenvolvimento rejeita agora caminhos iguais, ancestrais ou descendentes dos perfis de produção Infinity, legado e Codex. A verificação considera aliases de diretório existentes, incluindo junctions do Windows, antes de iniciar o launcher. O ambiente filho limpa os overrides herdados de home Infinity e DEV, e o processo DEV fixa explicitamente `CODEX_CONTINUOS_INFINITY_HOME` no perfil isolado. O teste focado passou com **9 testes e 29 asserções**, e o `bun run verify` integral terminou com **exit code 0**, incluindo auditoria de dependências, TypeScript, testes, build Vite e `RELOCATABLE_RUNTIME_SMOKE_OK`. A suíte launcher registrou **438 aprovados, quatro ignorados e zero falhas**. A execução foi restrita à árvore de desenvolvimento e preservou a instalação produtiva.
+
 O aceite integral exige reconciliação independente dos efeitos externos de chamadas MCP já despachadas, inclusive no caso de resultado desconhecido, e aquisição de nova identidade de proprietário autorizada pelo protocolo nativo Codex após crash. O snapshot do rollout, os envelopes cifrados e a confirmação do broker oferecem evidência histórica e não provam isoladamente os efeitos externos. O bloqueio `broker_reconciliation_required` permanece ativo quando a reconciliação é desconhecida.
 
 O teste DEV autenticado ainda deve comprovar OAuth/PKCE, catálogo MCP em turno nativo, GPT-6 Sol (Web) com ferramentas, anexos independentes, ferramenta MCP real acima de 90 segundos, CWD confiável e recuperação de falhas controladas. Foram verificados 3 e 5 chats simultâneos sem ferramentas, GPT-6 Sol em browser-only e compaction manual com retomada da memória factual no DEV. A sessão ChatGPT autenticada, a seleção visual de `ContinuosWebIntegracao` e o smoke do navegador foram verificados. A instalação produtiva deve continuar preservada durante a homologação.

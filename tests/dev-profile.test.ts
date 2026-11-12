@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import * as childProcess from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -66,6 +66,54 @@ test("DEV profile path refuses production home reuse", () => {
       CODEX_WEB_GPT_DEV_HOME: shared,
     },
   })).toThrow("must differ from the production");
+});
+
+test("DEV profile rejects legacy, native Codex, and namespaced production homes", () => {
+  const root = mkdtempSync(join(tmpdir(), "continuos-dev-home-isolation-"));
+  try {
+    for (const protectedHome of [
+      join(root, ".codex-chatgpt-web"),
+      join(root, ".codex"),
+      join(root, ".codex-continuos-infinity"),
+      join(root, "custom-legacy"),
+      join(root, "custom-infinity"),
+      join(root, "custom-codex"),
+    ]) {
+      expect(() => resolveDevProfilePaths({
+        homeDirectory: root,
+        environment: {
+          CODEX_WEB_GPT_DEV_HOME: protectedHome,
+          CODEX_CHATGPT_WEB_HOME: join(root, "custom-legacy"),
+          CODEX_CONTINUOS_INFINITY_HOME: join(root, "custom-infinity"),
+          CODEX_HOME: join(root, "custom-codex"),
+        },
+      })).toThrow("must differ from the production");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("DEV profile rejects nested paths and junction aliases of production homes", () => {
+  const root = mkdtempSync(join(tmpdir(), "continuos-dev-junction-isolation-"));
+  const production = join(root, "production");
+  const alias = join(root, "alias");
+  try {
+    mkdirSync(production);
+    symlinkSync(production, alias, process.platform === "win32" ? "junction" : "dir");
+    for (const devHome of [alias, join(alias, "nested"), join(production, "nested")]) {
+      expect(() => resolveDevProfilePaths({
+        homeDirectory: root,
+        environment: { CODEX_WEB_GPT_DEV_HOME: devHome, CODEX_CHATGPT_WEB_HOME: production },
+      })).toThrow("must differ from the production");
+    }
+    expect(() => resolveDevProfilePaths({
+      homeDirectory: root,
+      environment: { CODEX_WEB_GPT_DEV_HOME: root, CODEX_CHATGPT_WEB_HOME: production },
+    })).toThrow("must differ from the production");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("installed launcher discovery has explicit platform candidates", () => {
@@ -139,6 +187,8 @@ test("DEV launcher child cannot inherit production home or browser-profile overr
   expect(devLauncherEnvironment(paths, {
     KEEP_ME: "yes",
     CODEX_CHATGPT_WEB_HOME: paths.home,
+    CODEX_CONTINUOS_INFINITY_HOME: "/Users/tester/other-production",
+    CODEX_CONTINUOS_INFINITY_DEV_HOME: "/Users/tester/other-development",
     CODEX_HOME: "/Users/tester/production-codex",
     CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES: '["/Users/tester/second-account"]',
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: "/Users/tester/production-launcher",
@@ -149,12 +199,14 @@ test("DEV launcher child cannot inherit production home or browser-profile overr
 });
 
 test("DEV chat activation removes shared production Codex homes", () => {
-  const keys = ["CODEX_WEB_GPT_DEV_HOME", "CODEX_CHATGPT_WEB_HOME", "CODEX_HOME", "CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES"];
+  const keys = ["CODEX_WEB_GPT_DEV_HOME", "CODEX_CHATGPT_WEB_HOME", "CODEX_CONTINUOS_INFINITY_HOME", "CODEX_HOME", "CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES"];
   const saved = keys.map(key => process.env[key]);
   try {
     process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES = '["/Users/tester/production-account"]';
+    process.env.CODEX_CONTINUOS_INFINITY_HOME = "/Users/tester/production-infinity";
     const paths = resolveDevProfilePaths({ environment: {}, homeDirectory: "/Users/tester" });
     activateDevProfileEnvironment(paths);
+    expect(process.env.CODEX_CONTINUOS_INFINITY_HOME).toBe(paths.home);
     expect(process.env.CODEX_HOME).toBe(paths.codexHome);
     expect(process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES).toBeUndefined();
   } finally {

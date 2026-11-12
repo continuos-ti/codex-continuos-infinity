@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { expandUserPath, getConfigPath } from "../config";
 import {
   readLauncherBrowserHostDescriptor,
@@ -22,6 +22,33 @@ export interface DevProfilePaths {
 }
 
 const WINDOWS_LAUNCHER_GUID = "8d70288c-48e8-55c9-94ad-16f56e4d0a88";
+
+/** Resolve existing path aliases, including junctions, before checking DEV isolation. */
+function isolationPath(value: string): string {
+  const absolute = resolve(expandUserPath(value));
+  let ancestor = absolute;
+  while (true) {
+    try {
+      const canonical = resolve(realpathSync.native(ancestor), relative(ancestor, absolute));
+      return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(`Cannot verify DEV profile path isolation: ${absolute}`, { cause: error });
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) {
+        throw new Error(`Cannot verify DEV profile path isolation: ${absolute}`, { cause: error });
+      }
+      ancestor = parent;
+    }
+  }
+}
+
+function overlappingProfilePaths(first: string, second: string): boolean {
+  const inside = (candidate: string): boolean =>
+    candidate === "" || (candidate !== ".." && !candidate.startsWith(`..${sep}`) && !isAbsolute(candidate));
+  return inside(relative(first, second)) || inside(relative(second, first));
+}
 
 function registeredWindowsLauncherInstallLocation(): string | undefined {
   try {
@@ -47,11 +74,17 @@ export function resolveDevProfilePaths({
   const home = resolve(expandUserPath(
     environment.CODEX_CONTINUOS_INFINITY_DEV_HOME?.trim() || environment.CODEX_WEB_GPT_DEV_HOME?.trim() || join(homeDirectory, ".codex-continuos-infinity-dev"),
   ));
-  const productionHome = resolve(expandUserPath(
-    environment.CODEX_CONTINUOS_INFINITY_HOME?.trim() || environment.CODEX_CHATGPT_WEB_HOME?.trim() || join(homeDirectory, ".codex-continuos-infinity"),
-  ));
-  if (home === productionHome) {
-    throw new Error("DEV profile home must differ from the production codex-chatgpt-web home");
+  const protectedHomes = [
+    join(homeDirectory, ".codex-continuos-infinity"),
+    join(homeDirectory, ".codex-chatgpt-web"),
+    join(homeDirectory, ".codex"),
+    environment.CODEX_CONTINUOS_INFINITY_HOME?.trim(),
+    environment.CODEX_CHATGPT_WEB_HOME?.trim(),
+    environment.CODEX_HOME?.trim(),
+  ].filter((value): value is string => Boolean(value));
+  const canonicalDevHome = isolationPath(home);
+  if (protectedHomes.some(productionHome => overlappingProfilePaths(canonicalDevHome, isolationPath(productionHome)))) {
+    throw new Error("DEV profile home must differ from the production profile and Codex homes");
   }
   const launcherUserData = join(home, "launcher");
   return {
@@ -96,6 +129,7 @@ export function readDevChatExperimentalFeatures(
 export function activateDevProfileEnvironment(paths = resolveDevProfilePaths()): DevProfilePaths {
   process.env.CODEX_WEB_GPT_DEV_HOME = paths.home;
   process.env.CODEX_CHATGPT_WEB_HOME = paths.home;
+  process.env.CODEX_CONTINUOS_INFINITY_HOME = paths.home;
   process.env.CODEX_HOME = paths.codexHome;
   delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
   if (getConfigPath() !== paths.configPath) {
@@ -169,6 +203,8 @@ export function devLauncherEnvironment(
 ): NodeJS.ProcessEnv {
   const childEnvironment = { ...environment };
   delete childEnvironment.CODEX_CHATGPT_WEB_HOME;
+  delete childEnvironment.CODEX_CONTINUOS_INFINITY_HOME;
+  delete childEnvironment.CODEX_CONTINUOS_INFINITY_DEV_HOME;
   delete childEnvironment.CODEX_HOME;
   delete childEnvironment.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
   delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
