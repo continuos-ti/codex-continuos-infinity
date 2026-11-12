@@ -11,6 +11,7 @@ import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment"
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
+import { brokerProviderEpochForTool } from "./broker-operation-identity";
 import { acquireBrokerJournalOwnership } from "./broker-journal-ownership";
 import { inspectSettledBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
@@ -40,6 +41,7 @@ export interface BrokerToolRequest {
   callId: string;
   wireName: string;
   freeform: boolean;
+  providerEpoch?: string;
   arguments?: Record<string, unknown>;
   input?: string;
 }
@@ -443,6 +445,7 @@ export class TurnBroker implements TurnBrokerOwner {
       directory: this.callJournalDirectory,
       traceId, callId: request.callId, wireName: request.wireName, event,
       ...(channel.nativeOwnerDigest ? { nativeOwnerDigest: channel.nativeOwnerDigest } : {}),
+      ...(request.providerEpoch ? { providerEpoch: request.providerEpoch } : {}),
     });
     if (event === "queued") {
       this.recordedCallsInProcess = true;
@@ -1428,10 +1431,13 @@ export class TurnBroker implements TurnBrokerOwner {
     const wireName = request.wireName?.trim();
     if (!wireName) throw new Error("wire tool name is required");
     const callId = opaqueId("call");
+    const providerEpoch = request.freeform === true
+      ? undefined : brokerProviderEpochForTool(wireName, binding.channel.environment.tools);
     const toolRequest: BrokerToolRequest = {
       callId,
       wireName,
       freeform: request.freeform === true,
+      ...(providerEpoch ? { providerEpoch } : {}),
       ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
     };
     // Do not expose an invocation to the adapter before recording its existence.

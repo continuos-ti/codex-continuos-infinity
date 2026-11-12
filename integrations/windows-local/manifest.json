@@ -68,13 +68,13 @@
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
                       "role":  "bridge-identity-adapter",
                       "packaged":  false,
-                      "sha256":  "b82019547a76a15e084880c55a9deefd87eb7f62499404e86dfd83bb10094e3e"
+                      "sha256":  "13873af75515b2dde88610f17eb2a5c1cef4c58cf8c69a642e20c1de47b4a188"
                   },
                   {
                       "path":  "../../tests/broker-operation-identity.test.ts",
                       "role":  "bridge-identity-tests",
                       "packaged":  false,
-                      "sha256":  "2989ec53db0c7707a52065dda6e7e9c60d2a52a292e441fafbaff35b70a9d73d"
+                      "sha256":  "20de6fbf83af7f6210a783da682ad6b19521736a9a74b5fd31aa723bcfacef46"
                   }
               ]
 }

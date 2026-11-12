@@ -25,7 +25,9 @@ function fixture() {
 
 function evidenceFiles(directory: string, trace = traceId) {
   return readdirSync(join(directory, trace)).filter(name => name.endsWith(".json"))
-    .map(name => JSON.parse(readFileSync(join(directory, trace, name), "utf8")) as {event: string; callId: string});
+    .map(name => JSON.parse(readFileSync(join(directory, trace, name), "utf8")) as {
+      event: string; callId: string; providerEpoch?: string;
+    });
 }
 
 function eventPath(directory: string, trace: string, id: string, event: string) {
@@ -63,6 +65,80 @@ test("durable event records contain no arguments, results, paths, or unvalidated
   }
 });
 
+test("provider epochs survive journal reconciliation without persisting tool arguments", () => {
+  const { directory } = fixture();
+  const providerEpoch = "d".repeat(32);
+  const saved = recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local__windows_command", event: "queued", providerEpoch });
+  const entry = JSON.parse(readFileSync(saved.path, "utf8")) as Record<string, unknown>;
+
+  expect(entry.providerEpoch).toBe(providerEpoch);
+  expect(entry).not.toHaveProperty("arguments");
+  expect(inspectBrokerCallJournal(directory)[0]?.providerEpoch).toBe(providerEpoch);
+  expect(() => recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local__windows_command", event: "queued", providerEpoch: "invalid" }))
+    .toThrow("Invalid broker provider epoch");
+  expect(() => recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local__windows_command", event: "queued", providerEpoch: "e".repeat(32) }))
+    .toThrow("Conflicting broker call journal event");
+});
+
+test("rejects a provider epoch change across lifecycle events", () => {
+  const { directory } = fixture();
+  recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local__windows_command", event: "queued", providerEpoch: "d".repeat(32) });
+  recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local__windows_command", event: "delivery_possible", providerEpoch: "e".repeat(32) });
+
+  expect(() => inspectBrokerCallJournal(directory)).toThrow(/invalid or inconsistent evidence/);
+});
+test("broker journals the provider epoch advertised when a native tool call is queued", async () => {
+  const { root, directory } = fixture();
+  const providerEpoch = "f".repeat(32);
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "provider-epoch")));
+  broker.enableCallJournal(directory);
+  const environment = {
+    cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const },
+    tools: [{
+      name: "windows_command", namespace: "mcp__windows_local", description: "Run a tracked command.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string" }, cwd: { type: "string" },
+          operation_id: { type: "string" }, provider_epoch: { type: "string" },
+        },
+        required: ["command", "cwd"], additionalProperties: false,
+        "x-codex-operation-id": true, "x-codex-provider-epoch": providerEpoch,
+      },
+    }],
+  };
+  const identity = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+  };
+
+  try {
+    const token = await broker.register(environment, 20_000, traceId, identity);
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(broker.socketPath,
+      { method: "claim", token });
+    const pending = callTurnBroker<BrokerToolResult>(broker.socketPath, {
+      method: "invoke", bindingId, wireName: "mcp__windows_local__windows_command",
+      arguments: { command: "Get-Date", cwd: root },
+    }, 15_000);
+    const [delivered] = await broker.nextToolBatch(token);
+    expect(delivered?.providerEpoch).toBe(providerEpoch);
+    expect(delivered?.arguments).toEqual({ command: "Get-Date", cwd: root });
+    expect(evidenceFiles(directory).every(entry => entry.providerEpoch === providerEpoch)).toBe(true);
+
+    broker.completeTool(token, delivered!.callId, result);
+    await expect(pending).resolves.toEqual(result);
+    expect(evidenceFiles(directory).every(entry => entry.providerEpoch === providerEpoch)).toBe(true);
+    expect(JSON.stringify(evidenceFiles(directory))).not.toContain("Get-Date");
+  } finally {
+    await broker.close();
+  }
+});
 test("duplicate event acknowledgement rejects tampered flags, timestamps, and unexpected fields", () => {
   const { directory } = fixture();
   const first = recordBrokerCallEvent({ directory, traceId, callId,

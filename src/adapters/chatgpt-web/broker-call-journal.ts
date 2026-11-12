@@ -14,6 +14,8 @@ export interface BrokerCallEvidence {
   tool: string;
   /** SHA-256 of the native thread/turn pair when the owner supplied both valid IDs. */
   nativeOwnerDigest?: string;
+  /** Provider ledger epoch advertised by an opted-in tool schema. */
+  providerEpoch?: string;
   event: BrokerCallEvent;
   recordedAt: string;
   /** The only result state durable here; content and tool arguments are deliberately excluded. */
@@ -33,12 +35,16 @@ export function recordBrokerCallEvent(input: {
   wireName: string;
   event: BrokerCallEvent;
   nativeOwnerDigest?: string;
+  providerEpoch?: string;
   now?: Date;
 }): { path: string; recorded: boolean } {
   if (!/^[0-9a-f]{12}$/.test(input.traceId)) throw new Error("Invalid broker trace id");
   if (!/^call_[A-Za-z0-9_-]{32}$/.test(input.callId)) throw new Error("Invalid broker call id");
   if (input.nativeOwnerDigest !== undefined && !/^[0-9a-f]{64}$/.test(input.nativeOwnerDigest)) {
     throw new Error("Invalid broker native owner digest");
+  }
+  if (input.providerEpoch !== undefined && !/^[0-9a-f]{32}$/.test(input.providerEpoch)) {
+    throw new Error("Invalid broker provider epoch");
   }
   const tool = /^[A-Za-z0-9_.:-]{1,256}$/.test(input.wireName)
     ? input.wireName : "unclassified_tool";
@@ -49,6 +55,7 @@ export function recordBrokerCallEvent(input: {
     callId: input.callId,
     tool,
     ...(input.nativeOwnerDigest ? { nativeOwnerDigest: input.nativeOwnerDigest } : {}),
+    ...(input.providerEpoch ? { providerEpoch: input.providerEpoch } : {}),
     event: input.event,
     recordedAt: (input.now ?? new Date()).toISOString(),
     resultRecoverable: false,
@@ -70,6 +77,7 @@ export function recordBrokerCallEvent(input: {
       || prior.version !== 1 || prior.traceId !== entry.traceId || prior.callId !== entry.callId
       || prior.event !== entry.event || prior.tool !== entry.tool
       || prior.nativeOwnerDigest !== entry.nativeOwnerDigest
+      || prior.providerEpoch !== entry.providerEpoch
       || prior.resultRecoverable !== false || prior.replayAuthorized !== false
       || typeof prior.recordedAt !== "string"
       || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(prior.recordedAt)

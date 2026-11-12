@@ -69,9 +69,10 @@ function nativeRollout(options: { child?: boolean; currentTurn?: string; alterna
 }
 
 function journal(events: BrokerCallEvent[] = ["queued", "delivery_possible", "result_received"],
-  owner = nativeBrokerOwnerDigest({ threadId, turnId })) {
+  owner = nativeBrokerOwnerDigest({ threadId, turnId }), providerEpoch?: string) {
   for (const event of events) recordBrokerCallEvent({
     directory, traceId, callId, wireName: "mutating_tool", event, nativeOwnerDigest: owner,
+    ...(providerEpoch ? { providerEpoch } : {}),
   });
 }
 
@@ -110,7 +111,8 @@ function parsedNativeTurn(metadata: Record<string, unknown>): CodexParsedRequest
 
 test("thread environment store observes an authenticated recovery snapshot without granting replay", () => {
   nativeRollout();
-  journal();
+  const providerEpoch = "d".repeat(32);
+  journal(undefined, undefined, providerEpoch);
   seal();
   const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, home);
   const metadata = {
@@ -122,6 +124,7 @@ test("thread environment store observes an authenticated recovery snapshot witho
   if (recovered.status !== "verified_native_recovery_snapshot") throw new Error("Missing authenticated recovery snapshot");
   expect(recovered.calls).toHaveLength(1);
   expect(recovered.calls[0]?.resultEvidence.status).toBe("verified_result_evidence");
+  expect(recovered.calls[0]?.call.providerEpoch).toBe(providerEpoch);
   expect(recovered.replayAuthorized).toBe(false);
   expect(recovered.externalEffectsReconciled).toBe(false);
 
@@ -213,8 +216,9 @@ test("native call inventory authenticates ownership across traces without exposi
   const pendingCallId = `call_${"B".repeat(32)}`;
   const foreignCallId = `call_${"C".repeat(32)}`;
   const ownerDigest = nativeBrokerOwnerDigest({ threadId, turnId })!;
+  const providerEpoch = "e".repeat(32);
   recordBrokerCallEvent({ directory, traceId: changedTrace, callId: pendingCallId,
-    wireName: "read_tool", event: "queued", nativeOwnerDigest: ownerDigest });
+    wireName: "read_tool", event: "queued", nativeOwnerDigest: ownerDigest, providerEpoch });
   recordBrokerCallEvent({ directory, traceId: changedTrace, callId: foreignCallId,
     wireName: "other_tool", event: "queued", nativeOwnerDigest: "a".repeat(64) });
 
@@ -228,6 +232,7 @@ test("native call inventory authenticates ownership across traces without exposi
       { traceId: changedTrace, callId: pendingCallId, state: "queued_unconfirmed" },
       { traceId, callId, state: "result_unavailable" },
     ]);
+  expect(inventory.calls.find(call => call.callId === pendingCallId)?.providerEpoch).toBe(providerEpoch);
   expect(inventory.calls.every(call => call.replayAuthorized === false && call.resultRecoverable === false))
     .toBe(true);
   expect(inventory.replayAuthorized).toBe(false);

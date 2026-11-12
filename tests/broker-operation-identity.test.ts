@@ -66,7 +66,7 @@ test("broker identity overrides a model-supplied operation ID", () => {
 
 test("injects a provider epoch advertised by the tool schema", () => {
   const providerEpoch = "b".repeat(32);
-  const result = attachBrokerOperationId(request(), [
+  const result = attachBrokerOperationId(request({ providerEpoch }), [
     tool({
       properties: {
         operation_id: { type: "string" },
@@ -83,7 +83,7 @@ test("injects a provider epoch advertised by the tool schema", () => {
 
 test("injects a provider epoch even when the tool does not opt into operation IDs", () => {
   const providerEpoch = "c".repeat(32);
-  const result = attachBrokerOperationId(request(), [
+  const result = attachBrokerOperationId(request({ providerEpoch }), [
     tool({
       properties: { provider_epoch: { type: "string" } },
       "x-codex-provider-epoch": providerEpoch,
@@ -92,6 +92,18 @@ test("injects a provider epoch even when the tool does not opt into operation ID
 
   assert.equal(result.arguments?.provider_epoch, providerEpoch);
   assert.equal(result.arguments?.operation_id, undefined);
+});
+
+test("rejects a provider epoch that changes after the broker queued the operation", () => {
+  assert.throws(
+    () => attachBrokerOperationId(request({ providerEpoch: "b".repeat(32) }), [
+      tool({
+        properties: { provider_epoch: { type: "string" } },
+        "x-codex-provider-epoch": "c".repeat(32),
+      }),
+    ]),
+    /provider epoch changed while the broker call was queued/,
+  );
 });
 
 test("leaves tools without the explicit extension unchanged", () => {

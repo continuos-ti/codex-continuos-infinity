@@ -12,6 +12,22 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+export function brokerProviderEpochForTool(wireName: string, tools: CodexTool[]): string | undefined {
+  const tool = tools.find(candidate =>
+    namespacedToolName(candidate.namespace, candidate.name) === wireName);
+  const parameters = asRecord(tool?.parameters);
+  const providerEpoch = parameters?.[PROVIDER_EPOCH_EXTENSION];
+  if (providerEpoch === undefined) return undefined;
+
+  const properties = asRecord(parameters?.properties);
+  const providerEpochSchema = asRecord(properties?.provider_epoch);
+  if (typeof providerEpoch !== "string" || !PROVIDER_EPOCH_PATTERN.test(providerEpoch)
+    || providerEpochSchema?.type !== "string") {
+    throw new Error("Codex tool " + wireName + " advertises an invalid provider epoch");
+  }
+  return providerEpoch;
+}
+
 /**
  * Pass the durable broker call identity to providers that explicitly advertise
  * the x-codex-operation-id JSON Schema extension.
@@ -27,7 +43,10 @@ export function attachBrokerOperationId(
   const parameters = asRecord(tool?.parameters);
   const properties = asRecord(parameters?.properties);
   const hasOperationId = parameters?.[OPERATION_ID_EXTENSION] === true;
-  const providerEpoch = parameters?.[PROVIDER_EPOCH_EXTENSION];
+  const providerEpoch = brokerProviderEpochForTool(request.wireName, tools);
+  if (request.providerEpoch !== providerEpoch) {
+    throw new Error("Codex tool " + request.wireName + " provider epoch changed while the broker call was queued");
+  }
   if (!hasOperationId && providerEpoch === undefined) return request;
 
   const argumentsWithIdentity = { ...(request.arguments ?? {}) };
@@ -45,11 +64,6 @@ export function attachBrokerOperationId(
   }
 
   if (providerEpoch !== undefined) {
-    const providerEpochSchema = asRecord(properties?.provider_epoch);
-    if (typeof providerEpoch !== "string" || !PROVIDER_EPOCH_PATTERN.test(providerEpoch)
-      || providerEpochSchema?.type !== "string") {
-      throw new Error("Codex tool " + request.wireName + " advertises an invalid provider epoch");
-    }
     argumentsWithIdentity.provider_epoch = providerEpoch;
   }
 
