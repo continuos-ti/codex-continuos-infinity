@@ -291,6 +291,33 @@ test("recovery snapshot does not attribute a native output to a different tool s
   expect(recovered.externalEffectsReconciled).toBe(false);
 });
 
+test("recovery snapshot rejects native output evidence added during vault decryption", () => {
+  const rollout = nativeRollout();
+  journal();
+  seal();
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const value = originalRead.call(this, identity);
+    appendFileSync(rollout, [
+      { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+      { type: "response_item", payload: { type: "function_call", call_id: callId, name: "mutating_tool" } },
+      { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "returned" } },
+    ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
+    return value;
+  };
+  try {
+    expect(snapshot()).toEqual({
+      status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+    });
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+  const stable = snapshot();
+  expect(stable.status).toBe("verified_native_recovery_snapshot");
+  if (stable.status !== "verified_native_recovery_snapshot") throw new Error("Expected stable snapshot");
+  expect(stable.calls[0]?.nativeOutputEvidence).toBe("recorded_in_native_rollout");
+});
+
 test("recovery snapshot refuses stale authority, ambiguous homes and unowned legacy records", () => {
   nativeRollout();
   journal();

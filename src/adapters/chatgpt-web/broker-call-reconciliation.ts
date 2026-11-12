@@ -413,6 +413,10 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   const afterVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
   if (beforeVault.pendingPublication || afterVault.pendingPublication
     || beforeVault.fingerprint !== afterVault.fingerprint) return unavailable();
+  // A native tool output may arrive while sealed results are being decrypted.
+  const currentNativeOutputs = observeNativeCallOutputs(initialOwner.rolloutPath, input.turnId,
+    owned.map(call => ({ callId: call.callId, tool: call.tool })));
+  if (!isDeepStrictEqual(currentNativeOutputs, nativeOutputs)) return unavailable();
   try {
     const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
     if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();
