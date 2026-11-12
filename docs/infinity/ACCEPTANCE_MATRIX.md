@@ -4,7 +4,7 @@
 
 A suíte Python passou com **21 testes**, incluindo a verificação SHA-256 de todas as seis entradas do manifesto de integração. O checkout dos arquivos cobertos fixa LF em `.gitattributes`, inclusive com `core.autocrlf=true` no Windows, para preservar os hashes entre plataformas. O dry-run do instalador Windows Local passou sem modificar a fonte real nem reiniciar serviços.
 
-Estado observado em 12/11/2026. A branch `feature/continuos-infinity-native` utiliza a versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18, commit `32fd3436eb6ed94898b987a3c369003bb6fb8d54`. O workflow `43154582839` do commit `5ec32d72d260ced17276ce563b1f43bf62a0ef4a` concluiu com cinco jobs aprovados, incluindo instalação e desinstalação NSIS em runner Windows descartável. O transporte Cloudflare configurável foi publicado no commit `b76511160838aa405a93a3cea9fc012a883afb60` e empacotado em worktree isolado. A homologação E2E autenticada permanece pendente.
+Estado observado em 12/11/2026. A branch `feature/continuos-infinity-native` utiliza a versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. A base inicial do fork era `32fd3436eb6ed94898b987a3c369003bb6fb8d54`, e o upstream `main` mais recente, `3b41eda2efa731245d171b51dbd30935e587c937`, foi integrado pelo merge `3ed1c0aa7d524f0b690c21f84ac3835d9bdca9a3`. O workflow `43154582839` do commit `5ec32d72d260ced17276ce563b1f43bf62a0ef4a` concluiu com cinco jobs aprovados, incluindo instalação e desinstalação NSIS em runner Windows descartável. O transporte Cloudflare configurável foi publicado no commit `b76511160838aa405a93a3cea9fc012a883afb60` e empacotado em worktree isolado. A homologação E2E autenticada permanece pendente.
 
 ### Transporte Cloudflare configurável — verificação de 12/11/2026
 
@@ -138,7 +138,7 @@ O perfil DEV consultado em 12/11 permanece com launcher ativo, modo `browser-onl
 
 ### Verificação do pacote Cloudflare no commit `b765111` (12/11/2026)
 
-O commit `b76511160838aa405a93a3cea9fc012a883afb60` está publicado na branch de desenvolvimento e no PR #1. O upstream `main` continua no commit `32fd3436eb6ed94898b987a3c369003bb6fb8d54`. O worktree isolado `E:/Projetos/codex-continuos-infinity-build-b765111` instalou as dependências por lockfile, concluiu `bun run app:package`, `bun run app:smoke` com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64` e validou o NSIS com `7z t` (`Everything is Ok`).
+O commit `b76511160838aa405a93a3cea9fc012a883afb60` está publicado na branch de desenvolvimento e no PR #1. No snapshot desse commit, o upstream `main` estava em `32fd3436eb6ed94898b987a3c369003bb6fb8d54`. A atualização posterior para `3b41eda2efa731245d171b51dbd30935e587c937` foi integrada pelo merge `3ed1c0a`. O worktree isolado `E:/Projetos/codex-continuos-infinity-build-b765111` instalou as dependências por lockfile, concluiu `bun run app:package`, `bun run app:smoke` com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64` e validou o NSIS com `7z t` (`Everything is Ok`).
 
 O instalador Windows x64 tem **153.683.078 bytes**, SHA-256 **`70b7d8a58d95170465eab68eb481bf3f79385a9cdf50db04d23991243cab1975`**. O blockmap tem **161.196 bytes**, SHA-256 **`55b30bdcca71cb023bbfd2def34ddff536d0ad8a94ac3f158871e3d91d4773f1`**. Ambos coincidem com `launcher/artifacts/checksums-local.txt` desse worktree. `Get-AuthenticodeSignature` retornou **`NotSigned`**. O GitHub Actions `43170733150` concluiu com **cinco jobs aprovados**, incluindo `actionlint`, `secret-scan` e `verify` em Windows, macOS e Ubuntu. Não há comprovação de homologação MCP/OAuth do fork no DEV Full, reconciliação externa após crash, novo vínculo nativo de proprietário, anexos concorrentes nem rollback funcional de staging.
 
@@ -158,7 +158,7 @@ As validações adicionais passaram com **11 testes do adaptador**, **21 testes 
 
 ### Auditoria do broker externo e CI atual (12/11/2026)
 
-A comparação com o upstream confirmou a release `v6.1.18` no commit `1cc49aaa627a995d3f0cf2f971fde7f764996649` e o `main` em `32fd3436eb6ed94898b987a3c369003bb6fb8d54`, um commit posterior de teste para estabilizar a verificação de túnel sob agendamento variável. A alteração de teste já está presente em `launcher/tests/runtime-supervisor.test.cjs` no branch do Infinity.
+A comparação com o upstream confirmou a release `v6.1.18` no commit `1cc49aaa627a995d3f0cf2f971fde7f764996649` e, naquele snapshot, o `main` em `32fd3436eb6ed94898b987a3c369003bb6fb8d54`, com uma alteração de teste para estabilizar a verificação de túnel sob agendamento variável. Em 12/11, o upstream avançou para `3b41eda2efa731245d171b51dbd30935e587c937` e seus nove commits foram integrados pelo merge `3ed1c0a`. A alteração de teste anterior permanece em `launcher/tests/runtime-supervisor.test.cjs` no branch do Infinity.
 
 O workflow de `push` `43189685693`, no SHA `073fcbf4e50ae3ed5f0a83dcb14ee9f410ede193`, concluiu com sucesso nos cinco jobs, incluindo `secret-scan`, `actionlint` e `verify` em Windows, Ubuntu e macOS. O workflow de `pull_request` `43189695839` para o mesmo SHA foi marcado como falha porque `verify (macos-15)` terminou como `cancelled`. Os outros quatro jobs passaram. A resposta da API não informou o motivo do cancelamento.
 
