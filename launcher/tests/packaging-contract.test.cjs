@@ -312,7 +312,7 @@ test("Linux AppImage fallback uses one owned extraction and removes it on exit",
   }
 });
 
-test("Linux packaging stages native libnotify in an owned AppImage toolset before assembly", async () => {
+test("Linux packaging stages native libnotify in an owned AppImage toolset before assembly", { timeout: 20_000 }, async () => {
   const source = fs.readFileSync(path.join(launcherRoot, "scripts", "prepare-linux-appimage-tools.cjs"), "utf8");
   const prepare = fs.readFileSync(path.join(repositoryRoot, "scripts", "prepare-linux-libnotify.sh"), "utf8");
   const smoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-linux-appimage-symbols.sh"), "utf8");
