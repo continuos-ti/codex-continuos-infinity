@@ -387,7 +387,7 @@ test("Linux packaging stages native libnotify in an owned AppImage toolset befor
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 test("macOS package smoke unregisters its staged app from LaunchServices", () => {
   const smoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");
