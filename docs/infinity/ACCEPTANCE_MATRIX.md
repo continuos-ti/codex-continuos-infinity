@@ -93,3 +93,9 @@ No commit `5ad16d52c385dcb103949745f6c907085beeddf6`, os runs GitHub Actions `43
 Uma varredura adicional dos arquivos versionados com Gitleaks `v8.30.1` encontrou 18 alertas `generic-api-key`, todos localizados em `tests/` e `tests/fixtures/`. O relatório mascarado identificou os arquivos e as linhas, mas a natureza de cada ocorrência não foi confirmada. A inspeção de valores sem mascaramento foi recusada pela política da ferramenta. Esses alertas exigem classificação antes de configurar um bloqueio de CI que evite falsos positivos sem dispensar a detecção de segredos reais. Nenhum valor de credencial foi registrado nesta matriz.
 
 Esta verificação preserva os critérios de aceite pendentes de MCP Full autenticado no DEV, reconciliação independente de efeitos externos, vínculo de proprietário nativo pós-crash, anexos concorrentes e rollback funcional em staging.
+
+### Higienização dos identificadores de teste e bloqueio de segredos no CI (11/11/2026)
+
+Os 18 alertas `generic-api-key` anteriores provinham de valores com aparência de credencial em identificadores usados por testes automatizados, inclusive dois atributos `data-turn-key` de fixtures HTML. Os 18 valores foram substituídos por identificadores determinísticos de baixa entropia que preservam os contratos de forma e de igualdade dos testes. Nenhum identificador original foi incluído neste relatório. Uma nova varredura com Gitleaks v8.30.1 sobre a cópia dos arquivos versionados atualizada com as alterações retornou **zero alertas** (`exit 0`). Os dez arquivos de testes relacionados retornaram **101 aprovados, 13 ignorados e zero falhas** após ajustar a identidade esperada no mock IPC.
+
+O workflow CI inclui agora um job `secret-scan` com Gitleaks v8.30.1 e SHA-256 fixado para o executável Linux, que falha caso novos achados sejam encontrados. Essa evidência se limita ao conteúdo analisado na versão atual e não substitui a revisão de credenciais nem a reconciliação MCP pendente.

@@ -24,7 +24,7 @@ test("real helper IPC delivers one distinct repair instruction with the active t
     "  if (original.text !== 'ORIGINAL_NON_MUTABLE') throw new Error('original prompt was lost');",
     "  const repaired = await turn.prepareRecovery({traceId:turn.traceId,code:'chatgpt_stalled_same_turn'});",
     "  if (repaired.text !== 'REPAIR_DIAGNOSTIC_NO_REPLAY') throw new Error('repair prompt mismatch');",
-    "  if (repaired.turnToken !== 'turn_0123456789abcdef0123456789abcdef') throw new Error('tool token mismatch');",
+    "  if (repaired.turnToken !== 'turn_00000000000000000000000000000001') throw new Error('tool token mismatch');",
     "  turn.onCommentary?.('Reparando');",
     "  turn.onTextDelta('RECOVERED');",
     "  return 'RECOVERED';",
@@ -64,7 +64,7 @@ test("real helper IPC delivers one distinct repair instruction with the active t
       prepareRecovery: async failure => {
         calls.push(failure);
         return { text: "REPAIR_DIAGNOSTIC_NO_REPLAY", images: [],
-          turnToken: "turn_0123456789abcdef0123456789abcdef", release() {} };
+          turnToken: "turn_00000000000000000000000000000001", release() {} };
       },
       onTextDelta: text => statuses.push(text),
       onCommentary: text => statuses.push(text),

@@ -57,7 +57,7 @@ function turn(extra: Record<string, unknown> = {}) {
     capabilities:{localToolsEnabled:true,solAvailable:true,extraHighAvailable:true,proAvailable:true},
     conversationKey:"a".repeat(64),retainConversation:true,
     prepare:async()=>({text:"DO NOT RESEND",images:[],release(){}}),
-    prepareRecovery:async()=>({text:"NEW REPAIR ONLY",images:[],turnToken:"turn_0123456789abcdef0123456789abcdef",release(){}}),
+    prepareRecovery:async()=>({text:"NEW REPAIR ONLY",images:[],turnToken:"turn_00000000000000000000000000000001",release(){}}),
     onTextDelta:(delta:string)=>observed.push(delta),
     onCommentary:(note:string)=>comments.push(note),
     externalProgress:{snapshot:()=>({revision:1,lastToolBatchRevision:0,activeToolCalls:0})},

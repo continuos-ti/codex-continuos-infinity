@@ -314,7 +314,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
     prepare: async () => ({
       text: "commit",
       images: [],
-      turnToken: "turn_0123456789abcdef0123456789abcdef",
+      turnToken: "turn_00000000000000000000000000000001",
       multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
       contextTokenBreakdown: { developer: { records: 1, chars: 400, tokens: 100 } },
@@ -333,7 +333,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
     type: "prepared_selected_ack",
     prepared: {
         text: "commit",
-        turnToken: "turn_0123456789abcdef0123456789abcdef",
+        turnToken: "turn_00000000000000000000000000000001",
         multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
         trimmedCompactionMessages: 4,
         contextTokenBreakdown: { developer: { records: 1, chars: 400, tokens: 100 } },
