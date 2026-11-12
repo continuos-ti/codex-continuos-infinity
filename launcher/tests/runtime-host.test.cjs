@@ -279,7 +279,11 @@ test("DEV setup child environment removes launcher-rebound production aliases", 
   assert.deepEqual(fixture.host.devSetupEnvironment({
     KEEP_ME: "yes",
     CODEX_CHATGPT_WEB_HOME: "/dev",
+    CODEX_CONTINUOS_INFINITY_HOME: "/production/infinity",
+    CODEX_CONTINUOS_INFINITY_DEV_HOME: "/stale-dev",
     CODEX_HOME: "/dev/codex-home",
+    CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES: '["/production/codex-home"]',
+    CODEX_CONTINUOS_INFINITY_DATA_DIR: "/production/browser",
     CODEX_WEB_GPT_DEV_HOME: "/stale-dev",
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: "/dev/launcher",
   }), {

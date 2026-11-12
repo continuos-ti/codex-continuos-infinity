@@ -437,7 +437,11 @@ class RuntimeHost {
     }
     const childEnvironment = { ...environment };
     delete childEnvironment.CODEX_CHATGPT_WEB_HOME;
+    delete childEnvironment.CODEX_CONTINUOS_INFINITY_HOME;
+    delete childEnvironment.CODEX_CONTINUOS_INFINITY_DEV_HOME;
     delete childEnvironment.CODEX_HOME;
+    delete childEnvironment.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+    delete childEnvironment.CODEX_CONTINUOS_INFINITY_DATA_DIR;
     delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
     childEnvironment.CODEX_WEB_GPT_DEV_HOME = this.coreHome;
     return childEnvironment;

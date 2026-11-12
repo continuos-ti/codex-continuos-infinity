@@ -70,11 +70,16 @@ const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
 const launchEnvironment = {
   CODEX_CHATGPT_WEB_HOME: process.env.CODEX_CHATGPT_WEB_HOME,
+  CODEX_CONTINUOS_INFINITY_HOME: process.env.CODEX_CONTINUOS_INFINITY_HOME,
   CODEX_HOME: process.env.CODEX_HOME,
+  CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES: process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES,
 };
 process.env.CODEX_CHATGPT_WEB_HOME = CORE_HOME;
 process.env.CODEX_HOME = LAUNCHER_PROFILE.codexHome;
-if (IS_DEV_PROFILE) delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+if (IS_DEV_PROFILE) {
+  process.env.CODEX_CONTINUOS_INFINITY_HOME = CORE_HOME;
+  delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+}
 app.setName(LAUNCHER_PROFILE.displayName);
 if (process.platform === "win32") {
   app.setAppUserModelId(IS_DEV_PROFILE ? APP_ID + ".dev" : APP_ID);

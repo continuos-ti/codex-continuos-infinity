@@ -81,6 +81,10 @@ export function resolveDevProfilePaths({
     environment.CODEX_CONTINUOS_INFINITY_HOME?.trim(),
     environment.CODEX_CHATGPT_WEB_HOME?.trim(),
     environment.CODEX_HOME?.trim(),
+    environment.CODEX_CONTINUOS_INFINITY_DATA_DIR?.trim(),
+    environment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim(),
+    ...(process.platform === "win32" && environment.APPDATA?.trim()
+      ? [join(environment.APPDATA.trim(), "Codex Continuos Infinity")] : []),
   ].filter((value): value is string => Boolean(value));
   const canonicalDevHome = isolationPath(home);
   if (protectedHomes.some(productionHome => overlappingProfilePaths(canonicalDevHome, isolationPath(productionHome)))) {
@@ -131,7 +135,10 @@ export function activateDevProfileEnvironment(paths = resolveDevProfilePaths()):
   process.env.CODEX_CHATGPT_WEB_HOME = paths.home;
   process.env.CODEX_CONTINUOS_INFINITY_HOME = paths.home;
   process.env.CODEX_HOME = paths.codexHome;
+  delete process.env.CODEX_CONTINUOS_INFINITY_DEV_HOME;
   delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+  delete process.env.CODEX_CONTINUOS_INFINITY_DATA_DIR;
+  delete process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
   if (getConfigPath() !== paths.configPath) {
     throw new Error("DEV profile environment did not resolve to its isolated configuration path");
   }
@@ -207,6 +214,7 @@ export function devLauncherEnvironment(
   delete childEnvironment.CODEX_CONTINUOS_INFINITY_DEV_HOME;
   delete childEnvironment.CODEX_HOME;
   delete childEnvironment.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+  delete childEnvironment.CODEX_CONTINUOS_INFINITY_DATA_DIR;
   delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
   childEnvironment.CODEX_WEB_GPT_DEV_HOME = paths.home;
   return childEnvironment;

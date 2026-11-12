@@ -78,6 +78,7 @@ test("DEV profile rejects legacy, native Codex, and namespaced production homes"
       join(root, "custom-legacy"),
       join(root, "custom-infinity"),
       join(root, "custom-codex"),
+      join(root, "custom-launcher"),
     ]) {
       expect(() => resolveDevProfilePaths({
         homeDirectory: root,
@@ -86,6 +87,7 @@ test("DEV profile rejects legacy, native Codex, and namespaced production homes"
           CODEX_CHATGPT_WEB_HOME: join(root, "custom-legacy"),
           CODEX_CONTINUOS_INFINITY_HOME: join(root, "custom-infinity"),
           CODEX_HOME: join(root, "custom-codex"),
+          CODEX_CONTINUOS_INFINITY_DATA_DIR: join(root, "custom-launcher"),
         },
       })).toThrow("must differ from the production");
     }
@@ -191,6 +193,7 @@ test("DEV launcher child cannot inherit production home or browser-profile overr
     CODEX_CONTINUOS_INFINITY_DEV_HOME: "/Users/tester/other-development",
     CODEX_HOME: "/Users/tester/production-codex",
     CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES: '["/Users/tester/second-account"]',
+    CODEX_CONTINUOS_INFINITY_DATA_DIR: "/Users/tester/other-launcher",
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: "/Users/tester/production-launcher",
   })).toEqual({
     KEEP_ME: "yes",
@@ -198,17 +201,21 @@ test("DEV launcher child cannot inherit production home or browser-profile overr
   });
 });
 
-test("DEV chat activation removes shared production Codex homes", () => {
-  const keys = ["CODEX_WEB_GPT_DEV_HOME", "CODEX_CHATGPT_WEB_HOME", "CODEX_CONTINUOS_INFINITY_HOME", "CODEX_HOME", "CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES"];
+test("DEV chat activation removes shared production Codex and launcher homes", () => {
+  const keys = ["CODEX_WEB_GPT_DEV_HOME", "CODEX_CHATGPT_WEB_HOME", "CODEX_CONTINUOS_INFINITY_HOME", "CODEX_CONTINUOS_INFINITY_DEV_HOME", "CODEX_HOME", "CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES", "CODEX_CONTINUOS_INFINITY_DATA_DIR", "CODEX_WEB_GPT_LAUNCHER_DATA_DIR"];
   const saved = keys.map(key => process.env[key]);
   try {
     process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES = '["/Users/tester/production-account"]';
     process.env.CODEX_CONTINUOS_INFINITY_HOME = "/Users/tester/production-infinity";
+    process.env.CODEX_CONTINUOS_INFINITY_DATA_DIR = "/Users/tester/production-launcher";
+    process.env.CODEX_CONTINUOS_INFINITY_DEV_HOME = "/Users/tester/another-dev";
     const paths = resolveDevProfilePaths({ environment: {}, homeDirectory: "/Users/tester" });
     activateDevProfileEnvironment(paths);
     expect(process.env.CODEX_CONTINUOS_INFINITY_HOME).toBe(paths.home);
     expect(process.env.CODEX_HOME).toBe(paths.codexHome);
     expect(process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES).toBeUndefined();
+    expect(process.env.CODEX_CONTINUOS_INFINITY_DATA_DIR).toBeUndefined();
+    expect(process.env.CODEX_CONTINUOS_INFINITY_DEV_HOME).toBeUndefined();
   } finally {
     for (const [index, key] of keys.entries()) {
       if (saved[index] === undefined) delete process.env[key];
