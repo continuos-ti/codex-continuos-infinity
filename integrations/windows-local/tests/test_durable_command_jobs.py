@@ -166,6 +166,19 @@ class DurableCommandJobsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported format"):
             self.store.reserve("unsafe/operation", self.store.epoch, "Get-Date", r"E:\Projetos")
 
+    def test_explicit_operation_id_requires_provider_epoch(self):
+        with self.assertRaisesRegex(ValueError, "provider_epoch is required"):
+            self.store.reserve(self.operation_id, None, "Get-Date", r"E:\Projetos")
+
+        self.assertIsNone(self.store._load(self.operation_id))
+
+    def test_legacy_command_without_operation_id_uses_new_uuid(self):
+        record, created = self.store.reserve(None, None, "Get-Date", r"E:\Projetos")
+
+        self.assertTrue(created)
+        self.assertEqual(len(record["operation_id"]), 36)
+        self.assertIsNotNone(self.store._load(record["operation_id"]))
+
     def test_screenshot_metadata_survives_store_reconstruction(self):
         screenshot_id = "8a4d3f70-2a11-4a0d-9d45-2f8f7d1c2a90"
         shot = {
@@ -209,6 +222,28 @@ class DurableCommandJobsTests(unittest.TestCase):
     def test_invalid_screenshot_metadata_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Invalid durable screenshot metadata"):
             self.store.save_screenshot("invalid-id", {})
+
+    def test_nonfinite_screenshot_metadata_is_rejected(self):
+        screenshot_id = "8a4d3f70-2a11-4a0d-9d45-2f8f7d1c2a90"
+        shot = {
+            "captured_at": time.time(),
+            "left": 0,
+            "top": 0,
+            "sx": 1.0,
+            "sy": 1.0,
+            "width": 1200,
+            "height": 800,
+            "foreground": "123456",
+        }
+        for field, invalid_value in (("captured_at", float("nan")),
+                                     ("captured_at", float("inf")),
+                                     ("captured_at", 0),
+                                     ("sx", float("nan")),
+                                     ("sy", float("inf"))):
+            with self.subTest(field=field, invalid_value=invalid_value):
+                with self.assertRaisesRegex(ValueError, "Invalid durable screenshot"):
+                    self.store.save_screenshot(screenshot_id, {**shot, field: invalid_value})
+        self.assertIsNone(self.store.load_screenshot(screenshot_id))
 
     @unittest.skipUnless(os.name == "nt", "PowerShell process marker test requires Windows")
     def test_powershell_script_writes_start_and_exit_markers(self):

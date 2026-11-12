@@ -8,7 +8,7 @@ This integration gives Windows Local durable `screenshot_id` metadata and gives 
 - The adapter injects the provider's current `provider_epoch` when a tool schema advertises `x-codex-provider-epoch`.
 - Windows Local records the operation ID, a SHA-256 digest of the command and working directory, process identity, and durable start/exit markers in SQLite under `%LOCALAPPDATA%\WindowsLocalRemote` or `WINDOWS_LOCAL_REMOTE_STATE`.
 - Windows Local records the active screenshot ID, capture timestamp, monitor origin, coordinate scale, dimensions, and foreground window in the same SQLite ledger. It does not persist screenshot pixels. The existing 60-second expiry and foreground-window check still apply after a server restart.
-- Repeating the same operation ID and the same command returns its existing state. Reusing that ID with different command arguments is rejected.
+- Repeating the same operation ID and the same command returns its existing state. Reusing that ID with different command arguments is rejected. An explicit operation ID requires the matching provider epoch, including on the first dispatch. Legacy calls without either field receive a new random operation ID.
 - `windows_command_result` can reattach to a still-running PowerShell wrapper after the Windows Local service process restarts. It reports a completed result when the wrapper's durable exit marker is present.
 - A provider epoch mismatch is reported as `provider_changed`. A missing record without the original epoch is reported as `epoch_required`. A missing record with the matching epoch remains non-authoritative and does not authorize replay.
 - If the process identity cannot be verified or the process disappears without an exit marker, the status remains `unknown`.

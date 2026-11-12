@@ -33,7 +33,7 @@
     "effectScope":  "The tracked PowerShell wrapper process. Detached processes and external services require resource-specific reconciliation.",
     "installState":  "staged-not-applied-to-real-provider",
     "validation":  {
-                       "pythonTests":  21,
+                       "pythonTests":  24,
                        "adapterTests":  11,
                        "dryRunAgainstRealProviderSource":  "passed",
                        "fixtureApplyAndRollback":  "passed",
@@ -44,25 +44,25 @@
                       "path":  "durable_command_jobs.py",
                       "role":  "provider-ledger",
                       "packaged":  true,
-                      "sha256":  "6ea521d06d46f73ed81d38733f27ff53792b16d58860eeaa8ccbeee4f4af8d23"
+                      "sha256":  "2170cc7c8d8d338231671b571e95970becf01031dca435b8040fc58b95c2e820"
                   },
                   {
                       "path":  "apply-durable-command-jobs.ps1",
                       "role":  "installer-and-rollback",
                       "packaged":  true,
-                      "sha256":  "3e33ff9ffed1b922e6e3cc36d9901e718f8df6807124bb84d1b6339d00725743"
+                      "sha256":  "c5078cb012fc3180d889393f3e99a17dfd9e0ca509eea4128215f8e4e486a9d4"
                   },
                   {
                       "path":  "README.md",
                       "role":  "integration-documentation",
                       "packaged":  true,
-                      "sha256":  "d069b82633296bbc1a035429b9d5b5925dcb35ef950147dda7f471891af881c7"
+                      "sha256":  "729d06d75fa708455d958558f97d5d27746cf4b6acad20c8b1e987bc1f868290"
                   },
                   {
                       "path":  "tests/test_durable_command_jobs.py",
                       "role":  "provider-tests",
                       "packaged":  false,
-                      "sha256":  "a83432ab83d9c8888fbef24e05ca57d84de2ac57a0b6d68ba89b4f715ff60ee2"
+                      "sha256":  "dee45460302ecb3e4aaea41953d0e3946cc2d83cb6cc8033efc7faed81267820"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",

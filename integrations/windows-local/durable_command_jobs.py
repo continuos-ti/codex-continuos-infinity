@@ -4,6 +4,7 @@ import base64
 import ctypes
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -257,6 +258,8 @@ class DurableCommandJobs:
         command: str,
         cwd: str,
     ) -> tuple[dict[str, Any], bool]:
+        if operation_id is not None and provider_epoch is None:
+            raise ValueError("provider_epoch is required for an explicit operation_id")
         identifier = operation_id or str(uuid.uuid4())
         if not _OPERATION_ID_PATTERN.fullmatch(identifier):
             raise ValueError("operation_id has an unsupported format")
@@ -336,7 +339,9 @@ class DurableCommandJobs:
         except (ValueError, TypeError, KeyError) as error:
             raise ValueError("Invalid durable screenshot metadata") from error
 
-        if sx <= 0 or sy <= 0 or width <= 0 or height <= 0 or not foreground:
+        if (not math.isfinite(captured_at) or captured_at <= 0
+                or not math.isfinite(sx) or not math.isfinite(sy)
+                or sx <= 0 or sy <= 0 or width <= 0 or height <= 0 or not foreground):
             raise ValueError("Invalid durable screenshot dimensions or foreground")
 
         connection = self._connect()

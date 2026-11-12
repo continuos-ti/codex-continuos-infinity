@@ -238,8 +238,7 @@ $commandReplacement = @'
         cwd = Path(a['cwd']).resolve(strict=True)
         if not cwd.is_dir():
             raise ValueError('cwd deve ser uma pasta existente.')
-        identifier = a.get('operation_id') or str(uuid.uuid4())
-        record, created = COMMAND_JOBS.reserve(identifier, a.get('provider_epoch'), a['command'], str(cwd))
+        record, created = COMMAND_JOBS.reserve(a.get('operation_id'), a.get('provider_epoch'), a['command'], str(cwd))
         identifier = record['operation_id']
         if not created:
             return job_result(identifier, a.get('wait_seconds', 1), a.get('provider_epoch'))
