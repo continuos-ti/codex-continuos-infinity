@@ -171,3 +171,11 @@ A inspeção do broker externo identificou que `codex_cf_gateway_lab.py` usa `ac
 A integração `integrations/windows-local/` do fork implementa um ledger SQLite para `windows_command` e metadados de `screenshot_id`, mas continua staged. O dry-run contra a fonte real e apply/rollback em cópia descartável passaram. A fonte real não foi alterada. O contrato cobre o wrapper PowerShell acompanhado e não reconcilia ações de mouse/teclado, processos destacados ou serviços externos. Outros provedores MCP ainda precisam implementar identidade, época e consulta de estado próprios.
 
 Com quatro turnos ativos no proxy, a aplicação do patch ao provedor real e qualquer reinício permanecem pendentes de uma janela drenada. O broker do Infinity continua bloqueando retomada com HTTP 409 quando encontra chamadas anteriores sem reconciliação independente, mantendo `replayAuthorized=false` e `externalEffectsReconciled=false`.
+
+### Concorrência de anexos por cinco processos (12/11/2026)
+
+A regressão `tests/attachment-upload-lease.test.ts` agora inicia cinco processos Bun independentes, todos disputando o mesmo arquivo de lease. A sequência observada contém cinco pares completos `start`/`end` sem intercalação, e o arquivo de lease é removido após a conclusão. O teste passou no Windows com os cinco helpers em processos separados.
+
+A suíte focada de `attachment-upload-lease.test.ts`, `attachment-upload.test.ts` e `browser-worker-contract.test.ts` concluiu com **155 aprovados, 12 ignorados, zero falhas e 903 asserções**. A auditoria real de 06/11 já havia comprovado cinco chats simultâneos com ferramentas de leitura e, separadamente, duas conversas com uploads físicos independentes de PNG. O teste de cinco processos comprova o lock entre helpers, mas não substitui um E2E de cinco chats com anexos físicos. Essa combinação real permanece pendente, sujeita também à cota externa de upload da conta.
+
+A verificação integral local `bun run verify` em 12/11/2026 terminou com **1399 testes, 1286 aprovados, 113 ignorados, zero falhas e 10666 asserções**. Typecheck, testes do launcher, build Vite e smoke do ciclo de cancelamento nativo também passaram. O build emitiu o aviso não bloqueante de chunk minificado acima de 500 kB.

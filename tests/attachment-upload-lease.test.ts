@@ -1,7 +1,8 @@
 ﻿import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { withChatGptAttachmentUploadLease } from "../src/adapters/chatgpt-web/attachment-upload-lease";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 
@@ -29,6 +30,61 @@ test("multiple Codex helper uploads serialize while their own tasks remain indep
     expect(completed).toHaveLength(3);
   });
 });
+
+test("five separate Bun helper processes serialize attachment uploads across the shared account lease", async () => {
+  await scratch(async path => {
+    const directory = dirname(path);
+    const logPath = join(directory, "events.log");
+    const helperPath = join(directory, "upload-helper.ts");
+    const moduleUrl = new URL("../src/adapters/chatgpt-web/attachment-upload-lease.ts", import.meta.url).href;
+    const helperSource = [
+      'import { appendFileSync } from "node:fs";',
+      `import { withChatGptAttachmentUploadLease } from ${JSON.stringify(moduleUrl)};`,
+      'const lockPath = process.env.LOCK_PATH!;',
+      'const logPath = process.env.LOG_PATH!;',
+      'const helperIndex = process.env.HELPER_INDEX!;',
+      'await withChatGptAttachmentUploadLease(async () => {',
+      '  appendFileSync(logPath, "start:" + helperIndex + "\\n", "utf8");',
+      '  await Bun.sleep(120);',
+      '  appendFileSync(logPath, "end:" + helperIndex + "\\n", "utf8");',
+      '}, undefined, { path: lockPath, maxWaitMs: 15_000 });',
+    ].join("\n");
+    writeFileSync(helperPath, helperSource, "utf8");
+
+    const helpers = Array.from({ length: 5 }, (_, index) => new Promise<void>((resolve, reject) => {
+      const child = spawn(process.execPath, [helperPath], {
+        env: {
+          ...process.env,
+          LOCK_PATH: path,
+          LOG_PATH: logPath,
+          HELPER_INDEX: String(index),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout?.on("data", chunk => { stdout += chunk.toString(); });
+      child.stderr?.on("data", chunk => { stderr += chunk.toString(); });
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Upload helper ${index} exited with code ${code} and signal ${signal}. stdout=${stdout} stderr=${stderr}`));
+      });
+    }));
+
+    await Promise.all(helpers);
+    const events = readFileSync(logPath, "utf8").trim().split("\n");
+    expect(events).toHaveLength(10);
+    for (let index = 0; index < events.length; index += 2) {
+      const [start, startedBy] = events[index].split(":");
+      const [end, endedBy] = events[index + 1].split(":");
+      expect(start).toBe("start");
+      expect(end).toBe("end");
+      expect(endedBy).toBe(startedBy);
+    }
+    expect(existsSync(path)).toBe(false);
+  });
+}, { timeout: 20_000 });
 
 test("a cancelled queued upload does not execute or corrupt the first helper's lease", async () => {
   await scratch(async path => {
