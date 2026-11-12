@@ -131,6 +131,32 @@ test("switching between Cloudflare Automatic and Zero Risk retains the saved rou
   }
 });
 
+test("DEV Full refuses the production Cloudflare gateway before inspecting the browser or writing config", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-web-dev-production-gateway-"));
+  const save = spyOn(configModule, "saveConfig").mockImplementation(() => {});
+  const inspect = spyOn(browserHost, "inspectLauncherBrowserHost").mockResolvedValue({
+    solAvailable: true, proAvailable: true, extraHighAvailable: true,
+  } as never);
+  const mocks = [save, inspect,
+    spyOn(configModule, "getConfigPath").mockReturnValue(join(root, "config.json")),
+  ];
+  try {
+    await expect(setupDevProfile({
+      mode: "full",
+      browserInteractionMode: "automatic",
+      mcpTransport: "external-cloudflare",
+      externalGateway: configModule.DEFAULT_CLOUDFLARE_GATEWAY,
+      browserHostDescriptorPath: join(root, "launcher-browser.json"),
+      acknowledgedUnofficial: true,
+    })).rejects.toThrow("production gateway");
+    expect(inspect).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  } finally {
+    for (const mock of mocks.reverse()) mock.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 for (const development of [false, true]) {
   test(`${development ? "DEV" : "production"} updates an installed launcher without a ChatGPT session`, async () => {
     const root = mkdtempSync(join(tmpdir(), "codex-web-offline-upgrade-"));

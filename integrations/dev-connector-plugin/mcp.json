@@ -1,0 +1,21 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "continuoswebintegracao-dev": {
+      "type": "streamable-http",
+      "url": "https://codex-native2-dev.continuos.com.br/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {
+              "mode": "dcr"
+            },
+            "baseScopes": ["codex.control"],
+            "defaultScopes": ["codex.control"]
+          }
+        }
+      }
+    }
+  }
+}

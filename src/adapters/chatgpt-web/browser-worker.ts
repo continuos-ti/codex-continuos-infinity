@@ -3972,8 +3972,12 @@ export class ChatGptBrowserWorker {
     capture: (checkpoint: string) => Promise<void>,
     abortSignal?: AbortSignal,
   ): Promise<Locator | null> {
-    if (this.config.appName !== CHATGPT_CONNECTOR_NAME) return null;
-    const detailUrl = "https://chatgpt.com/plugins/plugin_asdk_app_6ade222911a0819182d121f982c5a263";
+    const detailUrls: Record<string, string> = {
+      [CHATGPT_CONNECTOR_NAME]: "https://chatgpt.com/plugins/plugin_asdk_app_6ade222911a0819182d121f982c5a263",
+      [DEV_CHATGPT_CONNECTOR_NAME]: "https://chatgpt.com/plugins/plugins_6af61e4b63e08191a1cf2f59fddfff50",
+    };
+    const detailUrl = detailUrls[this.config.appName];
+    if (!detailUrl) return null;
     let stage = "plugin-detail";
     try {
       await withBrowserTurnAbort(page.goto(detailUrl, {
@@ -3984,8 +3988,20 @@ export class ChatGptBrowserWorker {
       await title.waitFor({ state: "visible", timeout: 12_000, signal: abortSignal });
       stage = "try-in-chat";
       const tryInChat = page.getByRole("button", {
-        name: /^(Testar no chat|Try in chat|Test in chat)$/i,
+        name: /^(Testar agora|Testar no chat|Test now|Try now|Try in chat|Test in chat)$/i,
       }).first();
+      // Private Codex plugins can expose only a desktop-app launch link and
+      // example prompts. Those controls do not select a ChatGPT web connector.
+      if (
+        this.config.appName === DEV_CHATGPT_CONNECTOR_NAME
+        && await page.locator('a[href^="/codex/open-app"]').first().isVisible()
+        && !await tryInChat.isVisible()
+      ) {
+        throw chatGptConnectorUnavailableError(
+          `ChatGPT displays ${JSON.stringify(this.config.appName)} as a desktop-only plugin`
+          + ` without a Try in chat action; enable the DEV connector in the web composer before retrying`,
+        );
+      }
       await tryInChat.click({ timeout: 12_000, signal: abortSignal });
       stage = "selected-composer";
       const composer = await this.activeComposer(page, 25_000, abortSignal);
@@ -4011,6 +4027,7 @@ export class ChatGptBrowserWorker {
           waitUntil: "domcontentloaded", timeout: 20_000,
         }), abortSignal);
       } catch { /* caller reports original selection error */ }
+      if (error instanceof ChatGptWebAdapterError) throw error;
       return null;
     }
   }

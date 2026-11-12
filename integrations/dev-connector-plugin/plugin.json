@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "continuoswebintegracao-dev",
+  "version": "0.1.0",
+  "description": "Isolated Codex Continuos Infinity DEV connector for testing OAuth, PKCE and read-only MCP calls.",
+  "author": {
+    "name": "Continuos I.T."
+  },
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ContinuosWebIntegracao DEV",
+        "shortDescription": "Teste isolado de OAuth e MCP",
+        "longDescription": "Private development connector for Codex Continuos Infinity. Connects only to the isolated DEV gateway and exposes inert diagnostics: dev_ping, dev_echo and dev_read_fixture.",
+        "developerName": "Continuos I.T.",
+        "category": "Developer Tools",
+        "capabilities": ["Interactive"],
+        "defaultPrompt": "Teste a conexão DEV com dev_ping e informe o serviço retornado."
+      }
+    }
+  }
+}

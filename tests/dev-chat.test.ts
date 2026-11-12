@@ -11,7 +11,13 @@ import {
   TurnBroker,
   type BrokerToolResult,
 } from "../src/adapters/chatgpt-web/turn-broker";
-import { defaultBrokerEndpoint, defaultConfig, providerConfig } from "../src/config";
+import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  defaultBrokerEndpoint,
+  defaultConfig,
+  providerConfig,
+  validateIsolatedDevExternalGateway,
+} from "../src/config";
 import { defaultDevChatModel, DEV_CHAT_TOOLS, DevChatDriver } from "../src/dev-chat/driver";
 import {
   createDevCoherentContextPayload,
@@ -457,6 +463,33 @@ test("DEV chat accepts the configured external Cloudflare transport and owns its
   } finally {
     await transport?.close();
   }
+});
+
+test("DEV external Cloudflare gateway rejects the production origin before probing or opening a broker", async () => {
+  const root = scratch("cgw-dev-rejects-production-gateway");
+  const base = defaultConfig("full");
+  const withoutTunnel = { ...base };
+  delete withoutTunnel.tunnel;
+  const config = {
+    ...withoutTunnel,
+    purpose: "dev-harness" as const,
+    mcpTransport: "external-cloudflare" as const,
+    externalGateway: DEFAULT_CLOUDFLARE_GATEWAY,
+    brokerSocketPath: defaultBrokerEndpoint(join(root, "dev")),
+  };
+  let probed = false;
+  await expect(startDevChatTransport(config, join(root, "dev"), {
+    status: async () => {
+      probed = true;
+      return { ready: true };
+    },
+  })).rejects.toThrow("production gateway");
+  expect(probed).toBe(false);
+  expect(() => validateIsolatedDevExternalGateway({
+    mcpUrl: "https://dev.example.test/mcp",
+    healthUrl: "https://health.example.test/health",
+    expectedService: "DevMcpGateway",
+  })).toThrow("share one dedicated hostname");
 });
 
 test("DEV driver uses shared browser methods and its own broker while an unrelated Responses port stays occupied", async () => {

@@ -1,7 +1,12 @@
 import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
-import { DEFAULT_CLOUDFLARE_GATEWAY, DEV_CHATGPT_CONNECTOR_NAME, loadConfig } from "../config";
+import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  DEV_CHATGPT_CONNECTOR_NAME,
+  loadConfig,
+  validateIsolatedDevExternalGateway,
+} from "../config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -38,7 +43,7 @@ Usage:
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
   codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction]
-  codex-chatgpt-web dev setup --full [--mcp-transport external-cloudflare [--external-mcp-url URL --external-health-url URL --external-service NAME]]
+  codex-chatgpt-web dev setup --full --mcp-transport external-cloudflare --external-mcp-url URL --external-health-url URL --external-service NAME
   codex-chatgpt-web dev setup --full --mcp-transport openai-tunnel --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
@@ -318,12 +323,21 @@ export async function runDevCommand(args: string[]): Promise<void> {
         config = { configured: true, mode: loaded.mode, purpose: loaded.purpose };
         if (loaded.mode === "full") {
           if (loaded.mcpTransport === "external-cloudflare") {
-            const inspected = await inspectExternalGatewayHealth(loaded.externalGateway!);
-            mcpRuntime = {
-              required: true,
-              ready: inspected.ready,
-              ...(!inspected.ready ? { detail: inspected.detail } : {}),
-            };
+            try {
+              validateIsolatedDevExternalGateway(loaded.externalGateway!);
+              const inspected = await inspectExternalGatewayHealth(loaded.externalGateway!);
+              mcpRuntime = {
+                required: true,
+                ready: inspected.ready,
+                ...(!inspected.ready ? { detail: inspected.detail } : {}),
+              };
+            } catch (error) {
+              mcpRuntime = {
+                required: true,
+                ready: false,
+                detail: error instanceof Error ? error.message : String(error),
+              };
+            }
           } else {
             const inspected = tunnelStatus(loaded);
             mcpRuntime = { required: true, ready: inspected.ok && inspected.ready, detail: inspected.detail };
@@ -362,6 +376,10 @@ export async function runDevCommand(args: string[]): Promise<void> {
     const externalService = takeOption(args, "--external-service");
     if ((externalMcpUrl || externalHealthUrl || externalService) && mcpTransport !== "external-cloudflare") {
       throw new Error("External gateway endpoints require --mcp-transport external-cloudflare");
+    }
+    if (full && mcpTransport === "external-cloudflare"
+      && (!externalMcpUrl || !externalHealthUrl || !externalService)) {
+      throw new Error("DEV external Cloudflare setup requires explicit MCP URL, health URL, and service identity on a dedicated non-production hostname");
     }
     const descriptorPath = takeOption(args, "--browser-host-descriptor") ?? paths.descriptorPath;
     const connectorNameSuffix = takeOption(args, "--connector-name-suffix");

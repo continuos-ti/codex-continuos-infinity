@@ -1332,7 +1332,7 @@ function McpSurface({
     {
       title: copy.mcpStepThree,
       body: cloudflareAutomatic
-        ? `In ChatGPT, authorize ${snapshot.connectorNames.automatic} using the external gateway ${externalGateway.mcpUrl}. The gateway identifies itself as ${externalGateway.expectedService}.`
+        ? `In ChatGPT, authorize ${snapshot.connectorNames.automatic} using the dedicated DEV gateway ${externalGateway.mcpUrl}. The gateway identifies itself as ${externalGateway.expectedService}. DEV must use a hostname separate from production; the production codex-native2.continuos.com.br gateway is rejected.`
         : manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
     },
   ], [copy, manualInteraction, cloudflareAutomatic, externalGateway, snapshot.connectorNames.automatic]);

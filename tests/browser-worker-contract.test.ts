@@ -397,6 +397,70 @@ test("connected ContinuosWebIntegracao detail route selects the connector throug
   ]);
 });
 
+test("ContinuosWebIntegracao DEV detail route can select a web-enabled plugin", async () => {
+  const events: string[] = [];
+  const selectedComposer = { kind: "dev-composer" };
+  let buttonName: RegExp | undefined;
+  const page = {
+    goto: async (url: string) => { events.push("navigate:" + url); },
+    getByText: (name: unknown) => ({
+      first: () => ({
+        waitFor: async () => { events.push("title:" + String(name)); },
+      }),
+    }),
+    getByRole: (_role: string, options: { name: RegExp }) => {
+      buttonName = options.name;
+      return {
+        first: () => ({
+          isVisible: async () => true,
+          click: async () => { events.push("test-now"); },
+        }),
+      };
+    },
+    locator: () => ({ first: () => ({ isVisible: async () => false }) }),
+  };
+  const worker = ChatGptBrowserWorker.prototype as unknown as {
+    selectConnectorFromDirectory(page: unknown, capture: (label: string) => Promise<void>): Promise<unknown>;
+  };
+  const result = await worker.selectConnectorFromDirectory.call({
+    config: { appName: DEV_CHATGPT_CONNECTOR_NAME, useSavedChats: true },
+    activeComposer: async () => selectedComposer,
+    connectorIsSelected: async () => true,
+    attachedPromptText: async () => "",
+  }, page, async label => { events.push("capture:" + label); });
+  expect(result).toBe(selectedComposer);
+  expect(buttonName?.test("Testar agora")).toBe(true);
+  expect(events).toEqual([
+    "navigate:https://chatgpt.com/plugins/plugins_6af61e4b63e08191a1cf2f59fddfff50",
+    "title:ContinuosWebIntegracao DEV",
+    "test-now",
+    "capture:connector-selected-from-plugin-directory",
+  ]);
+});
+
+test("DEV desktop-only plugin detail cannot be mistaken for ChatGPT web connector selection", async () => {
+  const events: string[] = [];
+  const page = {
+    goto: async (url: string) => { events.push("navigate:" + url); },
+    getByText: () => ({ first: () => ({ waitFor: async () => {} }) }),
+    getByRole: () => ({ first: () => ({
+      isVisible: async () => false,
+      click: async () => { throw new Error("desktop-only button must not be clicked"); },
+    }) }),
+    locator: () => ({ first: () => ({ isVisible: async () => true }) }),
+  };
+  const worker = ChatGptBrowserWorker.prototype as unknown as {
+    selectConnectorFromDirectory(page: unknown, capture: (label: string) => Promise<void>): Promise<unknown>;
+  };
+  await expect(worker.selectConnectorFromDirectory.call({
+    config: { appName: DEV_CHATGPT_CONNECTOR_NAME, useSavedChats: true },
+  }, page, async label => { events.push("capture:" + label); })).rejects.toThrow(
+    'ChatGPT displays "ContinuosWebIntegracao DEV" as a desktop-only plugin',
+  );
+  expect(events).toContain("capture:connector-directory-failed-try-in-chat");
+  expect(events.filter(event => event.startsWith("navigate:"))).toHaveLength(2);
+});
+
 test("browser stage timeout aborts late page acquisition", async () => {
   let acquisitionAborted = false;
   const runStage = (ChatGptBrowserWorker.prototype as unknown as {

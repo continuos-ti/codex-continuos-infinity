@@ -14,6 +14,7 @@ import {
   saveConfig,
   tunnelConfigForInteractionMode,
   validateExternalGateway,
+  validateIsolatedDevExternalGateway,
 } from "./config";
 import {
   browserLoginStateExists,
@@ -745,6 +746,9 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     throw new Error("DEV profile setup requires the desktop launcher browser host");
   }
   config.purpose = DEV_CONFIG_PURPOSE;
+  if (config.mode === "full" && config.mcpTransport === "external-cloudflare") {
+    config.externalGateway = validateIsolatedDevExternalGateway(config.externalGateway!);
+  }
   if (config.browserInteractionMode === "automatic") {
     const capabilities = await inspectLauncherCapabilities(
       config,

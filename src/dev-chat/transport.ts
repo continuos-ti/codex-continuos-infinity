@@ -1,5 +1,5 @@
 import { TurnBroker } from "../adapters/chatgpt-web/turn-broker";
-import type { AppConfig } from "../config";
+import { validateIsolatedDevExternalGateway, type AppConfig } from "../config";
 import { inspectExternalGatewayHealth } from "../doctor";
 import { tunnelStatus } from "../tunnel";
 import { DEV_CONFIG_PURPOSE } from "./constants";
@@ -31,6 +31,7 @@ function assertDevTransportConfig(config: AppConfig): void {
     if (!config.externalGateway) {
       throw new Error("Repository DEV chat requires an external Cloudflare gateway configuration");
     }
+    validateIsolatedDevExternalGateway(config.externalGateway);
   } else if (!config.tunnel) {
     throw new Error("Repository DEV chat requires completed Full harness tunnel credentials");
   }

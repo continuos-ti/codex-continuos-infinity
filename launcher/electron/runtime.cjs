@@ -29,6 +29,22 @@ const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const PASSKEY_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_PASSKEY_STATE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PASSKEY_MARKER_FILE_BYTES = 64 * 1024;
+// Keep aligned with DEFAULT_CLOUDFLARE_GATEWAY in src/config.ts. DEV may not share prod's origin.
+const PRODUCTION_CLOUDFLARE_GATEWAY_ORIGIN = "https://codex-native2.continuos.com.br";
+
+function isIsolatedDevCloudflareGateway(gateway) {
+  try {
+    const mcp = new URL(gateway?.mcpUrl);
+    const health = new URL(gateway?.healthUrl);
+    return mcp.protocol === "https:" && health.protocol === "https:"
+      && mcp.origin !== PRODUCTION_CLOUDFLARE_GATEWAY_ORIGIN
+      && health.origin !== PRODUCTION_CLOUDFLARE_GATEWAY_ORIGIN
+      && mcp.origin === health.origin;
+  } catch {
+    return false;
+  }
+}
+
 function collect(stream, chunks, onLine, onError) {
   let buffered = "";
   let bytes = 0;
@@ -831,16 +847,25 @@ class RuntimeHost {
     const externalCloudflare = config?.mode === "full" && config?.mcpTransport === "external-cloudflare";
     const fullTunnel = config?.mode === "full" && !externalCloudflare && config?.tunnel;
     const gateway = config?.externalGateway;
-    const gatewayConfigured = externalCloudflare && config?.browserInteractionMode === "automatic"
+    const gatewayPresent = externalCloudflare && config?.browserInteractionMode === "automatic"
       && ["mcpUrl", "healthUrl", "expectedService"].every(key =>
         typeof gateway?.[key] === "string" && gateway[key].trim().length > 0);
+    const gatewayIsolated = gatewayPresent && isIsolatedDevCloudflareGateway(gateway);
+    const gatewayConfigured = gatewayPresent && gatewayIsolated;
     if (externalCloudflare) {
       checks.push({
         id: "dev-external-cloudflare-configuration",
-        status: gatewayConfigured ? "ok" : "error",
-        message: gatewayConfigured
+        status: gatewayPresent ? "ok" : "error",
+        message: gatewayPresent
           ? "DEV external Cloudflare gateway is configured without OpenAI tunnel credentials"
           : "DEV external Cloudflare gateway configuration is incomplete",
+      });
+      checks.push({
+        id: "dev-external-cloudflare-isolation",
+        status: gatewayIsolated ? "ok" : "error",
+        message: gatewayIsolated
+          ? "DEV external Cloudflare gateway uses a dedicated non-production hostname"
+          : "DEV external Cloudflare gateway must use a dedicated hostname; production gateway is forbidden",
       });
     } else {
       const tunnelConfigured = fullTunnel && typeof fullTunnel.runtimeKeyFile === "string"

@@ -44,6 +44,23 @@ export function validateExternalGateway(value: ExternalGatewayConfig): ExternalG
   }
   return value;
 }
+
+/** DEV must never authenticate a connector against the production Cloudflare gateway. */
+export function validateIsolatedDevExternalGateway(value: ExternalGatewayConfig): ExternalGatewayConfig {
+  const gateway = validateExternalGateway(value);
+  const mcp = new URL(gateway.mcpUrl);
+  const health = new URL(gateway.healthUrl);
+  const production = new URL(DEFAULT_CLOUDFLARE_GATEWAY.mcpUrl);
+  if (mcp.origin === production.origin || health.origin === production.origin) {
+    throw new Error(
+      `DEV external Cloudflare gateway must use a dedicated hostname; production gateway ${production.hostname} is forbidden`,
+    );
+  }
+  if (mcp.origin !== health.origin) {
+    throw new Error("DEV external Cloudflare MCP and health endpoints must share one dedicated hostname");
+  }
+  return gateway;
+}
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**

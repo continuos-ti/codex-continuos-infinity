@@ -433,6 +433,7 @@ test("DEV doctor checks external Cloudflare health without requiring OpenAI tunn
   assert.deepEqual(report.checks.map(check => [check.id, check.status]), [
     ["dev-profile", "ok"],
     ["dev-external-cloudflare-configuration", "ok"],
+    ["dev-external-cloudflare-isolation", "ok"],
     ["dev-external-cloudflare-health", "ok"],
     ["responses-listener", "ok"],
   ]);
@@ -469,6 +470,24 @@ test("DEV external Cloudflare doctor fails closed on incomplete gateway config",
   const report = await fixture.host.devDoctor();
   assert.equal(report.ok, false);
   assert.equal(report.checks.find(check => check.id === "dev-external-cloudflare-configuration").status, "error");
+  assert.equal(report.checks.some(check => check.id === "dev-external-cloudflare-health"), false);
+});
+
+test("DEV doctor rejects the production Cloudflare gateway before probing it", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+      healthUrl: "https://codex-native2.continuos.com.br/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+  });
+  fixture.host.supervisor.readTunnelHealth = async () => {
+    assert.fail("Production gateway must never be probed from the DEV profile");
+  };
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.find(check => check.id === "dev-external-cloudflare-isolation").status, "error");
   assert.equal(report.checks.some(check => check.id === "dev-external-cloudflare-health"), false);
 });
 
