@@ -329,3 +329,11 @@ Na interface privada do plugin, `Testar agora` abriu uma conversa Work com `Cont
 Uma leitura SQLite somente leitura e limitada a metadados mostrou dois clientes DCR, um cliente `ContinuosWebIntegracao DEV smoke` com consentimento de teste e um cliente `ChatGPT` sem consentimento ou tokens próprios. O pedido de autorização do cliente ChatGPT estava expirado. Nenhum valor de chave, segredo, authorization code, access token ou refresh token foi lido. O gateway DEV segue saudável, mas o catálogo autenticado ainda não foi entregue ao ChatGPT e nenhuma chamada MCP real `dev_ping` foi comprovada. A conexão OAuth do cliente ChatGPT e a homologação Infinity Full permanecem pendentes.
 
 Os cinco jobs da CI do PR e os cinco jobs da CI de push do commit documental `c2dbeb6` concluíram com sucesso em Ubuntu, Windows e macOS, além de `actionlint` e `secret-scan`.
+
+### OAuth iniciado pelo app no ChatGPT Web — 12/11/2026
+
+O fluxo foi iniciado pela página do app no ChatGPT Web, em Plugins, pesquisando `ContinuosWebIntegracao DEV Web` e abrindo o aplicativo listado sob `ContinuosWebIntegracao`. O botão `Conectar` abriu a página `Authorize isolated DEV connector` com entrada manual da chave DEV. O caminho de conexão da página de detalhes no ChatGPT Desktop continuou desabilitado.
+
+O gateway registrou `dev_authorization_created` às **19:24:13**. A requisição pendente está associada ao cliente ChatGPT, ao recurso `codex-native2-dev.continuos.com.br`, ao redirect host `chatgpt.com` e ao escopo `codex.control`. Na leitura de estado, a requisição tinha zero tentativas e cerca de 19 minutos restantes. Nenhuma chave foi lida ou inserida por automação. A página de pareamento permanece aberta para entrada manual pelo usuário.
+
+O modal `Nenhuma ferramenta disponível para este app` apareceu antes da autorização. A documentação oficial do ChatGPT informa que, em apps OAuth, a autorização deve ser concluída antes de aguardar a varredura das ferramentas. A chamada real `dev_ping` continua pendente até concluir esse pareamento e a varredura do catálogo.
