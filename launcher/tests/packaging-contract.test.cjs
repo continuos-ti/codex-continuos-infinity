@@ -227,7 +227,7 @@ printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/resources/app.asar.unpacked/asset
 test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   const ci = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8");
   const release = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
-  assert.match(ci, /macos-26, ubuntu-24\.04, windows-latest/);
+  assert.match(ci, /macos-15-intel, ubuntu-24\.04, windows-latest/);
   assert.match(ci, /bun run app:package/);
   assert.match(ci, /bun run app:smoke/);
   assert.match(ci, /bun run --cwd launcher smoke:package:uninstall/);
