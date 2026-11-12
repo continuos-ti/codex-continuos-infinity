@@ -12,6 +12,12 @@ const launcherManifest = JSON.parse(
 );
 const expectedVersion = launcherManifest.version;
 const portable = process.argv.includes("--portable");
+const verifyUninstall = process.argv.includes("--verify-uninstall");
+if (verifyUninstall && (portable || process.platform !== "win32"
+  || process.env.CI !== "true" || process.env.GITHUB_ACTIONS !== "true"
+  || process.env.RUNNER_OS !== "Windows")) {
+  throw new Error("NSIS uninstall smoke requires an explicit disposable Windows GitHub Actions runner");
+}
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-package-smoke-"));
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
@@ -84,6 +90,39 @@ function windowsInstallLocation() {
   return match[1];
 }
 
+function windowsInstallerRegistrationExists() {
+  const registryKey = `HKCU\\Software\\${launcherManifest.build.nsis.guid}`;
+  const result = spawnSync("reg.exe", ["query", registryKey], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error(`Unable to check Windows installer registration: ${result.stderr?.trim() || result.status}`);
+}
+
+function verifyWindowsUninstall(installLocation, executable) {
+  const uninstallers = fs.readdirSync(installLocation)
+    .filter(name => /^Uninstall .+\.exe$/i.test(name));
+  if (uninstallers.length !== 1) {
+    throw new Error(`Expected one NSIS uninstaller in ${installLocation}; found ${uninstallers.length}`);
+  }
+  run(path.join(installLocation, uninstallers[0]), ["/S"], { timeout: 120_000 });
+
+  // NSIS may spawn a temporary uninstaller process after its initial process exits.
+  const deadline = Date.now() + 45_000;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    if (!windowsInstallerRegistrationExists() && !fs.existsSync(executable)) {
+      process.stdout.write(`PACKAGED_LAUNCHER_UNINSTALL_SMOKE_OK ${process.platform}/${process.arch}\n`);
+      return;
+    }
+    Atomics.wait(pause, 0, 0, 250);
+  }
+  throw new Error("NSIS uninstall did not remove the registered install and executable within 45 seconds");
+}
+
 function artifact(pattern, label) {
   const matches = fs.readdirSync(artifactsDirectory)
     .filter((name) => pattern.test(name))
@@ -125,6 +164,7 @@ function smokeEnvironment() {
 try {
   verifyArtifactChecksums();
   let executable;
+  let installedLocation;
   let command;
   let args;
   const env = smokeEnvironment();
@@ -155,8 +195,12 @@ try {
     if (portable) {
       executable = extractPortableWindowsLauncher(installer);
     } else {
+      if (verifyUninstall && windowsInstallerRegistrationExists()) {
+        throw new Error("Refusing NSIS uninstall smoke because this runner already has an Infinity installation");
+      }
       run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
-      executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
+      installedLocation = windowsInstallLocation();
+      executable = path.join(installedLocation, `${launcherManifest.build.productName}.exe`);
     }
     command = executable;
     args = ["--launcher-smoke-test"];
@@ -199,6 +243,7 @@ try {
   }
   process.stdout.write(`${portable && process.platform === "win32"
     ? "PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK" : "PACKAGED_LAUNCHER_SMOKE_OK"} ${process.platform}/${process.arch}\n`);
+  if (verifyUninstall) verifyWindowsUninstall(installedLocation, executable);
 } finally {
   try {
     if (macAppBundle) {

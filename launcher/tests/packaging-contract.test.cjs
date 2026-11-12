@@ -117,6 +117,21 @@ test("release installers resolve checksummed native launcher assets", () => {
   const packageSmoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");
   assert.match(packageSmoke, /run\(installer, \["\/S", "\/currentuser"\]/);
   assert.match(packageSmoke, /reg\.exe[\s\S]*InstallLocation/);
+  assert.equal(manifest.scripts["smoke:package:uninstall"], "bun run scripts/smoke-package.cjs --verify-uninstall");
+  assert.match(packageSmoke, /process\.env\.GITHUB_ACTIONS !== "true"/);
+  assert.match(packageSmoke, /Refusing NSIS uninstall smoke because this runner already has an Infinity installation/);
+  assert.match(packageSmoke, /PACKAGED_LAUNCHER_UNINSTALL_SMOKE_OK/);
+});
+
+test("NSIS uninstall smoke refuses execution outside an explicit disposable CI runner", () => {
+  const result = spawnSync(process.execPath,
+    [path.join(launcherRoot, "scripts", "smoke-package.cjs"), "--verify-uninstall"], {
+      encoding: "utf8",
+      env: { ...process.env, CI: "false", GITHUB_ACTIONS: "false", RUNNER_OS: "Windows" },
+      timeout: 10_000,
+    });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /NSIS uninstall smoke requires an explicit disposable Windows GitHub Actions runner/);
 });
 
 test("packaged launcher owns a detached checksummed updater for every release platform", () => {
@@ -215,6 +230,7 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(ci, /macos-15, ubuntu-24\.04, windows-latest/);
   assert.match(ci, /bun run app:package/);
   assert.match(ci, /bun run app:smoke/);
+  assert.match(ci, /bun run --cwd launcher smoke:package:uninstall/);
   assert.match(ci, /prepare-linux-libnotify\.sh/);
   assert.match(ci, /prepare-linux-appimage-tools\.cjs/);
   assert.match(ci, /archlinux:base/);
