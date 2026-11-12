@@ -31,3 +31,19 @@ A ordem desejada de supervisão é Windows Local → Cloudflare/gateway → Code
 Windows Local e Agent Desktop são extensões opcionais quando conectados e autorizados. As contagens de ferramentas variam por versão. A configuração deve aceitar outras integrações MCP, como n8n, Blender, OrcaSlicer e VPS, sem incluir dados de suas contas no código-fonte.
 
 Os testes incluem launcher/tests/cloudflare-connector.test.cjs, tests/continuos-connector.test.ts, tests/long-native-tool-polling*.test.ts e launcher/tests/runtime-supervisor.test.cjs. A validação autenticada do gateway real ainda requer staging.
+
+## Identidade durável de operações Windows Local
+
+O adaptador reconhece duas extensões opcionais no JSON Schema MCP. `x-codex-operation-id=true` solicita a injeção do `callId` do broker na propriedade `operation_id`. `x-codex-provider-epoch` publica a época do ledger do provedor e solicita sua injeção na propriedade `provider_epoch`. A identidade do broker substitui qualquer `operation_id` fornecido pelo modelo.
+
+A integração em `integrations/windows-local/` adiciona esse contrato a `windows_command`. O ledger SQLite fica em `%LOCALAPPDATA%\WindowsLocalRemote` ou no caminho definido por `WINDOWS_LOCAL_REMOTE_STATE`. Ele conserva o identificador, o hash SHA-256 do comando e do CWD, o PID, o horário de criação do processo e os marcadores duráveis de início e conclusão. O texto bruto do comando e o CWD não entram no ledger. As saídas continuam nos arquivos temporários usados pelo Windows Local.
+
+O mesmo ledger conserva os metadados do `screenshot_id` ativo, incluindo horário de captura, origem e escala dos monitores, dimensões e janela em primeiro plano. Os pixels da captura não são persistidos. Após reinício do servidor, a captura pode ser revalidada dentro da janela original de 60 segundos e com a mesma janela em primeiro plano. Uma nova captura, mudança de foco ou ação de entrada invalida o ID anterior.
+
+`windows_command_result` pode consultar o processo após reinício do servidor. `running` exige correspondência do PID e do horário de criação. `completed` exige código de saída registrado. `unknown`, `provider_changed`, `epoch_required` e `not_found` não autorizam repetição. A ausência de registro é explicitamente não conclusiva. O retorno disponibiliza até 64 KB finais de cada saída quando os arquivos temporários ainda existem.
+
+O contrato acompanha o processo PowerShell iniciado pelo Windows Local. Processos destacados e efeitos de serviços externos exigem consulta específica ao recurso afetado. A reconciliação do ledger não altera `externalEffectsReconciled=false` no broker e não libera retomada automática.
+
+O script `integrations/windows-local/apply-durable-command-jobs.ps1` executa dry-run por padrão, compila uma cópia temporária e preserva o serviço em execução. `-Apply` cria backup com timestamp e altera somente os arquivos-fonte do Windows Local. `-Rollback` restaura o backup mais recente. O script não reinicia o serviço.
+
+Em 12/11/2026, o dry-run foi aprovado contra `H:\Projetos\windows-local` e os caminhos `-Apply` e `-Rollback` passaram em uma cópia descartável do provedor. A fonte real em `H:\Projetos\windows-local` permaneceu inalterada para preservar chamadas ativas. A integração só passa a valer após instalação controlada e reinício do provedor. A homologação OAuth/PKCE e a reconciliação de efeitos externos de outros provedores MCP continuam pendentes.

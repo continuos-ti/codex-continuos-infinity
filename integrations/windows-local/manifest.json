@@ -1,0 +1,80 @@
+{
+    "schemaVersion":  1,
+    "integration":  "windows-local-durable-identity",
+    "version":  "1.0.0",
+    "generatedAt":  "2026-11-12",
+    "provider":  "Windows Local",
+    "tools":  [
+                  "windows_screenshot",
+                  "windows_focus",
+                  "windows_click",
+                  "windows_type",
+                  "windows_key",
+                  "windows_scroll",
+                  "windows_drag",
+                  "windows_command",
+                  "windows_command_result"
+              ],
+    "schemaExtensions":  {
+                             "operationId":  "x-codex-operation-id",
+                             "providerEpoch":  "x-codex-provider-epoch"
+                         },
+    "state":  {
+                  "database":  "%LOCALAPPDATA%\\WindowsLocalRemote\\command-jobs.sqlite3",
+                  "override":  "WINDOWS_LOCAL_REMOTE_STATE",
+                  "screenshotIdPersisted":  true,
+                  "jobIdPersisted":  true,
+                  "providerEpochPersisted":  true,
+                  "screenshotPixelsPersisted":  false,
+                  "screenshotTtlSeconds":  60,
+                  "outputTailBytes":  64000
+              },
+    "replayPolicy":  "No automatic replay. unknown, not_found, epoch_required and provider_changed never authorize replay.",
+    "effectScope":  "The tracked PowerShell wrapper process. Detached processes and external services require resource-specific reconciliation.",
+    "installState":  "staged-not-applied-to-real-provider",
+    "validation":  {
+                       "pythonTests":  21,
+                       "adapterTests":  11,
+                       "dryRunAgainstRealProviderSource":  "passed",
+                       "fixtureApplyAndRollback":  "passed",
+                       "realProviderRestart":  "pending"
+                   },
+    "files":  [
+                  {
+                      "path":  "durable_command_jobs.py",
+                      "role":  "provider-ledger",
+                      "packaged":  true,
+                      "sha256":  "6ea521d06d46f73ed81d38733f27ff53792b16d58860eeaa8ccbeee4f4af8d23"
+                  },
+                  {
+                      "path":  "apply-durable-command-jobs.ps1",
+                      "role":  "installer-and-rollback",
+                      "packaged":  true,
+                      "sha256":  "3e33ff9ffed1b922e6e3cc36d9901e718f8df6807124bb84d1b6339d00725743"
+                  },
+                  {
+                      "path":  "README.md",
+                      "role":  "integration-documentation",
+                      "packaged":  true,
+                      "sha256":  "d069b82633296bbc1a035429b9d5b5925dcb35ef950147dda7f471891af881c7"
+                  },
+                  {
+                      "path":  "tests/test_durable_command_jobs.py",
+                      "role":  "provider-tests",
+                      "packaged":  false,
+                      "sha256":  "a83432ab83d9c8888fbef24e05ca57d84de2ac57a0b6d68ba89b4f715ff60ee2"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
+                      "role":  "bridge-identity-adapter",
+                      "packaged":  false,
+                      "sha256":  "b82019547a76a15e084880c55a9deefd87eb7f62499404e86dfd83bb10094e3e"
+                  },
+                  {
+                      "path":  "../../tests/broker-operation-identity.test.ts",
+                      "role":  "bridge-identity-tests",
+                      "packaged":  false,
+                      "sha256":  "2989ec53db0c7707a52065dda6e7e9c60d2a52a292e441fafbaff35b70a9d73d"
+                  }
+              ]
+}

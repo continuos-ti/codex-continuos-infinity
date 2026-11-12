@@ -18,5 +18,6 @@ A comparação normalizada por LF identificou 38 diferenças de conteúdo na tag
 | Interface e traduções | launcher/src/i18n.ts, languages.json, App.tsx | Localização base upstream combinada com nome do fork |
 | Marca e canal independente | brand.cjs, profile.cjs, update.cjs, manifesto, ícones e smoke | Exclusivo do Infinity |
 | Sessões e anexos persistentes | launcher-helper-client.ts, chatgpt-session.ts, testes IPC e anexos | Funcionalidades upstream recentes preservadas |
+| Identidade durável Windows Local | broker-operation-identity.ts, integrations/windows-local/durable_command_jobs.py, instalador e testes Python | Persistência de screenshot_id, job_id, época do provedor e consulta de processo após reinício implementadas e testadas em cópia isolada. Instalação na fonte Windows Local real aguarda janela sem chamadas ativas. |
 
 A documentação técnica anterior permanece nos relatórios de E:/Projetos/codex-native2-cloudflare-lab. Esse laboratório e os logs privados não são incorporados ao repositório público.

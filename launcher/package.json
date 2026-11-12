@@ -69,6 +69,16 @@
       {
         "from": "build/runtime",
         "to": "runtime"
+      },
+      {
+        "from": "../integrations/windows-local",
+        "to": "integrations/windows-local",
+        "filter": [
+          "README.md",
+          "durable_command_jobs.py",
+          "apply-durable-command-jobs.ps1",
+          "manifest.json"
+        ]
       }
     ],
     "mac": {

@@ -1,5 +1,9 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Integridade reproduzível do manifesto Windows Local — 12/11/2026
+
+A suíte Python passou com **21 testes**, incluindo a verificação SHA-256 de todas as seis entradas do manifesto de integração. O checkout dos arquivos cobertos fixa LF em `.gitattributes`, inclusive com `core.autocrlf=true` no Windows, para preservar os hashes entre plataformas. O dry-run do instalador Windows Local passou sem modificar a fonte real nem reiniciar serviços.
+
 Estado observado em 12/11/2026. A branch `feature/continuos-infinity-native` utiliza a versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18, commit `32fd3436eb6ed94898b987a3c369003bb6fb8d54`. O workflow `43154582839` do commit `5ec32d72d260ced17276ce563b1f43bf62a0ef4a` concluiu com cinco jobs aprovados, incluindo instalação e desinstalação NSIS em runner Windows descartável. O transporte Cloudflare configurável foi publicado no commit `b76511160838aa405a93a3cea9fc012a883afb60` e empacotado em worktree isolado. A homologação E2E autenticada permanece pendente.
 
 ### Transporte Cloudflare configurável — verificação de 12/11/2026
@@ -16,8 +20,8 @@ O checkout de desenvolvimento adicionou a seleção explícita `mcpTransport=ext
 | 4 | README próprio | `README.md` e READMEs localizados | **Disponível**. |
 | 5 | Arquitetura | `docs/infinity/ARCHITECTURE.md` | **Disponível**. |
 | 6 | Matriz das personalizações | `docs/infinity/CUSTOMIZATION_MATRIX.md` | **Disponível**. A aceitação funcional depende das verificações externas listadas abaixo. |
-| 7 | Cloudflare e Windows Local | `docs/infinity/INTEGRATIONS.md` e código de integração | **Parcial**. O ChatGPT autenticado do DEV apresenta e permite selecionar `@ContinuosWebIntegracao`. Uma consulta manual de inventário retornou ausência do `turn_token` nativo e zero ferramentas. Faltam OAuth, catálogo e chamada MCP autenticada iniciada pelo Codex no DEV. |
-| 8 | Supervisor por eventos | `docs/infinity/SUPERVISOR.md`, journal, broker e testes de recuperação | **Parcial**. O snapshot autenticado é consultado para diagnóstico no bloqueio de retomada após crash. Faltam reconciliação independente de efeitos mutáveis, novo vínculo nativo e fluxo produtivo de retomada. |
+| 7 | Cloudflare e Windows Local | `docs/infinity/INTEGRATIONS.md`, `integrations/windows-local/` e código de integração | **Parcial**. A persistência de `screenshot_id`, `job_id` e época do provedor passou em 20 testes Python. Dry-run contra a fonte Windows Local e apply/rollback em cópia descartável passaram. A fonte real permaneceu inalterada para preservar chamadas ativas. OAuth, catálogo e chamada MCP autenticada iniciada pelo Codex no DEV continuam pendentes. |
+| 8 | Supervisor por eventos | `docs/infinity/SUPERVISOR.md`, journal, broker e testes de recuperação | **Parcial**. O snapshot autenticado continua bloqueando retomada após crash. O provedor Windows Local agora tem código de consulta durável do processo e da época, ainda não instalado. Faltam reconciliação independente de efeitos mutáveis, novo vínculo nativo e fluxo produtivo de retomada. |
 | 9 | CWD confiável | `docs/infinity/TRUSTED_CWD.md` e testes de preflight | **Parcial**. Testes automatizados disponíveis. Falta homologação em sessão real com retomada após reinício. |
 | 10 | Instalação e configuração | `docs/infinity/INSTALLATION.md` e `EXAMPLE_CONFIG.md` | **Disponível**. Harness DEV isolado inicializado, navegador autenticado e smoke real aprovados. A validação funcional do pacote NSIS no staging permanece pendente. |
 | 11 | Migração | `docs/infinity/MIGRATION_ROLLBACK.md` | **Disponível**. Migração produtiva ainda não executada. |
@@ -137,3 +141,17 @@ O perfil DEV consultado em 12/11 permanece com launcher ativo, modo `browser-onl
 O commit `b76511160838aa405a93a3cea9fc012a883afb60` está publicado na branch de desenvolvimento e no PR #1. O upstream `main` continua no commit `32fd3436eb6ed94898b987a3c369003bb6fb8d54`. O worktree isolado `E:/Projetos/codex-continuos-infinity-build-b765111` instalou as dependências por lockfile, concluiu `bun run app:package`, `bun run app:smoke` com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64` e validou o NSIS com `7z t` (`Everything is Ok`).
 
 O instalador Windows x64 tem **153.683.078 bytes**, SHA-256 **`70b7d8a58d95170465eab68eb481bf3f79385a9cdf50db04d23991243cab1975`**. O blockmap tem **161.196 bytes**, SHA-256 **`55b30bdcca71cb023bbfd2def34ddff536d0ad8a94ac3f158871e3d91d4773f1`**. Ambos coincidem com `launcher/artifacts/checksums-local.txt` desse worktree. `Get-AuthenticodeSignature` retornou **`NotSigned`**. O GitHub Actions `43170733150` concluiu com **cinco jobs aprovados**, incluindo `actionlint`, `secret-scan` e `verify` em Windows, macOS e Ubuntu. Não há comprovação de homologação MCP/OAuth do fork no DEV Full, reconciliação externa após crash, novo vínculo nativo de proprietário, anexos concorrentes nem rollback funcional de staging.
+
+### Identidade durável de comandos Windows Local (12/11/2026)
+
+O adaptador agora injeta o `callId` do broker em `operation_id` para ferramentas que anunciam `x-codex-operation-id=true`. Também injeta `provider_epoch` quando o schema publica `x-codex-provider-epoch`. A implementação Windows Local usa SQLite, hash dos argumentos, PID e horário de criação do processo, marcador durável de início e marcador de código de saída. Uma repetição do mesmo ID com argumentos divergentes é recusada.
+
+Os testes `tests/broker-operation-identity.test.ts` passaram com **11 aprovados e zero falhas**. A suíte `integrations/windows-local/tests/test_durable_command_jobs.py` passou com **20 aprovados e zero falhas**, incluindo persistência do ID de captura, execução real do PowerShell, retorno nativo não zero, comando `exit`, erro terminante e reanexação a um processo ainda ativo depois de reconstruir o leitor do ledger. `bun run typecheck` passou. O dry-run do instalador passou contra `H:\Projetos\windows-local`. Apply e rollback também passaram em uma cópia descartável do `windows_control.py`.
+
+A fonte real `H:\Projetos\windows-local` permaneceu inalterada e o serviço não foi reiniciado, pois havia chamadas Codex ativas. O contrato ainda precisa ser instalado em janela controlada e validado com `windows_command` real após reinício do servidor. A consulta de processo não prova efeitos de processos destacados ou serviços externos. O estado ausente continua não conclusivo e não autoriza replay. A reconciliação independente de efeitos MCP e o novo vínculo nativo Codex após crash permanecem pendentes.
+
+### Verificação local do HEAD (12/11/2026)
+
+`bun run verify` terminou com código **0**. A suíte principal executou **1.398 testes em 110 arquivos**, com **1.285 aprovados, 113 ignorados e zero falhas**, totalizando 10.649 chamadas a `expect()`. Os testes do launcher executaram **449 casos**, com **445 aprovados, quatro ignorados e zero falhas**. Os typechecks, o build Vite e o smoke do runtime relocável passaram. O build Vite manteve o aviso existente de um chunk JavaScript acima de 500 KB.
+
+As validações adicionais passaram com **11 testes do adaptador**, **20 testes Python Windows Local**, dry-run contra a fonte real e apply/rollback em cópia descartável. A instalação do provider real, o reinício controlado e o E2E OAuth/PKCE continuam fora desta validação local.

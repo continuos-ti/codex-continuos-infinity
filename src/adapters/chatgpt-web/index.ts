@@ -17,7 +17,7 @@ import {
   type LauncherManualTurnOwner,
   type LauncherManualTurnStart,
 } from "../../launcher-browser-host";
-import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexToolResultMessage, type CodexUsage } from "../../types";
+import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexTool, type CodexToolResultMessage, type CodexUsage } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
 import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
@@ -31,6 +31,7 @@ import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
+import { attachBrokerOperationId } from "./broker-operation-identity";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnRoundKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
 import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -256,14 +257,20 @@ function brokerResult(message: CodexToolResultMessage): BrokerToolResult {
   };
 }
 
-function emitToolBatch(requests: BrokerToolRequest[], usage: CodexUsage, emit: (event: AdapterEvent) => void): void {
+function emitToolBatch(
+  requests: BrokerToolRequest[],
+  tools: CodexTool[],
+  usage: CodexUsage,
+  emit: (event: AdapterEvent) => void,
+): void {
   for (const request of requests) {
-    emit({ type: "tool_call_start", id: request.callId, name: request.wireName });
+    const operationRequest = attachBrokerOperationId(request, tools);
+    emit({ type: "tool_call_start", id: operationRequest.callId, name: operationRequest.wireName });
     emit({
       type: "tool_call_delta",
-      arguments: request.freeform
-        ? JSON.stringify({ input: request.input ?? "" })
-        : JSON.stringify(request.arguments ?? {}),
+      arguments: operationRequest.freeform
+        ? JSON.stringify({ input: operationRequest.input ?? "" })
+        : JSON.stringify(operationRequest.arguments ?? {}),
     });
     emit({ type: "tool_call_end" });
   }
@@ -1463,6 +1470,7 @@ export function createChatGptWebAdapter(
                   if (replay.length === 0) emitRoundEvents(session.eventsForOutstandingReplay());
                   emitRoundBatch(buffer => emitToolBatch(
                     outstanding,
+                    parsed.context.tools ?? [],
                     estimateChatGptWebUsage(currentUsageInput(parsed), { reasoning, toolRequests: outstanding }, turnCapabilities, experimentalBiggerContext, experimentalSkillAttachments, provider.chatgptWeb?.appName),
                     buffer,
                   ));
@@ -1609,6 +1617,7 @@ export function createChatGptWebAdapter(
                 session.setOutstanding(next.requests, roundReasoning, session.roundEvents(roundKey));
                 emitRoundBatch(buffer => emitToolBatch(
                   next.requests,
+                  parsed.context.tools ?? [],
                   estimateChatGptWebUsage(currentUsageInput(parsed), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities, experimentalBiggerContext, experimentalSkillAttachments, provider.chatgptWeb?.appName),
                   buffer,
                 ));

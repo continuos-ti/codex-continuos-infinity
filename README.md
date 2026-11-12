@@ -14,6 +14,8 @@ O supervisor interno reconhece falhas de resposta final após envios aceitos em 
 
 Instale Bun 1.4.0 e as dependências do projeto. Execute `bun install`, `bun run typecheck`, `bun test ./tests` e `bun run app:package`. Antes da instalação real, confira o SHA-256 publicado. Consulte `docs/infinity/INSTALLATION.md`, `docs/infinity/ARCHITECTURE.md`, `docs/infinity/CUSTOMIZATION_MATRIX.md` e `docs/infinity/MIGRATION_ROLLBACK.md` para detalhes técnicos e atualização segura.
 
+A integração opcional de persistência de `screenshot_id` e jobs do Windows Local está em `integrations/windows-local/` e é incluída como recurso separado no pacote do launcher. O script de instalação começa em dry-run e não reinicia o serviço. Consulte `integrations/windows-local/README.md` antes de aplicar a integração em uma janela sem chamadas ativas.
+
 A produção anterior do Codex Web GPT é mantida isolada durante o desenvolvimento. Relatórios, senhas, credenciais e perfis privados não fazem parte do código público.
 
 ## Créditos
