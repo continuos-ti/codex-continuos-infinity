@@ -6,7 +6,7 @@ O launcher do Infinity permite configurar o modo `full` Automatic com gateway Cl
 
 A escolha do gateway externo não cria credenciais OAuth nem comprova ferramentas MCP nativas autorizadas. A autorização precisa ser validada em uma sessão Codex e ChatGPT autenticada do staging. Na configuração Zero Risk, a modalidade de túnel local continua separada. O supervisor consulta health do gateway externo e não controla o ciclo de vida desse túnel compartilhado. Para perfis antigos, o transporte padrão permanece `openai-tunnel`.
 
-O empacotamento deste transporte e seus testes automatizados serão registrados na matriz de aceite conforme os resultados da verificação integral e do pacote isolado. Não aplicar uma versão em desenvolvimento sobre o launcher produtivo.
+O pacote do transporte foi construído e verificado em um worktree isolado. Os resultados e hashes estão documentados abaixo e na matriz de aceite. Não aplicar uma versão em desenvolvimento sobre o launcher produtivo.
 
 ## Pacote isolado atualizado em 11/11/2026
 
@@ -132,3 +132,9 @@ O artefato local permanece destinado à homologação de staging. A validação 
 O worktree destacado `E:/Projetos/codex-continuos-infinity-build-c7e805e` foi criado no commit `c7e805eb8ed15ac699060d55100aeeaf93da8c2e`. As dependências foram instaladas com `bun@1.4.0 install --frozen-lockfile` na raiz e no launcher. `bun run app:package` concluiu com código zero e produziu o instalador Windows x64 `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` de **153.681.133 bytes**, SHA-256 **`4b9fb7ef596aaa9aaf2b476b753921e93813f0731d8ce86d2a4d86c4aba6d56f`**. O `.exe.blockmap` tem **160.678 bytes**, SHA-256 **`3497c43adaa516d7987670f5b5ebaee35d0a84dc0fc62b59667d4ca0cc758c40`**. Ambos conferem com `launcher/artifacts/checksums-local.txt`.
 
 O smoke portátil `bun run app:smoke` retornou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64` com exit 0. A verificação do contêiner NSIS por `7z t` retornou `Everything is Ok`. `Get-AuthenticodeSignature` confirmou `NotSigned`. O pacote não foi instalado no Windows de produção. A homologação DEV Full com OAuth/PKCE e MCP real, a reconciliação independente de efeitos externos, o novo vínculo nativo de proprietário após crash e o rollback funcional em staging continuam pendentes.
+
+### Build isolado do transporte Cloudflare `b765111` (12/11/2026)
+
+O worktree destacado `E:/Projetos/codex-continuos-infinity-build-b765111` foi criado no commit `b76511160838aa405a93a3cea9fc012a883afb60`. As dependências da raiz e do launcher foram instaladas com `bun install --frozen-lockfile`. O build `bun run app:package` e o smoke `bun run app:smoke` terminaram com código zero. O smoke confirmou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`, e o teste do contêiner NSIS por `7z t` confirmou `Everything is Ok`.
+
+O instalador `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.683.078 bytes**, SHA-256 **`70b7d8a58d95170465eab68eb481bf3f79385a9cdf50db04d23991243cab1975`**. O `.exe.blockmap` tem **161.196 bytes**, SHA-256 **`55b30bdcca71cb023bbfd2def34ddff536d0ad8a94ac3f158871e3d91d4773f1`**. Os hashes foram recalculados e conferidos com `launcher/artifacts/checksums-local.txt` do mesmo worktree. `Get-AuthenticodeSignature` confirmou **`NotSigned`**. O GitHub Actions `43170733150` aprovou seus **cinco jobs** (`actionlint`, `secret-scan` e `verify` em Windows, macOS e Ubuntu). O pacote permanece reservado para validação em staging independente. O PR #1 continua em rascunho até a comprovação da autenticação MCP no DEV Full, anexos concorrentes, rebind nativo e rollback.
