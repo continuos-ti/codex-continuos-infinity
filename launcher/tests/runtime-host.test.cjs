@@ -412,6 +412,66 @@ test("DEV doctor requires live tunnel readiness without probing a Responses list
   }
 });
 
+test("DEV doctor checks external Cloudflare health without requiring OpenAI tunnel credentials", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp",
+      healthUrl: "https://gateway.example.org/health",
+      expectedService: "CustomMcpGateway",
+    },
+  });
+  let healthCalls = 0;
+  fixture.host.supervisor.readTunnelHealth = async (config) => {
+    healthCalls += 1;
+    assert.equal(config.mcpTransport, "external-cloudflare");
+    return { ready: true, detail: "ready" };
+  };
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, true);
+  assert.equal(healthCalls, 1);
+  assert.deepEqual(report.checks.map(check => [check.id, check.status]), [
+    ["dev-profile", "ok"],
+    ["dev-external-cloudflare-configuration", "ok"],
+    ["dev-external-cloudflare-health", "ok"],
+    ["responses-listener", "ok"],
+  ]);
+  assert.equal(report.checks.some(check => check.id === "dev-tunnel-credentials"), false);
+});
+
+test("DEV external Cloudflare doctor does not claim healthy when its gateway is unreachable", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp",
+      healthUrl: "https://gateway.example.org/health",
+      expectedService: "CustomMcpGateway",
+    },
+  });
+  fixture.host.supervisor.readTunnelHealth = async () => ({ ready: false, detail: "gateway unreachable" });
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, false);
+  const health = report.checks.find(check => check.id === "dev-external-cloudflare-health");
+  assert.equal(health.status, "error");
+  assert.equal(health.detail, "gateway unreachable");
+});
+
+test("DEV external Cloudflare doctor fails closed on incomplete gateway config", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp", healthUrl: "", expectedService: "CustomMcpGateway",
+    },
+  });
+  fixture.host.supervisor.readTunnelHealth = async () => {
+    assert.fail("Invalid external gateway must not be probed");
+  };
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.find(check => check.id === "dev-external-cloudflare-configuration").status, "error");
+  assert.equal(report.checks.some(check => check.id === "dev-external-cloudflare-health"), false);
+});
+
 test("production doctor parses its structured unhealthy report from exit status one", async () => {
   const fixture = hostFor(null);
   let runOptions;

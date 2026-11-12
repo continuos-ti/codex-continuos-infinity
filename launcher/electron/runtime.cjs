@@ -828,30 +828,49 @@ class RuntimeHost {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-    const full = config?.mode === "full" && config?.tunnel;
-    checks.push({
-      id: "dev-tunnel-credentials",
-      status: full && fs.existsSync(config.tunnel.runtimeKeyFile) ? "ok" : "error",
-      message: full && fs.existsSync(config.tunnel.runtimeKeyFile)
-        ? "DEV tunnel credentials are configured"
-        : "DEV Full harness tunnel credentials are not configured",
-    });
-    if (full) {
+    const externalCloudflare = config?.mode === "full" && config?.mcpTransport === "external-cloudflare";
+    const fullTunnel = config?.mode === "full" && !externalCloudflare && config?.tunnel;
+    const gateway = config?.externalGateway;
+    const gatewayConfigured = externalCloudflare && config?.browserInteractionMode === "automatic"
+      && ["mcpUrl", "healthUrl", "expectedService"].every(key =>
+        typeof gateway?.[key] === "string" && gateway[key].trim().length > 0);
+    if (externalCloudflare) {
+      checks.push({
+        id: "dev-external-cloudflare-configuration",
+        status: gatewayConfigured ? "ok" : "error",
+        message: gatewayConfigured
+          ? "DEV external Cloudflare gateway is configured without OpenAI tunnel credentials"
+          : "DEV external Cloudflare gateway configuration is incomplete",
+      });
+    } else {
+      const tunnelConfigured = fullTunnel && typeof fullTunnel.runtimeKeyFile === "string"
+        && fs.existsSync(fullTunnel.runtimeKeyFile);
+      checks.push({
+        id: "dev-tunnel-credentials",
+        status: tunnelConfigured ? "ok" : "error",
+        message: tunnelConfigured
+          ? "DEV tunnel credentials are configured"
+          : "DEV Full harness tunnel credentials are not configured",
+      });
+    }
+    if (gatewayConfigured || fullTunnel) {
       try {
         const runtime = await this.supervisor.readTunnelHealth(config);
         checks.push({
-          id: "dev-tunnel-runtime",
+          id: externalCloudflare ? "dev-external-cloudflare-health" : "dev-tunnel-runtime",
           status: runtime.ready ? "ok" : "error",
-          message: runtime.ready
-            ? "Isolated DEV MCP tunnel runtime is ready"
-            : "Isolated DEV MCP tunnel runtime is not ready",
+          message: externalCloudflare
+            ? (runtime.ready ? "External Cloudflare gateway health is ready" : "External Cloudflare gateway health is not ready")
+            : (runtime.ready ? "Isolated DEV MCP tunnel runtime is ready" : "Isolated DEV MCP tunnel runtime is not ready"),
           ...(!runtime.ready ? { detail: runtime.detail } : {}),
         });
       } catch (error) {
         checks.push({
-          id: "dev-tunnel-runtime",
+          id: externalCloudflare ? "dev-external-cloudflare-health" : "dev-tunnel-runtime",
           status: "error",
-          message: "Isolated DEV MCP tunnel runtime could not be inspected",
+          message: externalCloudflare
+            ? "External Cloudflare gateway health could not be inspected"
+            : "Isolated DEV MCP tunnel runtime could not be inspected",
           detail: error instanceof Error ? error.message : String(error),
         });
       }
