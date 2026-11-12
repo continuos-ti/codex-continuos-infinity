@@ -1343,6 +1343,24 @@ export function createChatGptWebAdapter(
                 );
               }
               if (priorStates.length > 0) {
+                // This is an authenticated observation of the stopped process, never a
+                // continuation decision. Keep the startup fence closed for every outcome.
+                try {
+                  const snapshot = environmentStore.readBrokerRecoverySnapshot(
+                    join(getConfigDir(), "diagnostics", "broker-calls"), parsed,
+                  );
+                  if (snapshot.status === "verified_native_recovery_snapshot") {
+                    const sealed = snapshot.calls.filter(entry =>
+                      entry.resultEvidence.status === "verified_result_evidence").length;
+                    const nativeOutputs = snapshot.calls.filter(entry =>
+                      entry.nativeOutputEvidence === "recorded_in_native_rollout").length;
+                    console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} calls=${snapshot.calls.length} sealed_results=${sealed} native_outputs=${nativeOutputs} replay_authorized=false external_effects_reconciled=false`);
+                  } else {
+                    console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=unavailable`);
+                  }
+                } catch (error) {
+                  console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=invalid type=${error instanceof Error ? error.name : "unknown"}`);
+                }
                 throw new ChatGptWebAdapterError(
                   `The original native Codex turn has ${priorStates.length} persisted MCP call(s) from an earlier broker process. Reconcile canonical tool results and external effects before resuming the browser turn.`,
                   { status: 409, errorType: "invalid_request_error", code: "broker_reconciliation_required",

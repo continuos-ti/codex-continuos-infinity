@@ -22,6 +22,7 @@ import {
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
+import { readAuthenticatedBrokerRecoverySnapshot } from "./broker-call-reconciliation";
 import { isNativeCodexIdentifier, latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { cwdIsAccessibleDirectory, cwdWithinRealRoots } from "./trusted-cwd-path";
@@ -178,6 +179,25 @@ export class ChatGptThreadEnvironmentStore {
     additionalCodexHomes?: readonly string[],
   ) {
     this.codexHomes = getTrustedCodexHomes(codexHome, additionalCodexHomes);
+  }
+
+  /** Observe stopped-broker evidence with the same operator-trusted Codex homes as CWD recovery.
+   * This does not bind a new owner, reconcile external tool effects or grant replay.
+   */
+  readBrokerRecoverySnapshot(journalDirectory: string, parsed: CodexParsedRequest) {
+    const identity = extractChatGptTurnIdentity(parsed);
+    const lineage = extractChatGptThreadSpawnLineage(parsed) ?? extractChatGptRootThreadMetadata(parsed);
+    if (!identity.turnId || !lineage) {
+      return { status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false } as const;
+    }
+    return readAuthenticatedBrokerRecoverySnapshot({
+      journalDirectory,
+      codexHome: this.codexHomes[0]!,
+      additionalCodexHomes: this.codexHomes.slice(1),
+      ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+      lineage,
+      turnId: identity.turnId,
+    });
   }
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {

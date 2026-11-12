@@ -6,8 +6,10 @@ import { dirname, join } from "node:path";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import { readAuthenticatedBrokerCallInventory, readAuthenticatedBrokerRecoverySnapshot, readAuthenticatedBrokerResultEvidence, type AuthenticatedBrokerResultEvidence } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "../src/adapters/chatgpt-web/environment";
+import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
+import type { CodexParsedRequest } from "../src/types";
 
 const threadId = "01a06c66-4232-7ae1-9108-69b5f70e0671";
 const turnId = "01a06c66-4380-75c6-a0df-318f890ef6de";
@@ -96,6 +98,40 @@ function snapshot(options: { owner?: ChatGptRootThreadMetadata | ChatGptThreadSp
     ...(options.additionalCodexHomes ? { additionalCodexHomes: options.additionalCodexHomes } : {}),
   });
 }
+
+function parsedNativeTurn(metadata: Record<string, unknown>): CodexParsedRequest {
+  return {
+    modelId: "chatgpt-web", stream: true, options: { reasoning: "low" },
+    context: { tools: [], messages: [] },
+    _rawBody: { prompt_cache_key: threadId,
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify(metadata) } },
+  };
+}
+
+test("thread environment store observes an authenticated recovery snapshot without granting replay", () => {
+  nativeRollout();
+  journal();
+  seal();
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, home);
+  const metadata = {
+    request_kind: "turn", thread_id: threadId, turn_id: turnId,
+    agent_name: "/root", sandbox_mode: "danger-full-access", workspaces: { [cwd]: {} },
+  };
+  const recovered = store.readBrokerRecoverySnapshot(directory, parsedNativeTurn(metadata));
+  expect(recovered.status).toBe("verified_native_recovery_snapshot");
+  if (recovered.status !== "verified_native_recovery_snapshot") throw new Error("Missing authenticated recovery snapshot");
+  expect(recovered.calls).toHaveLength(1);
+  expect(recovered.calls[0]?.resultEvidence.status).toBe("verified_result_evidence");
+  expect(recovered.replayAuthorized).toBe(false);
+  expect(recovered.externalEffectsReconciled).toBe(false);
+
+  const stale = store.readBrokerRecoverySnapshot(directory,
+    parsedNativeTurn({ ...metadata, turn_id: staleTurnId }));
+  expect(stale.status).toBe("unavailable");
+  const unbound = store.readBrokerRecoverySnapshot(directory,
+    parsedNativeTurn({ ...metadata, request_kind: "untrusted" }));
+  expect(unbound.status).toBe("unavailable");
+});
 
 const unavailable: AuthenticatedBrokerResultEvidence = {
   status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
