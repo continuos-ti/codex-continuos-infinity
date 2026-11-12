@@ -47,3 +47,11 @@ O contrato acompanha o processo PowerShell iniciado pelo Windows Local. Processo
 O script `integrations/windows-local/apply-durable-command-jobs.ps1` executa dry-run por padrão, compila uma cópia temporária e preserva o serviço em execução. `-Apply` cria backup com timestamp e altera somente os arquivos-fonte do Windows Local. `-Rollback` restaura o backup mais recente. O script não reinicia o serviço.
 
 Em 12/11/2026, o dry-run foi aprovado contra `H:\Projetos\windows-local` e os caminhos `-Apply` e `-Rollback` passaram em uma cópia descartável do provedor. A fonte real em `H:\Projetos\windows-local` permaneceu inalterada para preservar chamadas ativas. A integração só passa a valer após instalação controlada e reinício do provedor. A homologação OAuth/PKCE e a reconciliação de efeitos externos de outros provedores MCP continuam pendentes.
+
+## Auditoria do broker instalado em 12/11/2026
+
+A inspeção somente leitura da instalação atual confirmou que o gateway usa leases de atividade para proteger operações em andamento. `codex_cf_gateway_lab.py` cria um `activity_id` e chama `claim` antes da ação e `activity_complete` ao final. `codex_broker_lease.mjs` transporta essas duas operações ao socket do broker. Esse mecanismo sinaliza atividade para drenagem e não fornece uma chave idempotente por chamada, armazenamento durável do resultado ou consulta de efeitos após crash.
+
+A fonte ativa de Windows Local ainda usa os dicionários de processo `SHOTS` e `JOBS`. O `windows_command_result` depende de um `Popen` mantido em memória, e o servidor stdio não declara `operation_id` nem `provider_epoch`. O endpoint OAuth encaminha a chamada MCP ao servidor local com JSON-RPC `id=1`, que não constitui identidade durável da operação. O bridge Agent Desktop não recebe ID de operação e, em timeout, retorna `delivery=unknown` com `retry=unsafe`.
+
+O ledger SQLite de `integrations/windows-local/` adiciona idempotência e consulta após reinício somente para o wrapper `windows_command`, além de persistir metadados da captura. O pacote continua staged e a fonte ativa permanece intacta. A implantação exige drenagem dos turnos e validação após reinício do provedor. Ações de UI e ferramentas de outros conectores continuam exigindo contratos específicos de identidade, retenção e reconciliação.
