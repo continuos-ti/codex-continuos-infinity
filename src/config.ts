@@ -13,6 +13,37 @@ import { VERSION } from "./version";
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
+export type McpTransport = "openai-tunnel" | "external-cloudflare";
+export interface ExternalGatewayConfig {
+  mcpUrl: string;
+  healthUrl: string;
+  expectedService: string;
+}
+export const DEFAULT_CLOUDFLARE_GATEWAY: Readonly<ExternalGatewayConfig> = Object.freeze({
+  mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+  healthUrl: "https://codex-native2.continuos.com.br/health",
+  expectedService: "ContinuosWebIntegracao",
+});
+
+export function validateExternalGateway(value: ExternalGatewayConfig): ExternalGatewayConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("External Cloudflare gateway configuration is missing");
+  }
+  for (const key of ["mcpUrl", "healthUrl"] as const) {
+    if (typeof value[key] !== "string") throw new Error(`Invalid externalGateway.${key}`);
+    let url: URL;
+    try { url = new URL(value[key]); } catch { throw new Error(`Invalid externalGateway.${key}`); }
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash
+      || url.pathname === "/" || url.href !== value[key]) {
+      throw new Error(`externalGateway.${key} must be a canonical HTTPS endpoint without credentials, query or fragment`);
+    }
+  }
+  if (typeof value.expectedService !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value.expectedService)) {
+    throw new Error("Invalid externalGateway.expectedService");
+  }
+  return value;
+}
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**
@@ -117,6 +148,8 @@ export interface AppConfig {
   controlToken: string;
   runtimeCommand: string[];
   acknowledgedUnofficialAt?: string;
+  mcpTransport?: McpTransport;
+  externalGateway?: ExternalGatewayConfig;
   tunnel?: TunnelConfig;
   automaticTunnel?: TunnelConfig;
   manualTunnel?: TunnelConfig;
@@ -472,6 +505,25 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`brokerSocketPath must be an absolute Unix socket path in ${path}`);
   }
   if (!/^[A-Za-z0-9_-]{40,}$/.test(parsed.controlToken!)) throw new Error(`Invalid controlToken in ${path}`);
+  const transport = parsed.mcpTransport ?? "openai-tunnel";
+  if (transport !== "openai-tunnel" && transport !== "external-cloudflare") {
+    throw new Error(`Invalid mcpTransport in ${path}`);
+  }
+  if (parsed.mode === "browser-only" && (parsed.mcpTransport || parsed.externalGateway)) {
+    throw new Error(`Browser-only configuration cannot enable MCP transport in ${path}`);
+  }
+  if (parsed.mode === "full" && transport === "external-cloudflare") {
+    if (browserInteractionMode !== "automatic" || parsed.tunnel || parsed.automaticTunnel) {
+      throw new Error(`External Cloudflare requires Automatic mode without an active OpenAI tunnel in ${path}`);
+    }
+    validateExternalGateway(parsed.externalGateway!);
+  } else if (parsed.externalGateway !== undefined) {
+    if (parsed.mode !== "full" || browserInteractionMode !== "manual"
+      || transport !== "openai-tunnel") {
+      throw new Error(`externalGateway can only be retained for Automatic while Zero Risk is active in ${path}`);
+    }
+    validateExternalGateway(parsed.externalGateway);
+  }
   const validateTunnel = (tunnel: TunnelConfig | undefined, label: string): void => {
     if (!tunnel || typeof tunnel !== "object") throw new Error(`${label} is missing in ${path}`);
     for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"] as const) {
@@ -494,7 +546,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     }
   };
   if (parsed.mode === "full") {
-    validateTunnel(parsed.tunnel, "tunnel");
+    if (transport === "openai-tunnel") validateTunnel(parsed.tunnel, "tunnel");
     if (parsed.automaticTunnel !== undefined) validateTunnel(parsed.automaticTunnel, "automaticTunnel");
     if (parsed.manualTunnel !== undefined) validateTunnel(parsed.manualTunnel, "manualTunnel");
     if (parsed.automaticTunnel && parsed.manualTunnel
@@ -502,10 +554,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
       throw new Error(`Automatic and Zero Risk must use different Tunnel IDs in ${path}`);
     }
     const activeTunnel = browserInteractionMode === "manual" ? parsed.manualTunnel : parsed.automaticTunnel;
-    if ((parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
+    if (transport === "openai-tunnel" && (parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
       throw new Error(`Active browser interaction mode has no tunnel configuration in ${path}`);
     }
-    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(parsed.tunnel)) {
+    if (transport === "openai-tunnel" && activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(parsed.tunnel)) {
       throw new Error(`Active tunnel does not match browserInteractionMode in ${path}; rerun MCP setup`);
     }
   }
@@ -572,6 +624,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     automaticAppName,
     manualAppName,
     browserInteractionMode,
+    ...(parsed.mode === "full" ? { mcpTransport: transport } : {}),
     subagentProtocol,
     solAvailable,
     proAvailable,

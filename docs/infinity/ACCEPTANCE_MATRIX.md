@@ -1,6 +1,12 @@
 # Matriz de aceite do Codex Continuos Infinity
 
-Estado observado em 12/11/2026. A branch `feature/continuos-infinity-native` utiliza a versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. O pacote isolado mais recente verificado corresponde ao código do commit `5ec32d72d260ced17276ce563b1f43bf62a0ef4a`. Seu workflow `43154582839` concluiu com cinco jobs aprovados, incluindo a instalação e desinstalação NSIS em runner Windows descartável. Os builds anteriores permanecem registrados como histórico de verificação.
+Estado observado em 12/11/2026. A branch `feature/continuos-infinity-native` utiliza a versão `6.1.18-continuos.1`, derivada do upstream `miuuyy/codex-chatgpt-web` 6.1.18. O workflow `43154582839` do commit `5ec32d72d260ced17276ce563b1f43bf62a0ef4a` concluiu com cinco jobs aprovados, incluindo instalação e desinstalação NSIS em runner Windows descartável. Um pacote local isolado posterior, do commit `c7e805eb8ed15ac699060d55100aeeaf93da8c2e`, também foi validado e documentado abaixo. A alteração de transporte Cloudflare deste ciclo ainda aguarda empacotamento isolado e E2E autenticado.
+
+### Transporte Cloudflare configurável — verificação de 12/11/2026
+
+O checkout de desenvolvimento adicionou a seleção explícita `mcpTransport=external-cloudflare` no Automatic, os campos `externalGateway` validados, parâmetros de setup/DEV, tela de configuração, observação de health configurável e tratamento do túnel como serviço externo pelo supervisor. O Zero Risk continua usando `openai-tunnel` e pode reter o gateway preferido para o retorno ao Automatic. O perfil `browser-only` rejeita opções de transporte MCP. Novos cenários automatizados cobrem CLI, setup, runtime, supervisor e UI. A mudança ainda requer instalação isolada de staging e validação OAuth/MCP real.
+
+`bun run verify` terminou com **exit code 0**. A suíte raiz apresentou **1.274 testes aprovados, 113 ignorados, zero falhas e 10.649 asserções** em 109 arquivos. A suíte launcher apresentou **445 aprovados, quatro ignorados e zero falhas** em 449 testes. TypeScript, auditorias, build Vite, pacote runtime e `RELOCATABLE_RUNTIME_SMOKE_OK` passaram. O teste focado `tests/cli.test.ts` concluiu com **18 aprovados, zero falhas e 118 asserções**. O log integral local é `%TEMP%/continuos-infinity-verify-20261112b.log`. Há aviso não bloqueante de chunk Vite superior a 500 kB. As verificações de CI, pacote e homologação nativa para esse novo commit ainda estão pendentes.
 
 | Nº | Entregável do objetivo | Evidência verificável | Situação de aceite |
 | --- | --- | --- | --- |

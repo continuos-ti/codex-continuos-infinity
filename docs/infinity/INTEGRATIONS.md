@@ -14,6 +14,14 @@ Endpoints públicos de referência do ambiente anterior:
 
 Os endpoints de referência podem mudar. As credenciais, audiência, tokens, PKCE e escopos são geridos pela camada autorizada, fora do repositório. Nenhuma chave privada deve ser incluída em exemplos.
 
+## Transporte MCP configurável
+
+O perfil `full` no modo Automatic permite selecionar explicitamente `mcpTransport=external-cloudflare` e informar `externalGateway.mcpUrl`, `externalGateway.healthUrl` e `externalGateway.expectedService`. O setup aceita `--mcp-transport external-cloudflare` e, opcionalmente, `--external-mcp-url`, `--external-health-url` e `--external-service`. O setup DEV isolado aceita os mesmos parâmetros após `dev setup --full`. A interface do launcher também permite escolher o transporte e ajustar os três campos.
+
+Os endpoints devem ser URLs HTTPS canônicas, sem credenciais, query ou fragmento. A sondagem de saúde verifica a resposta HTTP e os campos `status=ok` e `service=expectedService`. Essa verificação confirma somente a disponibilidade e a identidade declarada do endpoint de health. O acesso MCP efetivo depende de OAuth/PKCE e de um vínculo nativo autorizado pelo Codex e requer homologação autenticada separada.
+
+No transporte externo, o supervisor observa o gateway e aguarda prontidão durante a inicialização. Ele registra o recurso como externo, sem assumir posse do túnel. O modo Zero Risk conserva o transporte `openai-tunnel` e pode reter a preferência Cloudflare para uma troca posterior. Perfis antigos sem `mcpTransport` continuam usando `openai-tunnel` até configuração explícita. O modo `browser-only` rejeita configuração MCP.
+
 ## Infraestrutura e ferramentas
 
 A ordem desejada de supervisão é Windows Local → Cloudflare/gateway → Codex → Infinity. A saúde de um processo externo não confere ao Infinity autoridade para encerrá-lo. O supervisor deve distinguir recursos próprios, serviços compartilhados e processos com tarefas em execução.

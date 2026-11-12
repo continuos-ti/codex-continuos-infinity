@@ -2,9 +2,10 @@ import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
+import type { AppConfig, BrowserInteractionMode, ExternalGatewayConfig, McpTransport, RuntimeMode, SubagentProtocol } from "./config";
 import {
   currentRuntimeCommand,
+  DEFAULT_CLOUDFLARE_GATEWAY,
   defaultBrokerEndpoint,
   defaultConfig,
   getConfigPath,
@@ -12,6 +13,7 @@ import {
   resolveInteractionConnectorIdentities,
   saveConfig,
   tunnelConfigForInteractionMode,
+  validateExternalGateway,
 } from "./config";
 import {
   browserLoginStateExists,
@@ -66,6 +68,8 @@ export interface SetupOptions {
   tunnelId?: string;
   runtimeKeyFile?: string;
   runtimeKeyValue?: string;
+  mcpTransport?: McpTransport;
+  externalGateway?: ExternalGatewayConfig;
 }
 
 export interface SetupResult {
@@ -114,7 +118,7 @@ export function existingFullSetupCredentials(
   existing: AppConfig | undefined,
   interactionMode: BrowserInteractionMode = existing?.browserInteractionMode ?? "automatic",
 ): ExistingFullSetupCredentials {
-  const tunnel = existing?.mode === "full"
+  const tunnel = existing?.mode === "full" && existing.mcpTransport !== "external-cloudflare"
     ? tunnelConfigForInteractionMode(existing, interactionMode)
     : undefined;
   return {
@@ -158,6 +162,8 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
     runtimeCommand: before.runtimeCommand,
+    mcpTransport: before.mcpTransport,
+    externalGateway: before.externalGateway,
     tunnel: before.tunnel,
     automaticTunnel: before.automaticTunnel,
     manualTunnel: before.manualTunnel,
@@ -190,6 +196,8 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
     runtimeCommand: after.runtimeCommand,
+    mcpTransport: after.mcpTransport,
+    externalGateway: after.externalGateway,
     tunnel: after.tunnel,
     automaticTunnel: after.automaticTunnel,
     manualTunnel: after.manualTunnel,
@@ -276,6 +284,38 @@ function baseConfig(
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
   if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
+  if (config.mode === "browser-only") {
+    if (options.mcpTransport || options.externalGateway) {
+      throw new Error("Browser-only setup cannot configure an MCP transport");
+    }
+    delete config.mcpTransport;
+    delete config.externalGateway;
+  } else {
+    config.mcpTransport = options.mcpTransport
+      ?? (config.browserInteractionMode === "manual"
+        ? "openai-tunnel"
+        : existing?.externalGateway ? "external-cloudflare" : existing?.mcpTransport)
+      ?? "openai-tunnel";
+    if (config.mcpTransport === "external-cloudflare") {
+      if (config.browserInteractionMode !== "automatic") {
+        throw new Error("External Cloudflare MCP transport requires Automatic interaction mode");
+      }
+      if (options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue) {
+        throw new Error("External Cloudflare setup cannot accept OpenAI tunnel credentials");
+      }
+      config.externalGateway = validateExternalGateway(options.externalGateway
+        ?? existing?.externalGateway ?? { ...DEFAULT_CLOUDFLARE_GATEWAY });
+      delete config.tunnel;
+      delete config.automaticTunnel;
+    } else {
+      if (config.mcpTransport !== "openai-tunnel" || options.externalGateway) {
+        throw new Error("Unsupported MCP transport configuration");
+      }
+      // Zero Risk owns its OpenAI tunnel while Automatic may retain an external gateway.
+      // Keep that public gateway configuration for an explicit switch back to Automatic.
+      if (config.browserInteractionMode === "automatic") delete config.externalGateway;
+    }
+  }
   Object.assign(config, resolveInteractionConnectorIdentities(
     config.browserInteractionMode,
     profile,
@@ -388,8 +428,9 @@ async function configureTunnel(config: AppConfig, existing: AppConfig | undefine
     delete config.manualTunnel;
     return;
   }
+  if (config.mcpTransport === "external-cloudflare") return;
   const interactionMode = config.browserInteractionMode;
-  const legacyTunnel = existing?.mode === "full"
+  const legacyTunnel = existing?.mode === "full" && existing.mcpTransport !== "external-cloudflare"
     && !existing.automaticTunnel
     && !existing.manualTunnel
     ? existing.tunnel
@@ -490,7 +531,7 @@ function prepareSetup(options: SetupOptions): PreparedSetup {
 
 export function preflightSetup(options: SetupOptions): void {
   const { existing, config } = prepareSetup(options);
-  if (config.mode === "full") {
+  if (config.mode === "full" && config.mcpTransport !== "external-cloudflare") {
     const saved = existing?.mode === "full"
       ? tunnelConfigForInteractionMode(existing, config.browserInteractionMode)
       : undefined;
@@ -631,12 +672,12 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   }
 
   let tunnelReady: boolean | null = null;
-  if (config.mode === "browser-only" && existing?.mode === "full") {
+  if (config.mode === "browser-only" && existing?.mode === "full" && existing.mcpTransport !== "external-cloudflare") {
     const previousTunnelService = getTunnelServiceStatus();
     if (previousTunnelService.installed || previousTunnelService.loaded) await uninstallTunnelService();
     stopTunnel(existing);
   }
-  if (config.mode === "full") {
+  if (config.mode === "full" && config.mcpTransport !== "external-cloudflare") {
     const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
     const tunnelService = getTunnelServiceStatus();
     const needsProfile = !existsSync(profilePath);

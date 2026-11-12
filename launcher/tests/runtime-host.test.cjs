@@ -329,12 +329,58 @@ test("DEV MCP setup reuses only DEV-home credentials and targets its distinct co
         "--browser-host-descriptor",
         "/dev/runtime/launcher-browser.json",
         "--automatic-browser-interaction",
+        "--mcp-transport",
+        "openai-tunnel",
         "--acknowledge-unofficial",
       ],
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("DEV MCP setup configures an external Cloudflare gateway without production routes", async () => {
+  const fixture = devHostFor(null);
+  const gateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "CustomMcpGateway",
+  };
+  await fixture.host.setupDevMcp({ mcpTransport: "external-cloudflare", externalGateway: gateway });
+  assert.deepEqual(fixture.invocation(), {
+    name: "dev-mcp-setup",
+    args: [
+      "dev", "setup", "--full", "--browser-host-descriptor", "/dev/runtime/launcher-browser.json",
+      "--automatic-browser-interaction", "--mcp-transport", "external-cloudflare",
+      "--acknowledge-unofficial", "--external-mcp-url", gateway.mcpUrl,
+      "--external-health-url", gateway.healthUrl, "--external-service", gateway.expectedService,
+    ],
+  });
+  for (const invalid of [
+    { interactionMode: "manual", mcpTransport: "external-cloudflare" },
+    { mcpTransport: "external-cloudflare", runtimeKey: "privatekey" },
+    { mcpTransport: "unknown" },
+  ]) {
+    assert.throws(() => fixture.host.setupDevMcp(invalid), /requires Automatic mode|Unsupported DEV MCP transport/);
+  }
+});
+
+test("DEV switches from Zero Risk back to Automatic with its retained Cloudflare gateway", async () => {
+  const gateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "CustomMcpGateway",
+  };
+  const fixture = devHostFor({
+    mode: "full", purpose: "dev-harness", mcpTransport: "openai-tunnel",
+    browserInteractionMode: "manual", externalGateway: gateway,
+  }, "manual");
+  await fixture.host.setBrowserInteractionMode("automatic");
+  assert.equal(fixture.invocation().name, "browser-interaction-mode");
+  assert.equal(fixture.invocation().args.includes("--mcp-transport"), true);
+  assert.equal(fixture.invocation().args.includes("external-cloudflare"), true);
+  assert.equal(fixture.invocation().args.includes("--replace-codex-route"), false);
+  assert.equal(fixture.invocation().args.includes("--restart-service"), false);
 });
 
 test("DEV doctor requires live tunnel readiness without probing a Responses listener", async () => {
@@ -606,6 +652,8 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
       "/runtime/launcher-browser.json",
       "--automatic-browser-interaction",
       "--replace-codex-route",
+      "--mcp-transport",
+      "openai-tunnel",
       "--acknowledge-unofficial",
       "--restart-service",
     ]);
@@ -633,6 +681,35 @@ test("new MCP setup uses the fixed connector without a CLI name override", async
   ]);
   assert.equal(fixture.invocation().args.includes("--app-name"), false);
   assert.equal(fixture.host.setupConnectorName(), CURRENT_CONNECTOR_NAME);
+});
+
+test("external Cloudflare MCP setup has an explicit transport and no OpenAI credentials", async () => {
+  const fixture = hostFor(null);
+  await fixture.host.setupMcp({ mcpTransport: "external-cloudflare", interactionMode: "automatic" });
+  assert.deepEqual(fixture.invocation().args, [
+    "setup", "--full", "--browser-host-descriptor", "/runtime/launcher-browser.json",
+    "--automatic-browser-interaction", "--mcp-transport", "external-cloudflare",
+    "--replace-codex-route", "--acknowledge-unofficial", "--restart-service",
+  ]);
+  const existing = hostFor({
+    mode: "full", appName: "ContinuosWebIntegracao", browserHost: "launcher",
+    releaseVersion: "1.1.2", browserInteractionMode: "automatic", mcpTransport: "external-cloudflare",
+    externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp",
+      healthUrl: "https://gateway.example.org/health",
+      expectedService: "CustomMcpGateway",
+    },
+  });
+  assert.equal(existing.host.mcpCredentialsConfigured(), true);
+  await existing.host.upgradeManagedRuntime();
+  const upgradeArgs = existing.invocation().args;
+  assert.deepEqual(upgradeArgs.slice(upgradeArgs.indexOf("--mcp-transport"), upgradeArgs.indexOf("--external-service") + 2), [
+    "--mcp-transport", "external-cloudflare", "--external-mcp-url", "https://gateway.example.org/mcp",
+    "--external-health-url", "https://gateway.example.org/health", "--external-service", "CustomMcpGateway",
+  ]);
+  assert.throws(() => fixture.host.setupMcp({
+    mcpTransport: "external-cloudflare", runtimeKey: "private-key",
+  }), /without OpenAI tunnel credentials/);
 });
 
 test("MCP credential replacement remains explicit and requires a complete new pair", async () => {

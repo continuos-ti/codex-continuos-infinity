@@ -1,5 +1,13 @@
 # Instalação e build
 
+## Configuração de transporte MCP (12/11/2026)
+
+O launcher do Infinity permite configurar o modo `full` Automatic com gateway Cloudflare externo (`external-cloudflare`). Na tela de MCP, selecione **External Cloudflare gateway (OAuth)**, ajuste os endpoints HTTPS e a identidade esperada do serviço e execute a configuração. O CLI do setup e o DEV isolado também aceitam `--mcp-transport external-cloudflare` com `--external-mcp-url`, `--external-health-url` e `--external-service` opcionais. A ausência dos três campos opcionais utiliza os endpoints públicos de referência documentados em `INTEGRATIONS.md`.
+
+A escolha do gateway externo não cria credenciais OAuth nem comprova ferramentas MCP nativas autorizadas. A autorização precisa ser validada em uma sessão Codex e ChatGPT autenticada do staging. Na configuração Zero Risk, a modalidade de túnel local continua separada. O supervisor consulta health do gateway externo e não controla o ciclo de vida desse túnel compartilhado. Para perfis antigos, o transporte padrão permanece `openai-tunnel`.
+
+O empacotamento deste transporte e seus testes automatizados serão registrados na matriz de aceite conforme os resultados da verificação integral e do pacote isolado. Não aplicar uma versão em desenvolvimento sobre o launcher produtivo.
+
 ## Pacote isolado atualizado em 11/11/2026
 
 O commit `a8af86219da08da0ada6eea9b10a95d9f5ad9a66` foi empacotado em worktree destacado e isolado `E:/Projetos/codex-continuos-infinity-build-a8af862`. O instalador Windows x64 `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` possui **153.678.931 bytes** e SHA-256 **`c3d9ea014abcdc3630b178a9a6bb6c79c61e0a91047e9e8770624325eb1f2230`**. O blockmap correspondente possui **160.908 bytes** e SHA-256 **`ca079b90e5f90e8c85bfa431f20bc7a8d2d4da91c400d2ca4951383d93571da8`**. Ambos conferem com `launcher/artifacts/checksums-local.txt` desse worktree.

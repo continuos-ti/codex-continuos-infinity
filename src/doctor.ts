@@ -200,22 +200,21 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
   checks.push(...await proxyChecks(config));
 
-  if (config.mode === "full" && config.browserInteractionMode === "automatic"
-      && config.appName === "ContinuosWebIntegracao") {
+  if (config.mode === "full" && config.mcpTransport === "external-cloudflare") {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6_000);
     try {
-      const response = await fetch("https://codex-native2.continuos.com.br/health", {
+      const response = await fetch(config.externalGateway!.healthUrl, {
         signal: controller.signal,
         redirect: "error",
       });
       if (!response.ok) throw new Error("Gateway returned HTTP " + response.status);
       const data = await response.json() as Record<string, unknown>;
-      if (data.status !== "ok" || data.service !== "ContinuosWebIntegracao") {
+      if (data.status !== "ok" || data.service !== config.externalGateway!.expectedService) {
         throw new Error("Unexpected Cloudflare gateway identity");
       }
       checks.push({id:"cloudflare-gateway",status:"ok",
-        message:"Cloudflare OAuth MCP gateway is healthy at codex-native2.continuos.com.br"});
+        message:`External Cloudflare gateway is healthy at ${config.externalGateway!.healthUrl}`});
     } catch (error) {
       checks.push({id:"cloudflare-gateway",status:"error",
         message:"Cloudflare OAuth MCP gateway is not reachable",
@@ -224,7 +223,7 @@ export async function runDoctor(): Promise<DoctorReport> {
       clearTimeout(timer);
     }
     checks.push({id:"connector",status:"warning",
-      message:"Connector ContinuosWebIntegracao requires a live ChatGPT turn to confirm task execution"});
+      message:`Connector ${config.appName} requires a live ChatGPT turn to confirm task execution`});
   } else if (config.mode === "full") {
     const settings = config.tunnel!;
     if (!existsSync(settings.binaryPath)) {

@@ -422,7 +422,8 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
     });
     expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" });
     expect(result.stdout).toContain("No Codex route, Responses listener, or system service was installed");
-    expect(result.stdout).toContain("DEV launcher owns the isolated MCP tunnel");
+    expect(result.stdout).toContain("Isolated DEV profile configured (browser-only)");
+    expect(result.stdout).not.toContain("DEV launcher owns the isolated MCP tunnel");
     expect(inspections).toBe(1);
     expect(JSON.parse(readFileSync(join(devHome, "config.json"), "utf8"))).toMatchObject({
       version: 3,

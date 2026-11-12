@@ -605,7 +605,14 @@ function registerIpc({ logger, stateStore }) {
       automatic: runtimeHost.setupConnectorName(),
       manual: runtimeHost.setupConnectorName("manual"),
     },
+      mcpTransport: runtimeHost.runtimeConfigSnapshot().config?.mode === "full"
+        ? runtimeHost.runtimeConfigSnapshot().config?.mcpTransport ?? "openai-tunnel" : undefined,
+      automaticMcpTransport: runtimeHost.runtimeConfigSnapshot().config?.mode === "full"
+        ? runtimeHost.runtimeConfigSnapshot().config?.externalGateway
+          ? "external-cloudflare" : "openai-tunnel" : undefined,
+      externalGateway: runtimeHost.runtimeConfigSnapshot().config?.externalGateway,
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
+      mcpTunnelCredentialsConfigured: runtimeHost?.mcpTunnelCredentialsConfigured() ?? false,
     logs: logger.recent(),
     urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
     platform: process.platform,
@@ -889,6 +896,8 @@ function registerIpc({ logger, stateStore }) {
       runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
       replace: input?.replace === true,
       interactionMode,
+      mcpTransport: input?.mcpTransport,
+      externalGateway: input?.externalGateway,
     }, afterRuntimeReady);
     if (!interactionModeChange && interactionMode === "automatic") await browserHost.reveal();
     const result = interactionModeChange

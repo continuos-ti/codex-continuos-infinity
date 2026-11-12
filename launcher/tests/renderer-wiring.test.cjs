@@ -397,13 +397,19 @@ test("installed integration can connect MCP while the native catalog refresh is 
   const translated = { exports: {} };
   vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
   let connected = 0;
+  let lastMcpInput;
   const sandbox = {
     element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     useState: value => [value, () => {}], useMemo: callback => callback(), useEffect() {},
     React: { Fragment: "Fragment" },
     AnimatePresence: "AnimatePresence", motion: { section: "section" }, PANEL_TRANSITION: {},
     MCP_GUIDE_MEDIA: ["fixture", "fixture", "fixture"], messageOf: String,
-    api: { setupMcp: async () => { connected++; }, snapshot: async () => ({ state: {} }), setMcpStep: async () => ({}) },
+    DEFAULT_EXTERNAL_GATEWAY: {
+      mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+      healthUrl: "https://codex-native2.continuos.com.br/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+    api: { setupMcp: async input => { connected++; lastMcpInput = input; }, snapshot: async () => ({ state: {} }), setMcpStep: async () => ({}) },
   };
   for (const name of ["ContentSurface", "SectionHeading", "SetupRow", "PrimaryButton", "SecondaryButton", "NoticeRow", "Icon", "DoctorSummary", "FieldRow", "ZeroRiskModelMenu", "McpMark", "TutorialVideo"]) sandbox[name] = name;
   vm.runInNewContext(transpile(surfaces, "surfaces.tsx") + "\nrenderSetup = SetupSurface; renderMcp = McpSurface;", sandbox);
@@ -430,6 +436,34 @@ test("installed integration can connect MCP while the native catalog refresh is 
     }
   }
   assert.equal(connected, 5);
+  const cloudflareSnapshot = { state: { browserInteractionMode: "automatic", coreSetupComplete: true, mcpGuideStep: 1 },
+    mcpTransport: "external-cloudflare", mcpCredentialsConfigured: false,
+    connectorNames: { automatic: "Authorized Custom Connector", manual: "Codex Zero Risk" } };
+  const copy = translated.exports.copyFor("en");
+  const cloudflare = visit(sandbox.renderMcp({ snapshot: cloudflareSnapshot, copy,
+    devProfile: false, language: "en", interactionMode: "automatic", operation: null,
+    updateState() {}, setError(error) { if (error) throw new Error(error); }, onDone() {} }));
+  const connect = cloudflare.find(node => node.type === "PrimaryButton" && node.children.includes(copy.connect));
+  assert.ok(connect, "Cloudflare setup requires an explicit connect action");
+  assert.equal(connect.props.disabled, false);
+  await connect.props.onClick();
+  assert.equal(connected, 6);
+  assert.equal(lastMcpInput.mcpTransport, "external-cloudflare");
+  assert.equal(lastMcpInput.runtimeKey, undefined);
+  assert.equal(lastMcpInput.tunnelId, undefined);
+    const devCloudflare = visit(sandbox.renderMcp({ snapshot: cloudflareSnapshot, copy,
+      devProfile: true, language: "en", interactionMode: "automatic", operation: null,
+      updateState() {}, setError(error) { if (error) throw new Error(error); }, onDone() {} }));
+    const transportSelector = devCloudflare.find(node => node.type === "select"
+      && node.props.value === "external-cloudflare");
+    assert.ok(transportSelector, "DEV setup must allow Cloudflare transport selection");
+    const devConnect = devCloudflare.find(node => node.type === "PrimaryButton"
+      && node.children.includes(copy.connect));
+    assert.ok(devConnect);
+    assert.equal(devConnect.props.disabled, false);
+    await devConnect.props.onClick();
+    assert.equal(connected, 7);
+    assert.equal(lastMcpInput.mcpTransport, "external-cloudflare");
 });
 
 test("MCP navigation remains locked while an operation is active", () => {
@@ -614,6 +648,7 @@ test("fresh-conversation snapshot uses runtime configuration and mode switching 
     currentOperation: () => null,
     runtimeConfigSnapshot: () => ({ config }), browserConnectorName: () => "Codex Native2",
     setupConnectorName: () => "Codex Native2", mcpCredentialsConfigured: () => true,
+    mcpTunnelCredentialsConfigured: () => true,
     setBrowserInteractionMode: async mode => { config.browserInteractionMode = mode; return { configured: true }; },
   };
   const sandbox = {

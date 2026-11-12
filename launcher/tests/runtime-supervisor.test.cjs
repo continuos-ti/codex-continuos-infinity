@@ -157,6 +157,33 @@ test("launcher runtime ownership rejects a different browser descriptor", () => 
   );
 });
 
+test("launcher validation retains a verified external gateway only in manual Zero Risk mode", () => {
+  const descriptorPath = path.join(os.tmpdir(), "launcher.json");
+  const tunnel = {
+    binaryPath: path.join(os.tmpdir(), "tunnel-client"),
+    tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
+    runtimeKeyFile: path.join(os.tmpdir(), "runtime.key"),
+    profileDir: path.join(os.tmpdir(), "profiles"),
+    profileName: "codex-manual",
+    alias: "codex-manual",
+  };
+  const gateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "CustomMcpGateway",
+  };
+  const config = launcherConfig(descriptorPath, {
+    mode: "full", browserInteractionMode: "manual", mcpTransport: "openai-tunnel",
+    tunnel, manualTunnel: tunnel, externalGateway: gateway,
+  });
+  assert.equal(validateConfig(config, descriptorPath).externalGateway, gateway);
+  assert.throws(() => validateConfig({ ...config, browserInteractionMode: "automatic" }, descriptorPath),
+    /external gateway can only be retained during Zero Risk mode/);
+  assert.throws(() => validateConfig({ ...config,
+    externalGateway: { ...gateway, healthUrl: "http://gateway.example.org/health" },
+  }, descriptorPath), /externalGateway.healthUrl must be a canonical HTTPS endpoint/);
+});
+
 test("launcher runtime ownership cannot cross production and DEV profiles", () => {
   const descriptorPath = path.join(os.tmpdir(), "launcher.json");
   const production = { ...launcherConfig(descriptorPath), solAvailable: true };

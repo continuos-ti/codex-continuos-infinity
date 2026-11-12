@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
-import { DEV_CHATGPT_CONNECTOR_NAME, loadConfig } from "../config";
+import { DEFAULT_CLOUDFLARE_GATEWAY, DEV_CHATGPT_CONNECTOR_NAME, loadConfig } from "../config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -37,7 +37,8 @@ Usage:
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
   codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction]
-  codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
+  codex-chatgpt-web dev setup --full [--mcp-transport external-cloudflare [--external-mcp-url URL --external-health-url URL --external-service NAME]]
+  codex-chatgpt-web dev setup --full --mcp-transport openai-tunnel --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
 
@@ -342,6 +343,16 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (browserOnly === full) throw new Error("Choose exactly one DEV setup mode: --browser-only or --full");
     const tunnelId = takeOption(args, "--tunnel-id");
     const runtimeKeyFile = takeOption(args, "--runtime-key-file");
+    const mcpTransport = takeOption(args, "--mcp-transport");
+    if (mcpTransport !== undefined && mcpTransport !== "openai-tunnel" && mcpTransport !== "external-cloudflare") {
+      throw new Error("--mcp-transport must be openai-tunnel or external-cloudflare");
+    }
+    const externalMcpUrl = takeOption(args, "--external-mcp-url");
+    const externalHealthUrl = takeOption(args, "--external-health-url");
+    const externalService = takeOption(args, "--external-service");
+    if ((externalMcpUrl || externalHealthUrl || externalService) && mcpTransport !== "external-cloudflare") {
+      throw new Error("External gateway endpoints require --mcp-transport external-cloudflare");
+    }
     const descriptorPath = takeOption(args, "--browser-host-descriptor") ?? paths.descriptorPath;
     const connectorNameSuffix = takeOption(args, "--connector-name-suffix");
     const acknowledgedUnofficial = takeFlag(args, "--acknowledge-unofficial");
@@ -373,6 +384,15 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (args.length > 0) throw new Error(`Unknown DEV setup arguments: ${args.join(" ")}`);
     const result = await setupDevProfile({
       mode: full ? "full" : "browser-only",
+      ...(mcpTransport ? { mcpTransport } : {}),
+      ...(externalMcpUrl || externalHealthUrl || externalService ? {
+        externalGateway: {
+          ...DEFAULT_CLOUDFLARE_GATEWAY,
+          ...(externalMcpUrl ? { mcpUrl: externalMcpUrl } : {}),
+          ...(externalHealthUrl ? { healthUrl: externalHealthUrl } : {}),
+          ...(externalService ? { expectedService: externalService } : {}),
+        },
+      } : {}),
       browserHostDescriptorPath: descriptorPath,
       ...(connectorNameSuffix !== undefined ? { connectorNameSuffix } : {}),
       refreshAccountCapabilities,
@@ -391,7 +411,11 @@ export async function runDevCommand(args: string[]): Promise<void> {
     stdout.write(
       `Isolated DEV profile configured (${result.mode}) at ${result.configPath}.\n`
       + "No Codex route, Responses listener, or system service was installed."
-      + " In Full mode, the DEV launcher owns the isolated MCP tunnel.\n",
+      + (result.mode === "full"
+        ? loadConfig().mcpTransport === "external-cloudflare"
+          ? " In Full mode, DEV uses the configured external Cloudflare MCP gateway.\n"
+          : " In Full mode, the DEV launcher owns the isolated MCP tunnel.\n"
+        : "\n"),
     );
     return;
   }

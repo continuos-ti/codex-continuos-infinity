@@ -9,7 +9,7 @@ import * as tunnel from "../src/tunnel";
 import * as tunnelService from "../src/tunnel-service";
 import * as browserHost from "../src/launcher-browser-host";
 import * as browserLogin from "../src/browser-login";
-import { launcherCapabilityProbeRequired, portBindFailureMessage, setup, setupDevProfile, setupProxyIsReady } from "../src/setup";
+import { launcherCapabilityProbeRequired, portBindFailureMessage, preflightSetup, setup, setupDevProfile, setupProxyIsReady } from "../src/setup";
 
 const config = {
   mode: "browser-only" as const,
@@ -70,6 +70,65 @@ test("launcher setup refreshes account capabilities only when missing or explici
     ...verifiedLauncher,
     browserInteractionMode: "manual",
   } as never, false, "automatic")).toBe(true);
+});
+
+test("switching between Cloudflare Automatic and Zero Risk retains the saved routes", () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-infinity-cloudflare-modes-"));
+  const configPath = join(root, "config.json");
+  const runtimeKeyFile = join(root, "manual-runtime.key");
+  writeFileSync(runtimeKeyFile, "isolated-test-credential");
+  writeFileSync(configPath, "{}");
+  const externalGateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "ExampleMcpGateway",
+  };
+  const manualTunnel = {
+    binaryPath: join(root, "tunnel-client"),
+    tunnelId: `tunnel_${"b".repeat(32)}`,
+    runtimeKeyFile,
+    profileDir: join(root, "profile"),
+    profileName: "codex-chatgpt-web-zero-risk",
+    alias: "codex-chatgpt-web-zero-risk",
+  };
+  const existing: configModule.AppConfig = {
+    ...configModule.defaultConfig("full"),
+    browserHost: "launcher" as const,
+    browserInteractionMode: "automatic" as const,
+    mcpTransport: "external-cloudflare" as const,
+    externalGateway,
+    manualTunnel,
+    acknowledgedUnofficialAt: new Date().toISOString(),
+  };
+  const checked: configModule.AppConfig[] = [];
+  let loaded = existing;
+  const mocks = [
+    spyOn(configModule, "getConfigPath").mockReturnValue(configPath),
+    spyOn(configModule, "loadConfigForSetup").mockImplementation(() => structuredClone(loaded)),
+    spyOn(integration, "readCodexSubagentProtocol").mockReturnValue("native"),
+    spyOn(integration, "preflightCodexIntegration").mockImplementation(value => { checked.push(value); }),
+  ];
+  try {
+    const options = { mode: "full" as const, browserHostDescriptorPath: join(root, "browser-host.json") };
+    preflightSetup({ ...options, browserInteractionMode: "manual" });
+    expect(checked.at(-1)).toMatchObject({
+      browserInteractionMode: "manual", mcpTransport: "openai-tunnel", externalGateway,
+    });
+    expect(checked.at(-1)?.manualTunnel).toEqual(manualTunnel);
+
+    const savedManual = structuredClone(checked.at(-1)!);
+    savedManual.tunnel = manualTunnel;
+    loaded = savedManual;
+    preflightSetup({ ...options, browserInteractionMode: "automatic" });
+    expect(checked.at(-1)).toMatchObject({
+      browserInteractionMode: "automatic", mcpTransport: "external-cloudflare", externalGateway,
+    });
+    expect(checked.at(-1)).not.toHaveProperty("tunnel");
+    expect(checked.at(-1)?.manualTunnel).toEqual(manualTunnel);
+  } finally {
+    for (const mock of mocks.reverse()) mock.mockRestore();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 for (const development of [false, true]) {

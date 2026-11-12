@@ -38,6 +38,11 @@ const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
 ] as const;
+const DEFAULT_EXTERNAL_GATEWAY = {
+  mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+  healthUrl: "https://codex-native2.continuos.com.br/health",
+  expectedService: "ContinuosWebIntegracao",
+};
 
 export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
@@ -1300,20 +1305,26 @@ function McpSurface({
   const [runtimeKey, setRuntimeKey] = useState("");
   const [credentialsConfigured, setCredentialsConfigured] = useState(
     interactionMode === snapshot.state.browserInteractionMode
-      ? snapshot.mcpCredentialsConfigured
+      ? snapshot.mcpTunnelCredentialsConfigured
+        ?? (snapshot.mcpTransport !== "external-cloudflare" && snapshot.mcpCredentialsConfigured)
       : false,
   );
   const [replacingCredentials, setReplacingCredentials] = useState(false);
+  const [automaticTransport, setAutomaticTransport] = useState<"openai-tunnel" | "external-cloudflare">(
+    snapshot.automaticMcpTransport ?? (snapshot.mcpCredentialsConfigured ? "openai-tunnel" : "external-cloudflare"),
+  );
+  const [externalGateway, setExternalGateway] = useState(
+    snapshot.externalGateway ?? { ...DEFAULT_EXTERNAL_GATEWAY },
+  );
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const verified = !configuringInactiveMode && snapshot.state.mcpSetupComplete === true;
   const manualInteraction = interactionMode === "manual";
-  const cloudflareAutomatic = !manualInteraction && !devProfile
-    && snapshot.connectorNames.automatic === "ContinuosWebIntegracao";
+  const cloudflareAutomatic = !manualInteraction && automaticTransport === "external-cloudflare";
   const steps = useMemo(() => [
     cloudflareAutomatic
-      ? { title: "Cloudflare route", body: "Cloudflare publishes https://codex-native2.continuos.com.br/mcp; the persistent local gateway listens on 127.0.0.1:28765. No OpenAI tunnel or API key is needed." }
+      ? { title: "Cloudflare route", body: `The external OAuth gateway publishes ${externalGateway.mcpUrl}. Its lifecycle is managed independently of this launcher.` }
       : { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
     cloudflareAutomatic
       ? { title: "Verify Cloudflare gateway", body: "The cloudflared tunnel and OAuth gateway run independently of the Codex launcher. Restarting Codex must not stop the shared Windows Local tunnel." }
@@ -1321,10 +1332,10 @@ function McpSurface({
     {
       title: copy.mcpStepThree,
       body: cloudflareAutomatic
-        ? "In ChatGPT, connect the existing ContinuosWebIntegracao plugin with OAuth to https://codex-native2.continuos.com.br/mcp. The launcher uses this exact connector name."
+        ? `In ChatGPT, authorize ${snapshot.connectorNames.automatic} using the external gateway ${externalGateway.mcpUrl}. The gateway identifies itself as ${externalGateway.expectedService}.`
         : manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
     },
-  ], [copy, manualInteraction, cloudflareAutomatic]);
+  ], [copy, manualInteraction, cloudflareAutomatic, externalGateway, snapshot.connectorNames.automatic]);
   const guideMedia = cloudflareAutomatic ? null : MCP_GUIDE_MEDIA[step];
 
   const move = async (next: number) => {
@@ -1355,13 +1366,15 @@ function McpSurface({
     try {
       await api!.setupMcp({
         interactionMode,
-        ...(credentialsConfigured && !replacingCredentials
+        mcpTransport: cloudflareAutomatic ? "external-cloudflare" : "openai-tunnel",
+        ...(cloudflareAutomatic ? { externalGateway } : {}),
+        ...(cloudflareAutomatic ? {} : credentialsConfigured && !replacingCredentials
           ? { replace: false }
           : { tunnelId, runtimeKey, replace: true }),
       });
       setRuntimeKey("");
       setTunnelId("");
-      setCredentialsConfigured(true);
+      if (!cloudflareAutomatic) setCredentialsConfigured(true);
       setReplacingCredentials(false);
       updateState((await api!.snapshot()).state);
       await move(2);
@@ -1389,11 +1402,26 @@ function McpSurface({
   return (
     <ContentSurface
       fit
-      subtitle={cloudflareAutomatic ? "ChatGPT uses the ContinuosWebIntegracao OAuth plugin through Cloudflare." : devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
+      subtitle={cloudflareAutomatic ? `ChatGPT uses ${snapshot.connectorNames.automatic} through the external OAuth gateway.` : devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : "MCP"}
     >
       {!manualInteraction && !configuringInactiveMode && !snapshot.state.coreSetupComplete ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpSetupRequired}</NoticeRow>
+      ) : null}
+
+      {!manualInteraction ? (
+        <div className="field-list">
+          <FieldRow label="Automatic MCP transport">
+            <select
+              disabled={busy}
+              onChange={(event) => setAutomaticTransport(event.target.value as "openai-tunnel" | "external-cloudflare")}
+              value={automaticTransport}
+            >
+              <option value="external-cloudflare">External Cloudflare gateway (OAuth)</option>
+              <option value="openai-tunnel">OpenAI tunnel</option>
+            </select>
+          </FieldRow>
+        </div>
       ) : null}
 
       <div className="wizard-stepper" aria-label={`${step + 1} / 3`}>
@@ -1441,7 +1469,7 @@ function McpSurface({
               cloudflareAutomatic ? (
                 <div className="inline-actions">
                   <SecondaryButton icon="external" onClick={() => void openExternal("https://one.dash.cloudflare.com/")}>Cloudflare One</SecondaryButton>
-                  <SecondaryButton icon="external" onClick={() => void openExternal("https://codex-native2.continuos.com.br/health")}>Gateway health</SecondaryButton>
+                  <SecondaryButton icon="external" onClick={() => void openExternal(externalGateway.healthUrl)}>Gateway health</SecondaryButton>
                 </div>
               ) : (
               <div className="inline-actions">
@@ -1456,7 +1484,18 @@ function McpSurface({
             ) : null}
             {step === 1 ? (
               cloudflareAutomatic ? (
-                <NoticeRow icon="check" tone="success">Cloudflare Tunnel and OAuth gateway are managed outside this launcher. No OpenAI Tunnel ID or API key is needed.</NoticeRow>
+                <div className="field-list">
+                  <FieldRow label="Gateway MCP URL">
+                    <input value={externalGateway.mcpUrl} onChange={(event) => setExternalGateway({ ...externalGateway, mcpUrl: event.target.value })} spellCheck={false} />
+                  </FieldRow>
+                  <FieldRow label="Gateway health URL">
+                    <input value={externalGateway.healthUrl} onChange={(event) => setExternalGateway({ ...externalGateway, healthUrl: event.target.value })} spellCheck={false} />
+                  </FieldRow>
+                  <FieldRow label="Gateway service identity">
+                    <input value={externalGateway.expectedService} onChange={(event) => setExternalGateway({ ...externalGateway, expectedService: event.target.value })} spellCheck={false} />
+                  </FieldRow>
+                  <NoticeRow icon="check" tone="success">The Cloudflare Tunnel and OAuth gateway are managed outside this launcher.</NoticeRow>
+                </div>
               ) : credentialsConfigured && !replacingCredentials ? (
                 <div className="saved-credentials">
                   <NoticeRow icon="check" tone="success">
@@ -1525,7 +1564,7 @@ function McpSurface({
               <div className="connector-actions">
                 <NoticeRow icon="alert" tone="warning">
                   {cloudflareAutomatic
-                    ? "Automatic mode uses ContinuosWebIntegracao exclusively. Other ChatGPT plugins are ignored; verify the new connector is authorized."
+                    ? `Automatic mode uses ${snapshot.connectorNames.automatic}. Verify this connector is authorized in ChatGPT.`
                     : manualInteraction
                       ? copy.manualConnectorNotice
                       : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
@@ -1564,13 +1603,13 @@ function McpSurface({
         {step === 1 ? (
           <PrimaryButton
             disabled={
-              !cloudflareAutomatic && (busy
+              busy
               || (!manualInteraction && !configuringInactiveMode && !snapshot.state.coreSetupComplete)
-              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey)))
+              || (!cloudflareAutomatic && (!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
             }
-            onClick={() => void (cloudflareAutomatic ? safeMove(2) : install())}
+            onClick={() => void install()}
           >
-            {cloudflareAutomatic ? copy.next : busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
+            {busy ? copy.running : cloudflareAutomatic ? copy.connect : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
           </PrimaryButton>
         ) : null}
         {step === 2 ? (

@@ -29,20 +29,38 @@ const BOOT_TIME_CLOCK_TOLERANCE_MS = 5_000;
 const CURRENT_BOOT_STARTED_AT_MS = Date.now() - (os.uptime() * 1_000);
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-const EXTERNAL_CLOUDFLARE_HEALTH = "https://codex-native2.continuos.com.br/health";
 function usesExternalCloudflareGateway(config) {
   return config?.mode === "full"
     && config.browserInteractionMode === "automatic"
-    && config.appName === "ContinuosWebIntegracao";
+    && config.mcpTransport === "external-cloudflare";
 }
-async function cloudflareHealth() {
+function validateExternalGateway(config) {
+  const gateway = config?.externalGateway;
+  if (!gateway || typeof gateway !== "object") throw new Error("External Cloudflare gateway configuration is missing");
+  for (const key of ["mcpUrl", "healthUrl"]) {
+    if (typeof gateway[key] !== "string") throw new Error(`Invalid externalGateway.${key}`);
+    let url;
+    try { url = new URL(gateway[key]); } catch { throw new Error(`Invalid externalGateway.${key}`); }
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash
+      || url.pathname === "/" || url.href !== gateway[key]) {
+      throw new Error(`externalGateway.${key} must be a canonical HTTPS endpoint without credentials, query or fragment`);
+    }
+  }
+  if (typeof gateway.expectedService !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(gateway.expectedService)) {
+    throw new Error("Invalid externalGateway.expectedService");
+  }
+  return gateway;
+}
+async function cloudflareHealth(config) {
+  const gateway = validateExternalGateway(config);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const response = await fetch(EXTERNAL_CLOUDFLARE_HEALTH, {signal: controller.signal, redirect: "error"});
+    const response = await fetch(gateway.healthUrl, {signal: controller.signal, redirect: "error"});
     if (!response.ok) throw new Error("Gateway returned unhealthy HTTP status");
     const data = await response.json();
-    if (data?.status !== "ok" || data?.service !== "ContinuosWebIntegracao")
+    if (data?.status !== "ok" || data?.service !== gateway.expectedService)
       throw new Error("Unexpected Cloudflare gateway identity");
     return {
       ready: true, pid: null, state: "ready", processRunning: undefined,
@@ -66,6 +84,7 @@ async function cloudflareHealth() {
  * This remains bounded and still requires the exact gateway identity.
  */
 async function waitForExternalCloudflareGatewayReady({
+  config,
   healthCheck = cloudflareHealth,
   pause = sleep,
   timeoutMs = 60_000,
@@ -73,7 +92,7 @@ async function waitForExternalCloudflareGatewayReady({
 } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const status = await healthCheck();
+    const status = await healthCheck(config);
     if (status.ready || Date.now() >= deadline) return status;
     await pause(Math.max(1, Math.min(pollMs, deadline - Date.now())));
   }
@@ -351,8 +370,26 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
       }
     }
   };
+  const transport = config.mcpTransport ?? "openai-tunnel";
+  if (transport !== "openai-tunnel" && transport !== "external-cloudflare") {
+    throw new Error("Runtime configuration has an invalid MCP transport");
+  }
+  if (config.mode === "browser-only" && (config.mcpTransport || config.externalGateway)) {
+    throw new Error("Browser-only configuration cannot use an MCP transport");
+  }
   if (config.mode === "full") {
-    validateTunnel(config.tunnel, "tunnel");
+    if (transport === "external-cloudflare") {
+      if (config.browserInteractionMode !== "automatic" || config.tunnel || config.automaticTunnel) {
+        throw new Error("External Cloudflare requires Automatic mode without an active OpenAI tunnel");
+      }
+      validateExternalGateway(config);
+    } else if (config.externalGateway !== undefined) {
+      if (config.browserInteractionMode !== "manual") {
+        throw new Error("An external gateway can only be retained during Zero Risk mode");
+      }
+      validateExternalGateway(config);
+    }
+    if (transport === "openai-tunnel") validateTunnel(config.tunnel, "tunnel");
     if (config.automaticTunnel !== undefined) validateTunnel(config.automaticTunnel, "automaticTunnel");
     if (config.manualTunnel !== undefined) validateTunnel(config.manualTunnel, "manualTunnel");
     if (config.automaticTunnel && config.manualTunnel
@@ -362,10 +399,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     const activeTunnel = config.browserInteractionMode === "manual"
       ? config.manualTunnel
       : config.automaticTunnel;
-    if ((config.automaticTunnel || config.manualTunnel) && !activeTunnel) {
+    if (transport === "openai-tunnel" && (config.automaticTunnel || config.manualTunnel) && !activeTunnel) {
       throw new Error("Active browser interaction mode has no tunnel configuration");
     }
-    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(config.tunnel)) {
+    if (transport === "openai-tunnel" && activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(config.tunnel)) {
       throw new Error("Active browser interaction mode does not match the active tunnel");
     }
   }
@@ -694,7 +731,7 @@ class RuntimeSupervisor {
   }
 
   async readTunnelHealth(config) {
-    if (usesExternalCloudflareGateway(config)) return await cloudflareHealth();
+    if (usesExternalCloudflareGateway(config)) return await cloudflareHealth(config);
     const tunnel = config.tunnel;
     // `runtimes status` performs an optional control-plane lookup when the saved runtime key is
     // available. The cleanup dry run is the official local-only inventory and never removes
@@ -977,7 +1014,7 @@ class RuntimeSupervisor {
   }
 
   async observeTunnelForMonitor(config) {
-    if (usesExternalCloudflareGateway(config)) return await cloudflareHealth();
+    if (usesExternalCloudflareGateway(config)) return await cloudflareHealth(config);
     const local = await this.readLocalTunnelHealth();
     if (local.statusKnown) return local;
     try {
@@ -1068,7 +1105,7 @@ class RuntimeSupervisor {
   async startTunnel(config, operationName = "runtime-start", { forceRestart = false } = {}) {
     if (config.mode !== "full") return;
     if (usesExternalCloudflareGateway(config)) {
-      const status = await waitForExternalCloudflareGatewayReady();
+      const status = await waitForExternalCloudflareGatewayReady({ config });
       if (!status.ready) throw new Error(status.detail);
       this.tunnel = { pid: null, exitCode: null, signalCode: null, managed: false };
       this.startTunnelMonitor(config);
@@ -1216,7 +1253,7 @@ class RuntimeSupervisor {
               pid: health.pid,
               exitCode: null,
               signalCode: null,
-              managed: true,
+              managed: !usesExternalCloudflareGateway(config),
             };
             this.tryWriteState("ready");
           }

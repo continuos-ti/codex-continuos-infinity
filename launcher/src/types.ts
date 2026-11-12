@@ -120,7 +120,11 @@ export interface LauncherSnapshot {
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
+  mcpTransport?: "openai-tunnel" | "external-cloudflare";
+  automaticMcpTransport?: "openai-tunnel" | "external-cloudflare";
+  externalGateway?: { mcpUrl: string; healthUrl: string; expectedService: string };
   mcpCredentialsConfigured: boolean;
+  mcpTunnelCredentialsConfigured?: boolean;
   logs: LogRecord[];
   urls: {
     github: string;
@@ -173,6 +177,8 @@ export interface LauncherApi {
     runtimeKey?: string;
     replace?: boolean;
     interactionMode?: BrowserInteractionMode;
+    mcpTransport?: "openai-tunnel" | "external-cloudflare";
+    externalGateway?: { mcpUrl: string; healthUrl: string; expectedService: string };
   }): Promise<{ ok: boolean; stdout: string }>;
   setConnectorNameSuffix(suffix: string): Promise<LauncherState>;
   setMcpStep(step: number): Promise<LauncherState>;
