@@ -136,6 +136,41 @@ class DurableCommandJobsTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["exit_code"], 9)
 
+    def test_concurrent_completion_keeps_one_immutable_exit_code(self):
+        self.reserve()
+
+        def complete(exit_code):
+            try:
+                self.store._mark_completed(self.operation_id, exit_code)
+                return None
+            except RuntimeError as error:
+                return str(error)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(complete, [0, 1] * 8))
+
+        recorded = self.store._load(self.operation_id)
+        self.assertEqual(recorded["status"], "completed")
+        self.assertIn(recorded["exit_code"], {0, 1})
+        self.assertEqual(results.count(None), 8)
+        self.assertTrue(all(
+            result is None or "Conflicting exit codes" in result
+            for result in results
+        ))
+
+    def test_completion_is_idempotent_for_same_exit_code(self):
+        self.reserve()
+        self.store._mark_completed(self.operation_id, 7)
+        self.store._mark_completed(self.operation_id, 7)
+        self.assertEqual(self.store._load(self.operation_id)["exit_code"], 7)
+
+    def test_launch_failure_cannot_be_overwritten_by_completion(self):
+        self.reserve()
+        self.store.mark_launch_failed(self.operation_id)
+        with self.assertRaisesRegex(RuntimeError, "launch failed"):
+            self.store._mark_completed(self.operation_id, 0)
+        self.assertEqual(self.store._load(self.operation_id)["status"], "launch_failed")
+
     def test_provider_epoch_mismatch_is_not_treated_as_not_found(self):
         self.reserve()
 

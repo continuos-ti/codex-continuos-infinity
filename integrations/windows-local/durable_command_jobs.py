@@ -422,24 +422,31 @@ class DurableCommandJobs:
     def _mark_completed(self, operation_id: str, exit_code: int) -> None:
         connection = self._connect()
         try:
+            # Competing observers must agree on a single, durable exit code.
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT exit_code FROM command_jobs WHERE operation_id = ?",
+                "SELECT status, exit_code FROM command_jobs WHERE operation_id = ?",
                 (operation_id,),
             ).fetchone()
             if row is None:
                 raise ValueError("Unknown operation_id")
+            if row["status"] not in {"starting", "running", "completed"}:
+                raise RuntimeError("Cannot complete an operation after launch failed")
             previous = row["exit_code"]
+            if row["status"] == "completed" and previous is None:
+                raise RuntimeError("Completed operation is missing its exit code")
             if previous is not None and int(previous) != exit_code:
                 raise RuntimeError("Conflicting exit codes were reported for one operation_id")
             connection.execute(
-                """
-                UPDATE command_jobs
-                SET status = 'completed', exit_code = ?, updated_at = ?
-                WHERE operation_id = ?
-                """,
+                "UPDATE command_jobs "
+                "SET status = 'completed', exit_code = ?, updated_at = ? "
+                "WHERE operation_id = ?",
                 (exit_code, time.time(), operation_id),
             )
             connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         finally:
             connection.close()
 

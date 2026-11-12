@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "integration":  "windows-local-durable-identity",
-    "version":  "1.0.0",
+    "version":  "1.0.1",
     "generatedAt":  "2026-11-12",
     "provider":  "Windows Local",
     "tools":  [
@@ -33,7 +33,7 @@
     "effectScope":  "The tracked PowerShell wrapper process. Detached processes and external services require resource-specific reconciliation.",
     "installState":  "staged-not-applied-to-real-provider",
     "validation":  {
-                       "pythonTests":  25,
+                       "pythonTests":  28,
                        "adapterTests":  11,
                        "dryRunAgainstRealProviderSource":  "passed",
                        "fixtureApplyAndRollback":  "passed",
@@ -44,7 +44,7 @@
                       "path":  "durable_command_jobs.py",
                       "role":  "provider-ledger",
                       "packaged":  true,
-                      "sha256":  "fb9c0590661b719f49f0e4b4b4d6bd9cfae7739332e5f833c8f5d4258e81f635"
+                      "sha256":  "a8fac393f6405bc5b04dd309845aff195a9defdacd238b8307ebba7dc827a384"
                   },
                   {
                       "path":  "apply-durable-command-jobs.ps1",
@@ -56,13 +56,13 @@
                       "path":  "README.md",
                       "role":  "integration-documentation",
                       "packaged":  true,
-                      "sha256":  "729d06d75fa708455d958558f97d5d27746cf4b6acad20c8b1e987bc1f868290"
+                      "sha256":  "776fdfc12e96b2ca42992faebdf173560649c27cf7a8e1d7b5f36e52aa37b8da"
                   },
                   {
                       "path":  "tests/test_durable_command_jobs.py",
                       "role":  "provider-tests",
                       "packaged":  false,
-                      "sha256":  "b3aa82c403357e0afcddcebd39897fb5ff487e7e561d029e20844d005df2c648"
+                      "sha256":  "ce7df69ddb54e1498198ff823a63537fb5e8eade3b13d0551a1be9e90bcfa92a"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
