@@ -152,7 +152,7 @@ A fonte real `H:\Projetos\windows-local` permaneceu inalterada e o serviço não
 
 ### Verificação local do HEAD (12/11/2026)
 
-`bun run verify` terminou com código **0**. A suíte principal executou **1.398 testes em 110 arquivos**, com **1.285 aprovados, 113 ignorados e zero falhas**, totalizando 10.649 chamadas a `expect()`. Os testes do launcher executaram **449 casos**, com **445 aprovados, quatro ignorados e zero falhas**. Os typechecks, o build Vite e o smoke do runtime relocável passaram. O build Vite manteve o aviso existente de um chunk JavaScript acima de 500 KB.
+`bun run verify` terminou com código **0**. A suíte principal executou **1.399 testes em 110 arquivos**, com **1.286 aprovados, 113 ignorados e zero falhas**, totalizando 10.666 chamadas a `expect()`. Os testes do launcher executaram **449 casos**, com **445 aprovados, quatro ignorados e zero falhas**. Os typechecks, o build Vite e o smoke do runtime relocável passaram. O build Vite manteve o aviso existente de um chunk JavaScript acima de 500 KB.
 
 As validações adicionais passaram com **11 testes do adaptador**, **21 testes Python Windows Local**, dry-run contra a fonte real e apply/rollback em cópia descartável. A instalação do provider real, o reinício controlado e o E2E OAuth/PKCE continuam fora desta validação local.
 
@@ -164,7 +164,7 @@ O workflow de `push` `43189685693`, no SHA `073fcbf4e50ae3ed5f0a83dcb14ee9f410ed
 
 A execução local de `python -m unittest discover -s integrations\\windows-local\\tests -v` concluiu com **21/21 testes aprovados**. Os 21 casos incluem idempotência, reserva concorrente, época do provedor, estado desconhecido, marcadores duráveis, reanexação de processo e integridade dos hashes do manifesto.
 
-A inspeção somente leitura dos health endpoints locais e públicos retornou HTTP 200 em Windows Local, gateway OAuth e proxy Responses. O `/healthz` do proxy informou `mode=full`, `accepting_turns=true`, `active_http_turns=4` e `active_browser_turns=4` no momento da consulta. Nenhum serviço foi reiniciado e nenhuma chamada ativa foi interrompida.
+A inspeção somente leitura dos health endpoints locais e públicos retornou HTTP 200 em Windows Local, gateway OAuth e proxy Responses. O `/healthz` informou `version=6.1.13`, `mode=full`, `accepting_turns=true`, `active_http_turns=4`, `active_browser_turns=3`, `model_catalog_successes=577/585` e último resultado do catálogo HTTP 200 em 10:14:44 UTC. Nenhum serviço foi reiniciado e nenhuma chamada ativa foi interrompida.
 
 A inspeção do broker externo identificou que `codex_cf_gateway_lab.py` usa `activity_id` com operações `claim` e `activity_complete` para proteger o ciclo de vida de uma chamada. Esse lease não fornece idempotência por chamada nem reconciliação de resultados após crash. A fonte ativa `H:\\Projetos\\windows-local` ainda mantém `SHOTS` e `JOBS` em memória, e `remote_server.py` encaminha chamadas com JSON-RPC `id=1`. O bridge Agent Desktop classifica timeout como entrega desconhecida e repetição insegura, sem uma consulta durável de estado.
 
@@ -178,4 +178,12 @@ A regressão `tests/attachment-upload-lease.test.ts` agora inicia cinco processo
 
 A suíte focada de `attachment-upload-lease.test.ts`, `attachment-upload.test.ts` e `browser-worker-contract.test.ts` concluiu com **155 aprovados, 12 ignorados, zero falhas e 903 asserções**. A auditoria real de 06/11 já havia comprovado cinco chats simultâneos com ferramentas de leitura e, separadamente, duas conversas com uploads físicos independentes de PNG. O teste de cinco processos comprova o lock entre helpers, mas não substitui um E2E de cinco chats com anexos físicos. Essa combinação real permanece pendente, sujeita também à cota externa de upload da conta.
 
-A verificação integral local `bun run verify` em 12/11/2026 terminou com **1399 testes, 1286 aprovados, 113 ignorados, zero falhas e 10666 asserções**. Typecheck, testes do launcher, build Vite e smoke do ciclo de cancelamento nativo também passaram. O build emitiu o aviso não bloqueante de chunk minificado acima de 500 kB.
+### Instalador Windows produzido (12/11/2026)
+
+O instalador foi empacotado a partir do commit `2e5580005a451d0062310d0e6db4b533646e18d5`, em worktree isolado, com Bun 1.4.0, Electron 42.11.16 e electron-builder 26.15.3. O build isolado evitou a pasta `launcher/build/runtime` bloqueada por processos Bun ativos no worktree principal. O artefato foi preservado em `launcher/artifacts/20261112/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe`, com **153.695.198 bytes** e SHA-256 `F1320D7601E4D46439B882CC830595F13D12F624FBB8B3BCE49661BB434C2EB3`. O blockmap tem SHA-256 `FDA52F599E6536E1B40547227699CF80D2F8824555C9B4BBB3536644C6EDE599`. O artefato anterior de 11/11 foi preservado.
+
+O smoke local retornou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. O workflow `push` `43196279369` concluiu os cinco jobs com sucesso. O job Windows passou pelo `app:package`, `app:smoke` e pelo teste NSIS de instalação e desinstalação em runner descartável. Ubuntu, macOS, `actionlint` e `secret-scan` também passaram.
+
+O instalador está **sem assinatura Authenticode** (`Get-AuthenticodeSignature` retornou `NotSigned`). `CSC_LINK` e `CSC_NAME` não estavam configurados e não havia certificado Code Signing com chave privada nos stores CurrentUser/LocalMachine. O pacote é validado para instalação e smoke, mas a distribuição assinada ainda depende de provisionar um certificado de assinatura.
+
+A tentativa 2 do workflow `pull_request` `43196286219` continua em fila somente no job `verify (macos-15)`. Windows, Ubuntu, `actionlint` e `secret-scan` passaram nessa tentativa. O mesmo SHA já passou pela matriz completa no workflow `push` `43196279369`; a tentativa PR ainda não tem resultado de execução para macOS.

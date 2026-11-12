@@ -21,3 +21,15 @@ A comparação normalizada por LF identificou 38 diferenças de conteúdo na tag
 | Identidade durável Windows Local | broker-operation-identity.ts, integrations/windows-local/durable_command_jobs.py, instalador e testes Python | Persistência de screenshot_id, job_id, época do provedor e consulta de processo após reinício implementadas e testadas em cópia isolada. Instalação na fonte Windows Local real aguarda janela sem chamadas ativas. |
 
 A documentação técnica anterior permanece nos relatórios de E:/Projetos/codex-native2-cloudflare-lab. Esse laboratório e os logs privados não são incorporados ao repositório público.
+
+## Auditoria de três vias do runtime instalado (12/11/2026)
+
+A fonte personalizada arquivada em `E:/Projetos/codex-native2-cloudflare-lab/source/codex-chatgpt-web-main` declara `codex-chatgpt-web@6.1.13` e `bun@1.4.0`. Um build reproduzível dessa fonte, usando Bun 1.4.0 e saída temporária, gerou hashes SHA-256 idênticos aos artefatos do runtime instalado 6.1.13 para `package.json` (`4B519D0C3A76AD57EAC099BB2AC8779E55370A0568162AC07B768B19EB6C2279`), `bun.lock` (`298A89F9A9F050FBB7C4C839CC56966C1CB214C0369BC98221C6A262C6ADB6A0`), `cli.js` (`3A0F8CEA628A481355761A8FD72B62158A633B4224036C59121DBE308565BB82`) e `browser-helper.cjs` (`B1F6E1D2CBF985E7EFCAFF05C3FE29B047C6CB35A059EC7797165D2BABB9663E`).
+
+O runtime de `C:/Program Files/Codex Web GPT/resources/runtime` corresponde byte a byte ao perfil `6.1.13-win32-x64` nos arquivos `manifest.json`, `app/package.json`, `app/bun.lock`, `app/cli.js`, `app/browser-helper.cjs` e `runtime/bun.exe`. O manifesto instalado declara `appVersion=6.1.13`, `bunVersion=1.4.0` e `bundleId=3c9d4c9b21fb1abb66acc46d484268bb9319bf2bd663fb5f7ccdd9a3a8614b9f`. A inspeção do processo pai confirmou que o `bun.exe` filho do `Codex Web GPT.exe` em execução carrega o runtime `6.1.13-win32-x64`.
+
+O perfil `6.1.17-win32-x64` permanece armazenado, mas seus hashes de `package.json`, `bun.lock`, `cli.js` e `browser-helper.cjs` diferem dos artefatos ativos. Nenhum processo ativo observado utilizava esse perfil. O `resources/app.asar` instalado também declara o launcher `codex-web-gpt-launcher@6.1.13`.
+
+O upstream consultado no GitHub tem a tag de release `v6.1.18` no commit `1cc49aaa627a995d3f0cf2f971fde7f764996649` e `main` no commit `32fd3436eb6ed94898b987a3c369003bb6fb8d54`, um commit posterior restrito a estabilização de teste. A alteração desse teste já está presente no branch do Infinity. O repositório do fork declara `codex-continuos-infinity@6.1.18-continuos.1` e usa o commit `32fd3436...` como base upstream.
+
+Essa comparação comprova que a fonte personalizada 6.1.13 reproduz o runtime 6.1.13 atualmente carregado pelo launcher. O perfil 6.1.17 é uma versão retida, e o fork 6.1.18-continuos.1 está adiantado em relação à instalação ativa. A migração exige homologação própria do fork e drenagem dos turnos ativos.
