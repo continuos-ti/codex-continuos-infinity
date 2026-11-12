@@ -13,6 +13,17 @@ O preflight de CWD confiável agora emite comentários visíveis durante as duas
 Continuam pendentes o pareamento OAuth/PKCE manual do cliente ChatGPT, a chamada autenticada `dev_ping` iniciada pelo Infinity, testes reais de 2–5 chats com anexos físicos, instalação/reinício controlado do provedor Windows Local, reconciliação independente de efeitos MCP, novo vínculo nativo após crash e instalação/rollback em staging. A instalação produtiva 6.1.13 e os túneis compartilhados permaneceram intocados.
 
 
+### OAuth/PKCE DEV concluído e smoke real do conector — 12/11/2026
+
+O pedido iniciado às 19:24 expirou sem troca do código. Uma nova autorização foi criada às **20:21:50**, aprovada manualmente às **20:22:00** e teve o authorization code trocado às **20:22:05**. A auditoria foi consultada apenas para timestamps e nomes de eventos; nenhum segredo, chave, nonce, código ou token foi lido.
+
+O conector real `ContinuosWebIntegracao DEV Web` foi exercitado após a autorização:
+- `dev_ping` retornou `status=ok`, `service=ContinuosWebIntegracaoDev`, `mode=isolated-dev`, `side_effects=false` e `production_dispatcher_loaded=false`.
+- `dev_echo` devolveu exatamente `codex-infinity-dev-smoke-20261112`.
+- `dev_read_fixture("hello.txt")` leu somente a fixture fixa e retornou SHA-256 `d641e1b0bda1f43ffb34bae95cfed4802b64c7fc1d0b78030ccf8d89e0939254`.
+
+Os três tools DEV estão disponíveis após OAuth. Isso comprova OAuth/PKCE e o transporte MCP do conector DEV isolado. **Não comprova ainda** o fluxo nativo do Infinity pelo broker local `ContinuosWebIntegracao`, nem as operações reais do Windows Local. O health DEV continua separado da produção, e POST anônimo em `/mcp` permanece 401. Nenhuma chave foi automatizada ou compartilhada; a produção não foi alterada.
+
 ### Diagnóstico da rejeição de pareamento DEV — 12/11/2026
 
 O gateway isolado permaneceu em execução desde `16:13`, com a chave de pareamento gerada às `16:12`. O arquivo `gateway/pairing.secret` tem 48 caracteres ASCII e uma quebra de linha final, como produzido pelo inicializador. O servidor lê esse arquivo com `strip()` durante a inicialização. A auditoria local registrou `client_registered` às `18:02:32`, `dev_authorization_created` às `18:03:05` e `dev_pair_incorrect` às `18:04:34`, sem aprovação ou troca do código de autorização para esse pedido. Isso demonstra rejeição da entrada informada, mas não identifica o texto submetido nem comprova erro de configuração.
