@@ -80,6 +80,15 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("response diagnostics retain 
     const bounded = await page.locator("article").evaluateAll(chatGptResponseStructures);
     expect(bounded[0]!.truncated).toBeTrue();
     expect(bounded[0]!.nodes.length).toBeLessThanOrEqual(200);
+    await page.locator("article").evaluate(root => root.innerHTML = '<div class="markdown">PRIVATE</div>'.repeat(300)
+      + '<aside role="alert">PRIVATE terminal error</aside>'
+      + '<button data-testid="regenerate-thread-error-button">PRIVATE retry</button>');
+    const tail = await page.locator("article").evaluateAll(chatGptResponseStructures);
+    expect(tail[0]!.truncated).toBeTrue();
+    expect(tail[0]!.nodes.length).toBeLessThanOrEqual(200);
+    expect(tail[0]!.nodes.some(node => node.alert)).toBeTrue();
+    expect(tail[0]!.nodes.some(node => node.retryControl)).toBeTrue();
+    expect(JSON.stringify(tail)).not.toContain("PRIVATE");
   } finally { await browser.close(); }
 });
 
