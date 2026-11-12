@@ -2466,15 +2466,22 @@ class ChatGptBrowserDiagnostics {
   }
 }
 
+export function resolveChatGptBrowserDiagnosticsPath(
+  configuredPath?: string,
+  configDirectory = getConfigDir(),
+): string {
+  return resolve(expandUserPath(
+    configuredPath?.trim() || join(configDirectory, "diagnostics", "browser-turns"),
+  ));
+}
+
 export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBrowserConfig {
   const configured = provider.chatgptWeb ?? {};
   const appName = configured.appName?.trim() || CHATGPT_CONNECTOR_NAME;
   const browserHost = configured.browserHost ?? "managed-chrome";
   const browserHostDescriptorPath = configured.browserHostDescriptorPath?.trim();
   const browserHelperScriptPath = configured.browserHelperScriptPath?.trim();
-  const browserDiagnosticsPath = resolve(expandUserPath(
-    configured.browserDiagnosticsPath?.trim() || join(getConfigDir(), "diagnostics", "browser-turns"),
-  ));
+  const browserDiagnosticsPath = resolveChatGptBrowserDiagnosticsPath(configured.browserDiagnosticsPath);
   const turnTimeoutMs = configured.turnTimeoutMs;
   if (browserHost === "launcher" && !browserHostDescriptorPath) {
     throw new Error("Launcher browser host requires chatgptWeb.browserHostDescriptorPath");

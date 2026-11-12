@@ -18,6 +18,8 @@ O prompt original aceito nunca deve ser reenviado cegamente. Primeiro é obrigat
 
 O pedido técnico de reparo usa somente o identificador sanitizado do incidente e o código validado da falha. O texto livre da exceção pode conter URLs, credenciais ou instruções não confiáveis; por isso ele não é incorporado ao prompt nem transportado pelo evento IPC `repair_prepare_requested`. Detalhes adicionais devem ser obtidos de diagnósticos locais autorizados e inspecionados separadamente. O teste `tests/in-band-auto-repair.test.ts` cobre vazamento de mensagem bruta, URL com token e instrução injetada, enquanto `tests/in-band-autorepair-ipc.test.ts` verifica o contrato de transporte.
 
+O prompt de recuperação aponta para o mesmo diretório de diagnósticos resolvido pelo browser worker, respeitando `chatgptWeb.browserDiagnosticsPath` e o diretório de configuração ativo do perfil, inclusive no harness DEV isolado. O caminho legado fixo do perfil de produção foi eliminado. Um caminho com caracteres de controle, URL, fragmento de credencial ou comprimento excessivo é omitido do prompt técnico, sem alterar a coleta local de diagnósticos. `tests/in-band-auto-repair.test.ts` valida o alinhamento entre worker e supervisor em perfis e caminhos customizados, bem como a omissão de caminhos suspeitos.
+
 ## Falhas excluídas
 
 Falhas de autenticação, aprovações manuais pendentes, CWD não comprovado, tarefas com ferramentas ativas e perda total do processo não têm autorização genérica de replay. Se o estado não puder ser provado, preservar o incidente e orientar a intervenção necessária. Retomada após crash total requer novo vínculo de sessão confiável.

@@ -24,7 +24,7 @@ import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
 import { recordTrustedPreflightIncident } from "./trusted-preflight-incident";
 import { resolveTrustedPreflightWithRecovery } from "./trusted-preflight-recovery";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
-import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-worker";
+import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs, resolveChatGptBrowserDiagnosticsPath } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
@@ -838,7 +838,7 @@ export function createChatGptWebAdapter(
                 content: inBandRepairTaskPrompt({
                   traceId: failure.traceId,
                   code: failure.code,
-                  diagnosticsDirectory: resolve(expandUserPath("~/.codex-chatgpt-web/diagnostics/browser-turns")),
+                  diagnosticsDirectory: resolveChatGptBrowserDiagnosticsPath(provider.chatgptWeb?.browserDiagnosticsPath),
                 }),
               }],
             },
