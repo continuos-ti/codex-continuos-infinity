@@ -8,6 +8,16 @@ O compare oficial `32fd3436...3b41eda2` confirmou nove commits upstream. Foram i
 
 Na validação local de 12/11, os testes direcionados de journal/reconciliação, identidade de operação, autorreparo in-band e CWD confiável terminaram com **242 aprovados, zero falhas e 1.224 verificações** em sete arquivos. A integração Windows Local passou em **21 testes Python**, e o instalador executou o dry-run contra `H:\Projetos\windows-local` sem modificar a fonte ou os processos ativos. Esses testes exercitam contratos e cópias isoladas. Não comprovam OAuth/PKCE completo no harness DEV, efeitos externos de ferramentas após crash ou retomada com novo vínculo nativo.
 
+## DEV Full com transporte external-cloudflare (12/11/2026)
+
+- **Comportamento anterior** — `dev setup` aceitava `external-cloudflare`, mas `dev status` e `dev chat` consultavam `tunnelStatus` e exigiam credenciais de túnel local.
+- **Problema** — um perfil DEV Full configurado para o gateway Cloudflare não conseguia reportar prontidão nem iniciar seu broker isolado.
+- **Componentes** — `src/doctor.ts`, `src/dev-chat/cli.ts`, `src/dev-chat/transport.ts`, `src/setup.ts`, `tests/doctor-external-gateway.test.ts` e `tests/dev-chat.test.ts`.
+- **Implementação** — `inspectExternalGatewayHealth` centraliza o timeout, a resposta HTTP e a identidade esperada do serviço. Doctor, status e transporte DEV usam a mesma verificação. O transporte DEV aceita Cloudflare externo e mantém o broker local isolado.
+- **Equivalência upstream** — não há implementação equivalente no upstream. É uma extensão do harness do fork.
+- **Dependências e riscos** — depende do endpoint de saúde configurado e do campo `expectedService`. A prontidão confirma a saúde do gateway, sem provar OAuth/PKCE nem a execução de ferramentas MCP. As ferramentas do `dev chat` continuam simuladas.
+- **Aceite** — três testes unitários cobrem sucesso, HTTP 401 e identidade divergente. Um teste cobre a criação do broker DEV sem túnel local. A consulta ao endpoint real configurado retornou `ready=true`.
+
 A auditoria anterior registrou 28 alterações e 12 novos arquivos relativos ao arquivo de 25/10. A comparação posterior por texto normalizado detectou 38 diferenças. Foram integradas 36 modificações mais 12 arquivos novos ao ramo de desenvolvimento. Onze arquivos tiveram conflitos resolvidos preservando correções oficiais da 6.1.18.
 
 ## Histórico de validação até 11/11/2026

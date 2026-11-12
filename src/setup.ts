@@ -728,9 +728,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
 }
 
 /**
- * Configure the isolated launcher/browser/tunnel inputs used by the repository DEV harness.
+ * Configure the isolated launcher/browser/MCP inputs used by the repository DEV harness.
  * This deliberately has no Codex integration, Responses listener, or system service; the DEV
- * launcher supervises only the isolated MCP tunnel after this transaction commits.
+ * launcher supervises the configured MCP transport after this transaction commits.
  */
 export async function setupDevProfile(options: SetupOptions): Promise<DevProfileSetupResult> {
   const existing = loadExistingConfig();

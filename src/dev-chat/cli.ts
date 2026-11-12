@@ -8,6 +8,7 @@ import {
   readLauncherBrowserHostDescriptor,
 } from "../launcher-browser-host";
 import { setupDevProfile } from "../setup";
+import { inspectExternalGatewayHealth } from "../doctor";
 import { tunnelStatus } from "../tunnel";
 import {
   createLauncherDevAdapter,
@@ -316,8 +317,17 @@ export async function runDevCommand(args: string[]): Promise<void> {
         const loaded = loadConfig();
         config = { configured: true, mode: loaded.mode, purpose: loaded.purpose };
         if (loaded.mode === "full") {
-          const inspected = tunnelStatus(loaded);
-          mcpRuntime = { required: true, ready: inspected.ok && inspected.ready, detail: inspected.detail };
+          if (loaded.mcpTransport === "external-cloudflare") {
+            const inspected = await inspectExternalGatewayHealth(loaded.externalGateway!);
+            mcpRuntime = {
+              required: true,
+              ready: inspected.ready,
+              ...(!inspected.ready ? { detail: inspected.detail } : {}),
+            };
+          } else {
+            const inspected = tunnelStatus(loaded);
+            mcpRuntime = { required: true, ready: inspected.ok && inspected.ready, detail: inspected.detail };
+          }
         }
       } catch (error) {
         config = { configured: false, error: error instanceof Error ? error.message : String(error) };

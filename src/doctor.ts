@@ -30,6 +30,33 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
+export async function inspectExternalGatewayHealth(
+  externalGateway: NonNullable<AppConfig["externalGateway"]>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ready: true } | { ready: false; detail: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetchImpl(externalGateway.healthUrl, {
+      signal: controller.signal,
+      redirect: "error",
+    });
+    if (!response.ok) throw new Error("Gateway returned HTTP " + response.status);
+    const data = await response.json() as Record<string, unknown>;
+    if (data.status !== "ok" || data.service !== externalGateway.expectedService) {
+      throw new Error("Unexpected Cloudflare gateway identity");
+    }
+    return { ready: true };
+  } catch (error) {
+    return {
+      ready: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function secureFile(path: string): boolean {
   if (process.platform === "win32") return true;
   return (statSync(path).mode & 0o077) === 0;
@@ -201,26 +228,14 @@ export async function runDoctor(): Promise<DoctorReport> {
   checks.push(...await proxyChecks(config));
 
   if (config.mode === "full" && config.mcpTransport === "external-cloudflare") {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6_000);
-    try {
-      const response = await fetch(config.externalGateway!.healthUrl, {
-        signal: controller.signal,
-        redirect: "error",
-      });
-      if (!response.ok) throw new Error("Gateway returned HTTP " + response.status);
-      const data = await response.json() as Record<string, unknown>;
-      if (data.status !== "ok" || data.service !== config.externalGateway!.expectedService) {
-        throw new Error("Unexpected Cloudflare gateway identity");
-      }
+    const gateway = await inspectExternalGatewayHealth(config.externalGateway!);
+    if (gateway.ready) {
       checks.push({id:"cloudflare-gateway",status:"ok",
         message:`External Cloudflare gateway is healthy at ${config.externalGateway!.healthUrl}`});
-    } catch (error) {
+    } else {
       checks.push({id:"cloudflare-gateway",status:"error",
         message:"Cloudflare OAuth MCP gateway is not reachable",
-        detail: error instanceof Error ? error.message : String(error)});
-    } finally {
-      clearTimeout(timer);
+        detail: gateway.detail});
     }
     checks.push({id:"connector",status:"warning",
       message:`Connector ${config.appName} requires a live ChatGPT turn to confirm task execution`});

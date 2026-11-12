@@ -422,7 +422,41 @@ test("DEV chat fails closed until the launcher-owned MCP tunnel is ready", async
       state: "stopped",
       detail: "stopped",
     }),
-  })).rejects.toThrow("launcher-owned DEV MCP tunnel is not ready");
+  })).rejects.toThrow("configured DEV MCP transport is not ready");
+});
+
+test("DEV chat accepts the configured external Cloudflare transport and owns its broker", async () => {
+  const root = scratch("cgw-dev-external-transport");
+  const base = defaultConfig("full");
+  const withoutTunnel = { ...base };
+  delete withoutTunnel.tunnel;
+  const config = {
+    ...withoutTunnel,
+    purpose: "dev-harness" as const,
+    mcpTransport: "external-cloudflare" as const,
+    externalGateway: {
+      mcpUrl: "https://gateway.example.test/mcp",
+      healthUrl: "https://gateway.example.test/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+    brokerSocketPath: defaultBrokerEndpoint(join(root, "dev")),
+  };
+  let inspectedConfig: unknown;
+  let transport: Awaited<ReturnType<typeof startDevChatTransport>> | undefined;
+  try {
+    transport = await startDevChatTransport(config, join(root, "dev"), {
+      status: async value => {
+        inspectedConfig = value;
+        return { ready: true };
+      },
+    });
+    expect(inspectedConfig).toBe(config);
+    expect(transport.config).toBe(config);
+    expect(await callTurnBroker(transport.config.brokerSocketPath, { method: "owner_status" }))
+      .toMatchObject({ protocolVersion: 5 });
+  } finally {
+    await transport?.close();
+  }
 });
 
 test("DEV driver uses shared browser methods and its own broker while an unrelated Responses port stays occupied", async () => {
