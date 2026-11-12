@@ -1,5 +1,18 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Verificação integral e correção de dependência — 12/11/2026
+
+O GitHub confirmou a release upstream mais recente `v6.1.18` e o `main` em `f08d16509e6a5447a0d0f2943abb172c69705160`. A branch `feature/continuos-infinity-native` contém a integração desse commit pelo merge `b25e145`; a ancestralidade de `upstream/main` foi verificada localmente. O PR #1 segue aberto em draft, apontando para `main` do fork.
+
+A auditoria de dependências sinalizou `@hono/node-server@2.1.3`. O override foi atualizado para `2.1.7` em `package.json` e `bun.lock`; `bun install --frozen-lockfile` e a auditoria subsequente passaram sem vulnerabilidades reportadas.
+
+O preflight de CWD confiável agora emite comentários visíveis durante as duas releituras limitadas (150 ms e 300 ms), somente para identidade nativa de thread/turno e falhas recuperáveis. Cada tentativa reutiliza o mesmo resolver e repete a validação de roots, sandbox e existência do diretório. A recuperação confirma a retomada da tarefa original; a falha final informa o bloqueio antes do envio. Nenhum CWD é inferido, prompt aceito é repetido ou ferramenta MCP é despachada.
+
+`bun run verify` terminou com **exit 0**: **1.322 aprovados, 113 ignorados, zero falhas e 10.949 asserções**, em 1.435 testes e 112 arquivos. Auditorias raiz/launcher, typecheck, testes do launcher, build Vite, bundle de runtime e `RELOCATABLE_RUNTIME_SMOKE_OK` passaram. Permaneceram avisos não bloqueantes de chunk Vite acima de 500 KB e uma resposta HTTP 502 isolada do catálogo de modelos durante o smoke.
+
+Continuam pendentes o pareamento OAuth/PKCE manual do cliente ChatGPT, a chamada autenticada `dev_ping` iniciada pelo Infinity, testes reais de 2–5 chats com anexos físicos, instalação/reinício controlado do provedor Windows Local, reconciliação independente de efeitos MCP, novo vínculo nativo após crash e instalação/rollback em staging. A instalação produtiva 6.1.13 e os túneis compartilhados permaneceram intocados.
+
+
 ### Diagnóstico da rejeição de pareamento DEV — 12/11/2026
 
 O gateway isolado permaneceu em execução desde `16:13`, com a chave de pareamento gerada às `16:12`. O arquivo `gateway/pairing.secret` tem 48 caracteres ASCII e uma quebra de linha final, como produzido pelo inicializador. O servidor lê esse arquivo com `strip()` durante a inicialização. A auditoria local registrou `client_registered` às `18:02:32`, `dev_authorization_created` às `18:03:05` e `dev_pair_incorrect` às `18:04:34`, sem aprovação ou troca do código de autorização para esse pedido. Isso demonstra rejeição da entrada informada, mas não identifica o texto submetido nem comprova erro de configuração.
@@ -47,7 +60,7 @@ O checkout de desenvolvimento adicionou a seleção explícita `mcpTransport=ext
 | 6 | Matriz das personalizações | `docs/infinity/CUSTOMIZATION_MATRIX.md` | **Disponível**. A aceitação funcional depende das verificações externas listadas abaixo. |
 | 7 | Cloudflare e Windows Local | `docs/infinity/INTEGRATIONS.md`, `integrations/windows-local/` e código de integração | **Parcial**. A persistência de `screenshot_id`, `job_id` e época do provedor passou em 28 testes Python. O dry-run contra a fonte Windows Local passou. A fonte real permanece inalterada e o serviço continua em execução. OAuth, catálogo e chamada MCP autenticada iniciada pelo Codex no DEV continuam pendentes. |
 | 8 | Supervisor por eventos | `docs/infinity/SUPERVISOR.md`, journal, broker e testes de recuperação | **Parcial**. O snapshot autenticado continua bloqueando retomada após crash. O provedor Windows Local agora tem código de consulta durável do processo e da época, ainda não instalado. Faltam reconciliação independente de efeitos mutáveis, novo vínculo nativo e fluxo produtivo de retomada. |
-| 9 | CWD confiável | `docs/infinity/TRUSTED_CWD.md` e testes de preflight | **Parcial**. Testes automatizados disponíveis. Falta homologação em sessão real com retomada após reinício. |
+| 9 | CWD confiável | `docs/infinity/TRUSTED_CWD.md`, `tests/trusted-preflight-recovery.test.ts` e `tests/trusted-preflight-runtime.test.ts` | **Parcial**. Retries pré-envio limitados à mesma fonte nativa, comentários visíveis de recuperação ou bloqueio e journal privado têm cobertura de testes simulados. Falta homologação em sessão real com retomada após reinício e reconciliação externa de operações. |
 | 10 | Instalação e configuração | `docs/infinity/INSTALLATION.md` e `EXAMPLE_CONFIG.md` | **Parcial**. O perfil browser-only mantém o smoke anterior. O perfil Full isolado foi inicializado e o BrowserHost criou seu descritor, mas `dev setup --full` expirou porque o login do ChatGPT no perfil Full não foi concluído. A configuração Full não foi gravada e o smoke real ainda está pendente. |
 | 11 | Migração | `docs/infinity/MIGRATION_ROLLBACK.md` | **Disponível**. Migração produtiva ainda não executada. |
 | 12 | Recuperação e rollback | `docs/infinity/MIGRATION_ROLLBACK.md` e `SUPERVISOR.md` | **Parcial**. Falta comprovar restauração de sessões reais após falha controlada. |

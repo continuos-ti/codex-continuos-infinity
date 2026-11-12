@@ -1,5 +1,12 @@
 # Auditoria do upstream
 
+## Revalidação do upstream — 12/11/2026
+
+A consulta autenticada ao GitHub confirmou `v6.1.18` como release mais recente e `f08d16509e6a5447a0d0f2943abb172c69705160` como `main` upstream mais recente (commit de 12/11/2026, filho de `3b41eda2efa731245d171b51dbd30935e587c937`). O commit incorpora a correção do menu Radix de effort e a captura do estado do slider aberto durante a inspeção de capacidades.
+
+A branch isolada `integration/upstream-f08d165-20261112` registra o merge `fb1818c7470b64855a68b71238d43e25baae280a`; o merge `b25e1458b10bc86681b6525db722f26e36a33833` incorpora essa integração em `feature/continuos-infinity-native`. A verificação local de ancestralidade confirmou `upstream/main` como ancestral do HEAD, sem commits upstream pendentes de integração. O fork continua relacionado ao parent original, e o PR #1 aponta exclusivamente para `main` de `continuos-ti/codex-continuos-infinity`, em draft. Nenhum commit foi enviado ao repositório `miuuyy/codex-chatgpt-web`.
+
+
 Em 12/11/2026, a tag oficial `v6.1.18` aponta para `1cc49aaa627a995d3f0cf2f971fde7f764996649`. O `main` do fork foi criado a partir de `32fd3436eb6ed94898b987a3c369003bb6fb8d54`. A consulta posterior ao GitHub confirmou que o `main` upstream avançou para `3b41eda2efa731245d171b51dbd30935e587c937`. Os nove commits entre essas referências foram integrados à branch do Infinity pelo merge `3ed1c0aa7d524f0b690c21f84ac3835d9bdca9a3`, preservando como pais o histórico personalizado `7504352999f94b8b7aac0371b56d6f2328ee1c66` e o upstream `3b41eda2efa731245d171b51dbd30935e587c937`. A fonte personalizada e o runtime ativo permanecem na versão 6.1.13. A tag oficial 6.1.13 é `6f43747`. O fork `continuos-ti/codex-continuos-infinity` preserva sua relação com o parent no GitHub.
 
 ## Integração controlada do upstream (12/11/2026)
