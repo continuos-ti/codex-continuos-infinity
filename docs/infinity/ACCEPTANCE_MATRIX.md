@@ -164,7 +164,7 @@ O workflow de `push` `43189685693`, no SHA `073fcbf4e50ae3ed5f0a83dcb14ee9f410ed
 
 A execução local de `python -m unittest discover -s integrations\\windows-local\\tests -v` concluiu com **21/21 testes aprovados**. Os 21 casos incluem idempotência, reserva concorrente, época do provedor, estado desconhecido, marcadores duráveis, reanexação de processo e integridade dos hashes do manifesto.
 
-A inspeção somente leitura dos health endpoints locais e públicos retornou HTTP 200 em Windows Local, gateway OAuth e proxy Responses. O `/healthz` informou `version=6.1.13`, `mode=full`, `accepting_turns=true`, `active_http_turns=4`, `active_browser_turns=3`, `model_catalog_successes=577/585` e último resultado do catálogo HTTP 200 em 10:14:44 UTC. Nenhum serviço foi reiniciado e nenhuma chamada ativa foi interrompida.
+A inspeção somente leitura dos health endpoints locais e públicos retornou HTTP 200 em Windows Local, gateway OAuth e proxy Responses. O `/healthz` informou `version=6.1.13`, `mode=full`, `accepting_turns=true`, `active_http_turns=4`, `active_browser_turns=2`, `successful_model_catalog_requests=579/587` e último resultado do catálogo HTTP 200 em 10:23:44 UTC. Nenhum serviço foi reiniciado e nenhuma chamada ativa foi interrompida.
 
 A inspeção do broker externo identificou que `codex_cf_gateway_lab.py` usa `activity_id` com operações `claim` e `activity_complete` para proteger o ciclo de vida de uma chamada. Esse lease não fornece idempotência por chamada nem reconciliação de resultados após crash. A fonte ativa `H:\\Projetos\\windows-local` ainda mantém `SHOTS` e `JOBS` em memória, e `remote_server.py` encaminha chamadas com JSON-RPC `id=1`. O bridge Agent Desktop classifica timeout como entrega desconhecida e repetição insegura, sem uma consulta durável de estado.
 
@@ -187,3 +187,17 @@ O smoke local retornou `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. O workfl
 O instalador está **sem assinatura Authenticode** (`Get-AuthenticodeSignature` retornou `NotSigned`). `CSC_LINK` e `CSC_NAME` não estavam configurados e não havia certificado Code Signing com chave privada nos stores CurrentUser/LocalMachine. O pacote é validado para instalação e smoke, mas a distribuição assinada ainda depende de provisionar um certificado de assinatura.
 
 A tentativa 2 do workflow `pull_request` `43196286219` continua em fila somente no job `verify (macos-15)`. Windows, Ubuntu, `actionlint` e `secret-scan` passaram nessa tentativa. O mesmo SHA já passou pela matriz completa no workflow `push` `43196279369`; a tentativa PR ainda não tem resultado de execução para macOS.
+
+### Integração controlada do upstream `3b41eda` (12/11/2026)
+
+O upstream `miuuyy/codex-chatgpt-web` foi atualizado até `3b41eda2efa731245d171b51dbd30935e587c937`. A worktree isolada `E:/Projetos/codex-continuos-infinity-upstream-20261112` recebeu o merge automático, sem conflitos. A integração incorporou 9 commits upstream posteriores ao merge-base, em 17 arquivos, cobrindo restauração de drafts/anexos, preview Mermaid, listas UUID de subagentes, reset de dados do navegador incorporado e idioma do navegador.
+
+Antes do commit, a worktree executou `bun run verify` com **código zero**. A suíte principal registrou **1.289 aprovados, 113 ignorados, zero falhas e 10.722 asserções** em 1.402 testes distribuídos por 110 arquivos. A suíte do launcher registrou **452 aprovados, quatro ignorados e zero falhas** em 456 testes. Typechecks, auditorias de dependências, build Vite e `RELOCATABLE_RUNTIME_SMOKE_OK` passaram. O aviso de chunk Vite superior a 500 KB permanece registrado.
+
+O empacotamento isolado `bun run app:package` e o smoke `bun run app:smoke` passaram, com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. O instalador `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.697.450 bytes**, SHA-256 **`3674399D6F1F2EC59B4CEB6C5A627503FF8DB538354B7B46A7D7CC94FF3CBD6E`**. O blockmap tem **161.020 bytes**, SHA-256 **`5B87FA5D54481755026B07311AFBF21465853A93640335093D2ECF8D6E1A0610`**. Ambos coincidem com `checksums-local.txt`. Authenticode retorna `NotSigned`.
+
+O merge foi consolidado no commit **`3ed1c0aa7d524f0b690c21f84ac3835d9bdca9a3`**, com pais `7504352999f94b8b7aac0371b56d6f2328ee1c66` e `3b41eda2efa731245d171b51dbd30935e587c937`. A branch `feature/continuos-infinity-native` avançou por fast-forward. A edição preexistente desta matriz sobre o snapshot de health foi preservada, com SHA-256 do arquivo idêntico antes e depois do merge.
+
+Nos dois workflows anteriores ao merge, `push` **`43203958815`** e PR **`43203967522`**, os jobs de `actionlint`, `secret-scan`, Windows e Ubuntu concluíram com sucesso. O job `verify (macos-15)` aparece como `cancelled` em ambos. A consulta dos logs do job macOS do run de push retornou **GitHub API 404 BlobNotFound**, sem evidência suficiente da causa. Esta verificação CI se refere ao commit anterior, e o merge novo precisa de execução própria após publicação.
+
+A homologação integral permanece pendente de integração MCP/OAuth Full iniciada pelo fork, confirmação da identidade durável pelo provedor Windows Local em operação real, reconciliação externa de efeitos, rebind do turno após crash, cinco chats com anexos físicos independentes e rollback funcional em staging. O PR #1 permanece em draft e a instalação ativa não foi alterada.
