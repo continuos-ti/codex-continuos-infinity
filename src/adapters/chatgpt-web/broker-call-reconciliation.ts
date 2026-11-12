@@ -14,6 +14,14 @@ import type { BrokerToolResult } from "./turn-broker";
 const EVENTS = new Set<BrokerCallEvent>([
   "queued", "delivery_possible", "result_received", "compaction_resolution_possible", "retired_uncertain",
 ]);
+const EVENT_ORDER: readonly (readonly [BrokerCallEvent, BrokerCallEvent])[] = [
+  ["queued", "delivery_possible"],
+  ["delivery_possible", "result_received"],
+  ["queued", "compaction_resolution_possible"],
+  ["queued", "retired_uncertain"],
+  ["delivery_possible", "retired_uncertain"],
+  ["compaction_resolution_possible", "retired_uncertain"],
+];
 const MAX_RECORDS = 20_000;
 const MAX_RECORD_BYTES = 4_096;
 const MAX_TRACES = 20_000;
@@ -54,7 +62,8 @@ function inspectBrokerCallJournalSnapshot(directory: string): {
   if (!existsSync(directory)) return { calls: [], fingerprint: "", pendingPublication: false };
   if (!lstatSync(directory).isDirectory()) invalid();
 
-  const calls = new Map<string, { traceId: string; tool: string; nativeOwnerDigest?: string; events: Set<BrokerCallEvent> }>();
+  const calls = new Map<string, { traceId: string; tool: string; nativeOwnerDigest?: string;
+    events: Map<BrokerCallEvent, string> }>();
   const fingerprint = createHash("sha256");
   let recordCount = 0;
   let traceCount = 0;
@@ -97,9 +106,10 @@ function inspectBrokerCallJournalSnapshot(directory: string): {
       const prior = calls.get(entry.callId);
       if (prior && (prior.traceId !== entry.traceId || prior.tool !== entry.tool
         || prior.nativeOwnerDigest !== entry.nativeOwnerDigest || prior.events.has(entry.event))) invalid();
-      if (prior) prior.events.add(entry.event);
+      if (prior) prior.events.set(entry.event, entry.recordedAt);
       else calls.set(entry.callId, { traceId: entry.traceId, tool: entry.tool,
-        ...(entry.nativeOwnerDigest ? { nativeOwnerDigest: entry.nativeOwnerDigest } : {}), events: new Set([entry.event]) });
+        ...(entry.nativeOwnerDigest ? { nativeOwnerDigest: entry.nativeOwnerDigest } : {}),
+        events: new Map([[entry.event, entry.recordedAt]]) });
     }
   }
 
@@ -108,6 +118,13 @@ function inspectBrokerCallJournalSnapshot(directory: string): {
       || (events.has("result_received") && !events.has("delivery_possible"))
       || (events.has("compaction_resolution_possible") && events.has("delivery_possible"))
       || (events.has("result_received") && events.has("retired_uncertain"))) invalid();
+    // Each record uses a canonical UTC timestamp. Cross-event reversals indicate that the
+    // durable history cannot be trusted, including when every required event is present.
+    if (EVENT_ORDER.some(([earlier, later]) => {
+      const earlierAt = events.get(earlier);
+      const laterAt = events.get(later);
+      return earlierAt !== undefined && laterAt !== undefined && earlierAt > laterAt;
+    })) invalid();
     const state: BrokerRecoveryState = events.has("result_received") ? "result_unavailable"
       : events.has("retired_uncertain") ? "retired_uncertain"
       : events.has("delivery_possible") ? "delivery_unknown"

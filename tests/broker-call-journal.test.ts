@@ -527,7 +527,8 @@ test("native owner digest is consistent, strictly formatted, and rejects conflic
 
 test("reconciliation fails closed on tampering, inconsistent transitions and missing records", () => {
   const { directory } = fixture();
-  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "queued" });
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "queued",
+    now: new Date("2026-11-10T10:00:00.000Z") });
   const path = eventPath(directory, traceId, callId, "queued");
   const original = readFileSync(path, "utf8");
   writeFileSync(path, original.replace('"replayAuthorized":false', '"replayAuthorized":true'));
@@ -537,12 +538,43 @@ test("reconciliation fails closed on tampering, inconsistent transitions and mis
   writeFileSync(path, original.replace(/"recordedAt":"[^"]+"/, '"recordedAt":"2026-02-31T10:00:00.000Z"'));
   expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
   writeFileSync(path, original);
-  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "result_received" });
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "result_received",
+    now: new Date("2026-11-10T10:00:02.000Z") });
   expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
-  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "delivery_possible" });
+  // A late journal publication retains the time at which delivery became possible.
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event: "delivery_possible",
+    now: new Date("2026-11-10T10:00:01.000Z") });
   expect(inspectBrokerCallJournal(directory)).toHaveLength(1);
   writeFileSync(join(directory, traceId, "0".repeat(64) + ".json"), "{broken");
   expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+});
+
+test("reconciliation rejects chronologically reversed MCP event boundaries", () => {
+  const earlier = "2026-11-10T10:00:00.000Z";
+  const later = "2026-11-10T10:00:01.000Z";
+  const scenarios = [
+    [["queued", later], ["delivery_possible", earlier]],
+    [["queued", earlier], ["delivery_possible", later], ["result_received", earlier]],
+    [["queued", later], ["compaction_resolution_possible", earlier]],
+    [["queued", earlier], ["delivery_possible", later], ["retired_uncertain", earlier]],
+    [["queued", earlier], ["compaction_resolution_possible", later], ["retired_uncertain", earlier]],
+  ] as const;
+
+  for (const events of scenarios) {
+    const { directory } = fixture();
+    for (const [event, recordedAt] of events) {
+      recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event,
+        now: new Date(recordedAt) });
+    }
+    expect(() => inspectBrokerCallJournal(directory)).toThrow("invalid or inconsistent evidence");
+  }
+
+  const { directory } = fixture();
+  for (const event of ["queued", "delivery_possible", "result_received"] as const) {
+    recordBrokerCallEvent({ directory, traceId, callId, wireName: "test_tool", event,
+      now: new Date(earlier) });
+  }
+  expect(inspectBrokerCallJournal(directory)[0]?.state).toBe("result_unavailable");
 });
 
 test("rejects malformed identities and preserves an orphan pending file without treating it as a completed event", () => {

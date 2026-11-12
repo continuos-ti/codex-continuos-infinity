@@ -130,7 +130,7 @@ test("individual authenticated result read rejects journal changes during decryp
         nativeOwnerDigest: nativeBrokerOwnerDigest({ threadId, turnId }) });
     } else if (change === "same_state_rewrite") {
       const record = JSON.parse(readFileSync(eventPath, "utf8")) as { recordedAt: string };
-      record.recordedAt = "2026-11-10T01:02:03.000Z";
+      record.recordedAt = new Date(Date.parse(record.recordedAt) + 1).toISOString();
       writeFileSync(eventPath, JSON.stringify(record));
     } else {
       writeFileSync(join(directory, traceId, `.${"1".repeat(64)}.${"2".repeat(24)}.pending`), "{}");
@@ -343,7 +343,7 @@ test("recovery snapshot rejects journal additions or same-state record modificat
         nativeOwnerDigest: nativeBrokerOwnerDigest({ threadId, turnId }) });
     } else {
       const record = JSON.parse(readFileSync(eventPath, "utf8")) as { recordedAt: string };
-      record.recordedAt = "2026-11-10T01:02:03.000Z";
+      record.recordedAt = new Date(Date.parse(record.recordedAt) + 1).toISOString();
       writeFileSync(eventPath, JSON.stringify(record));
     }
     return value;
