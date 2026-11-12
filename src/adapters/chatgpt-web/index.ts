@@ -21,7 +21,7 @@ import { namespacedToolName, type AdapterEvent, type CodexContentPart, type Code
 import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
 import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
-import { recordTrustedPreflightIncident } from "./trusted-preflight-incident";
+import { classifyTrustedPreflightFailure, recordTrustedPreflightIncident } from "./trusted-preflight-incident";
 import { resolveTrustedPreflightWithRecovery } from "./trusted-preflight-recovery";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
 import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs, resolveChatGptBrowserDiagnosticsPath } from "./browser-worker";
@@ -974,10 +974,21 @@ export function createChatGptWebAdapter(
             const identity = extractChatGptTurnIdentity(parsed);
             const resolved = await resolveTrustedPreflightWithRecovery(
               identity, () => environmentStore.resolve(parsed), incoming.abortSignal,
+              undefined,
+              () => emit({
+                type: "text_delta",
+                text: "Codex Continuos Infinity: falha pré-envio no contexto confiável. Verificando novamente o registro nativo da mesma tarefa; nenhum prompt ou comando será repetido.",
+                phase: "commentary",
+              }),
             );
             environment = resolved.value;
             if (resolved.recoveryAttempts > 0) {
               console.warn(`[chatgpt-web] trusted_cwd_preflight_recovered trace=${chatGptWebTraceId(provider, parsed)} attempts=${resolved.recoveryAttempts}`);
+              emit({
+                type: "text_delta",
+                text: "Codex Continuos Infinity: contexto nativo recuperado e validado. Continuando a tarefa original.",
+                phase: "commentary",
+              });
             }
           } catch (error) {
             const identity = extractChatGptTurnIdentity(parsed);
@@ -995,6 +1006,17 @@ export function createChatGptWebAdapter(
             } catch (journalError) {
               // A journal IO failure must not replace the original authorization error.
               console.error(`[chatgpt-web] trusted_cwd_preflight_journal_failed type=${journalError instanceof Error ? journalError.name : "unknown"}`);
+            }
+            if (classifyTrustedPreflightFailure(error)) {
+              try {
+                emit({
+                  type: "text_delta",
+                  text: "Codex Continuos Infinity: a tentativa atual não comprovou o contexto nativo desta tarefa. Esta tentativa foi bloqueada antes de enviar um novo prompt ou despachar ferramentas. Chamadas anteriores da tarefa continuam sujeitas à reconciliação. Aguardando contexto confiável válido.",
+                  phase: "commentary",
+                });
+              } catch (notificationError) {
+                if (incoming.abortSignal?.aborted) throw incoming.abortSignal.reason ?? notificationError;
+              }
             }
             console.warn(
               `[chatgpt-web] trusted environment unavailable (thread_id=${identity.threadId ? "present" : "missing"}, turn_id=${identity.turnId ? "present" : "missing"}, previous_response_id=${parsed.previousResponseId ?? "none"}, replay_prefix_items=${parsed._replayPrefixLen ?? 0}, context_messages=${parsed.context.messages.length})`,

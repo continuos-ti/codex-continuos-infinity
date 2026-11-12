@@ -1,9 +1,15 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { ChatGptTurnIdentity } from "./environment";
 import { isNativeCodexIdentifier } from "./codex-rollout-environment";
-import { classifyTrustedPreflightFailure } from "./trusted-preflight-incident";
+import { classifyTrustedPreflightFailure, type TrustedPreflightFailure } from "./trusted-preflight-incident";
 
 const PREFLIGHT_RETRY_DELAYS_MS = [150, 300] as const;
+
+export interface TrustedPreflightRecoveryEvent {
+  failure: TrustedPreflightFailure;
+  attempt: number;
+  delayMs: number;
+}
 
 /**
  * The native rollout may be published just after the bridge receives the turn. Before any
@@ -16,6 +22,7 @@ export async function resolveTrustedPreflightWithRecovery<T>(
   signal?: AbortSignal,
   wait: (ms: number, signal?: AbortSignal) => Promise<unknown> = (ms, abortSignal) =>
     delay(ms, undefined, { signal: abortSignal }),
+  onRecovery?: (event: TrustedPreflightRecoveryEvent) => void | Promise<void>,
 ): Promise<{ value: T; recoveryAttempts: number }> {
   const nativeOwner = isNativeCodexIdentifier(identity.threadId)
     && isNativeCodexIdentifier(identity.turnId);
@@ -30,7 +37,9 @@ export async function resolveTrustedPreflightWithRecovery<T>(
           && failure !== "native_rollout_unavailable")) {
         throw error;
       }
-      await wait(PREFLIGHT_RETRY_DELAYS_MS[attempt]!, signal);
+      const delayMs = PREFLIGHT_RETRY_DELAYS_MS[attempt]!;
+      await onRecovery?.({ failure, attempt: attempt + 1, delayMs });
+      await wait(delayMs, signal);
     }
   }
 }

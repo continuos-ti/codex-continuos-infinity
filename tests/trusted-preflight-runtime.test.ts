@@ -34,6 +34,10 @@ test("pre-send missing cwd produces one private incident with current trace and 
     await expect(createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() },
       event => events.push(event))).rejects.toThrow("missing cwd");
     expect(events.some(event => event.type === "tool_call_start" || event.type === "done")).toBe(false);
+    expect(events.filter(event => event.type === "text_delta" && event.phase === "commentary").map(event =>
+      event.type === "text_delta" ? event.text : "")).toContain(
+      "Codex Continuos Infinity: a tentativa atual não comprovou o contexto nativo desta tarefa. Esta tentativa foi bloqueada antes de enviar um novo prompt ou despachar ferramentas. Chamadas anteriores da tarefa continuam sujeitas à reconciliação. Aguardando contexto confiável válido.",
+    );
     const directory = join(home, "diagnostics", "preflight-incidents");
     expect(readdirSync(directory)).toEqual([`${traceId}.json`]);
     const path = join(directory, `${traceId}.json`);
