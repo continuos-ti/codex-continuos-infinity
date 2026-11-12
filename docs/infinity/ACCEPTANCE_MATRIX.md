@@ -309,3 +309,13 @@ O `git diff --check` e o `git diff --cached --check` passaram. O único aviso fo
 ### Pacote Windows após hardening DEV — 12/11/2026
 
 `bun run app:package` terminou com código **0** e gerou `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe`, com **153.700.526 bytes** e SHA-256 `CD96A880DCFAE72A17CB5BDC4E1CAF492BD7C2959DC3889AD6836E29D241DE78`. O blockmap tem **160.959 bytes** e SHA-256 `B80F3073D56E32867CAD10353484789533AF191476B94A905CDE67FD5CD07EC9`. `7z t` terminou com `Everything is Ok`. `bun run app:smoke` passou com `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. O executável está **NotSigned** por Authenticode. O pacote foi construído e testado em staging portátil, sem instalação ou substituição da versão ativa.
+
+### Reinício isolado do gateway DEV — 12/11/2026
+
+Após o smoke e a suíte completa, o processo antigo que atendia exclusivamente `127.0.0.1:28768` foi encerrado com a árvore de processos identificada como `integrations/dev-gateway/server.py`. Não havia conexões TCP estabelecidas. O gateway DEV foi iniciado novamente a partir do commit validado e respondeu localmente com `status=ok`, `service=ContinuosWebIntegracaoDev`, `mode=isolated-dev` e `side_effects=false`. O endpoint público DEV também respondeu 200. Os metadados OAuth anunciaram PKCE S256 e protected resource no hostname DEV. Um POST anônimo em `/mcp` recebeu HTTP **401**. A verificação de produção respondeu `service=ContinuosWebIntegracao`, confirmando que o processo e o túnel de produção não foram reiniciados nem modificados.
+
+O novo processo escreveu um único `IncompleteFieldDefinitionWarning` de `pydantic_settings` sobre a anotação de `lifespan`, sem traceback ou falha de inicialização. As verificações local e pública de health permaneceram verdes.
+
+As ACLs do diretório DEV, `pairing.secret`, `oauth.sqlite` e `cloudflared-token.txt` permitem acesso somente a `CONTINUOS-WORK\Administrador`, `BUILTIN\Administradores` e `NT AUTHORITY\SYSTEM`. Nenhum conteúdo de segredo foi lido ou registrado.
+
+Na interface ChatGPT Desktop, `ContinuosWebIntegracao DEV Web` aparece instalado e habilitado. O botão `Conectar` na página de detalhes permaneceu desabilitado e não abriu um novo fluxo OAuth. Nenhuma nova autorização foi criada após o reinício. O pairing manual e a chamada MCP real pelo Infinity continuam aguardando a ação de conexão no composer do ChatGPT.
