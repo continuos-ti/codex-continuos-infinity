@@ -413,7 +413,7 @@ async function maintain(message: InspectMessage | SmokeMessage | LimitsMessage |
     const worker = maintenanceWorker(message);
     if (message.type === "repair" && (typeof message.prompt !== "string" || message.prompt.length < 1 || message.prompt.length > 12000)) throw new Error("Repair diagnostic prompt is invalid");
     const value = message.type === "inspect"
-      ? await worker.inspectSession(message.detectCapabilities)
+      ? await worker.inspectSession(message.detectCapabilities, message.id)
       : message.type === "limits" ? await worker.inspectLimitsPlan()
       : await worker.smokeTest(abortController.signal, message.type === "repair" ? message.prompt : undefined);
     writeProtocol({ type: "result", id: message.id, value });
