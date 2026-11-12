@@ -319,3 +319,13 @@ O novo processo escreveu um único `IncompleteFieldDefinitionWarning` de `pydant
 As ACLs do diretório DEV, `pairing.secret`, `oauth.sqlite` e `cloudflared-token.txt` permitem acesso somente a `CONTINUOS-WORK\Administrador`, `BUILTIN\Administradores` e `NT AUTHORITY\SYSTEM`. Nenhum conteúdo de segredo foi lido ou registrado.
 
 Na interface ChatGPT Desktop, `ContinuosWebIntegracao DEV Web` aparece instalado e habilitado. O botão `Conectar` na página de detalhes permaneceu desabilitado e não abriu um novo fluxo OAuth. Nenhuma nova autorização foi criada após o reinício. O pairing manual e a chamada MCP real pelo Infinity continuam aguardando a ação de conexão no composer do ChatGPT.
+
+### Nova tentativa de descoberta e smoke após hardening — 12/11/2026
+
+`py_compile` passou para `server.py`, `init_state.py`, `smoke_oauth.py` e `run_smoke.py`. A execução isolada de `run_smoke.py` terminou com código **0**, `DEV_GATEWAY_OAUTH_PKCE_MCP_SMOKE_OK` e `DEV_GATEWAY_LOCAL_E2E_OK`. O cenário confirmou rejeição anônima HTTP 401, DCR, PKCE S256, rejeição de chave incorreta e Unicode inválido, retry no mesmo pedido, pareamento com whitespace periférico, consumo único do authorization code, rotação concorrente do refresh token, revogação, catálogo restrito às três ferramentas `dev_*` e chamadas autenticadas. O processo temporário foi encerrado e seu diretório removido. `production_dispatcher=not_loaded` e `secrets=not_logged`.
+
+Na interface privada do plugin, `Testar agora` abriu uma conversa Work com `ContinuosWebIntegracao DEV Web`. O ChatGPT informou que `dev_ping` não estava disponível e não executou o teste. Uma segunda tentativa na aba Chat, com o mesmo plugin selecionado no composer, exibiu `Não foram encontradas mensagens renderizáveis do ChatGPT nesta conversa`. O `oauth-events.log` não recebeu novos eventos em nenhuma das tentativas.
+
+Uma leitura SQLite somente leitura e limitada a metadados mostrou dois clientes DCR, um cliente `ContinuosWebIntegracao DEV smoke` com consentimento de teste e um cliente `ChatGPT` sem consentimento ou tokens próprios. O pedido de autorização do cliente ChatGPT estava expirado. Nenhum valor de chave, segredo, authorization code, access token ou refresh token foi lido. O gateway DEV segue saudável, mas o catálogo autenticado ainda não foi entregue ao ChatGPT e nenhuma chamada MCP real `dev_ping` foi comprovada. A conexão OAuth do cliente ChatGPT e a homologação Infinity Full permanecem pendentes.
+
+Os cinco jobs da CI do PR e os cinco jobs da CI de push do commit documental `c2dbeb6` concluíram com sucesso em Ubuntu, Windows e macOS, além de `actionlint` e `secret-scan`.
