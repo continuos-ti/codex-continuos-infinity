@@ -2,6 +2,8 @@
 
 A comparação normalizada por LF identificou 38 diferenças de conteúdo na tag original 6.1.13. O porte isolou 36 modificações e 12 novos arquivos. Mantivemos o MIT e as versões de dependências do upstream 6.1.18, com nomes próprios de workspace nos lockfiles. Onze conflitos exigiram resolução manual.
 
+O registro detalhado por personalização, com comportamento anterior, problema, componentes, implementação, equivalência upstream, necessidade, dependências, riscos e aceite, está em [CUSTOMIZATION_DETAILS.md](CUSTOMIZATION_DETAILS.md).
+
 | Motivo/alteração local | Código portado e validação | Equivalência upstream |
 | --- | --- | --- |
 | Falha após turno aceito sem resposta final | in-band-auto-repair.ts, browser-worker.ts, index.ts, testes in-band-autorepair* | O upstream já tinha observação e fencing DOM, complementado com recuperação por evento |

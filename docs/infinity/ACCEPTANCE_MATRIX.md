@@ -201,3 +201,27 @@ O merge foi consolidado no commit **`3ed1c0aa7d524f0b690c21f84ac3835d9bdca9a3`**
 Nos dois workflows anteriores ao merge, `push` **`43203958815`** e PR **`43203967522`**, os jobs de `actionlint`, `secret-scan`, Windows e Ubuntu concluíram com sucesso. O job `verify (macos-15)` aparece como `cancelled` em ambos. A consulta dos logs do job macOS do run de push retornou **GitHub API 404 BlobNotFound**, sem evidência suficiente da causa. Esta verificação CI se refere ao commit anterior, e o merge novo precisa de execução própria após publicação.
 
 A homologação integral permanece pendente de integração MCP/OAuth Full iniciada pelo fork, confirmação da identidade durável pelo provedor Windows Local em operação real, reconciliação externa de efeitos, rebind do turno após crash, cinco chats com anexos físicos independentes e rollback funcional em staging. O PR #1 permanece em draft e a instalação ativa não foi alterada.
+
+### CI e documentação — 12/11/2026
+
+O commit `7f9d123adb6cee86e3065dbab5decbf255b49116` foi validado no workflow `push` `43214594469` e no workflow `pull_request` `43214601712`. Nos dois workflows, `actionlint`, `secret-scan`, Windows e Ubuntu concluíram com sucesso. Os dois jobs `verify (macos-15)` terminaram como `cancelled`, sem steps executados ou causa informada na resposta da API. A consulta independente das etapas do job de PR confirmou uma lista vazia. Nenhum novo workflow ou rerun foi solicitado nesta verificação.
+
+A execução Windows do PR concluiu `bun run verify`, `bun run app:package`, `bun run app:smoke` e o smoke descartável de instalação/desinstalação NSIS. A execução Ubuntu concluiu `bun run verify`, empacotamento e smoke, incluindo a validação ABI do AppImage. O scan Gitleaks e `actionlint` passaram. A matriz macOS do commit permanece sem conclusão confirmada.
+
+O PR `#1` permanece aberto em draft, com head `7f9d123adb6cee86e3065dbab5decbf255b49116` na consulta de 12/11. A documentação de personalizações detalhadas foi acrescentada em `CUSTOMIZATION_DETAILS.md` e está referenciada pela matriz. `git diff --check` concluiu com código zero antes do commit documental.
+
+### Merge upstream `f08d165` validado em worktree isolada — 12/11/2026
+
+Na worktree `E:/Projetos/codex-continuos-infinity-upstream-f08d165`, foi integrado o commit upstream `f08d16509e6a5447a0d0f2943abb172c69705160` pelo merge `fb1818c7470b64855a68b71238d43e25baae280a`. O conflito de importação em `tests/browser-worker-contract.test.ts` foi resolvido preservando os seletores de composer e effort e removendo o import não utilizado `legacyChatGptConnectorMigrationMessage`, que não existe na configuração do Infinity. Os testes direcionados passaram anteriormente com 180 aprovações e zero falhas.
+
+Após instalar as dependências por `bun install --frozen-lockfile` no launcher, `bun run typecheck` e `bun run verify` passaram com código zero. A suíte principal teve **1.295 aprovados, 113 ignorados, zero falhas e 10.749 asserções**, totalizando 1.408 testes em 111 arquivos. O launcher teve **452 aprovados, quatro ignorados e zero falhas**. As auditorias de dependências não reportaram vulnerabilidades, o Vite compilou 444 módulos, e o smoke retornou `RELOCATABLE_RUNTIME_SMOKE_OK`. O Vite manteve aviso de chunk acima de 500 KB.
+
+A fonte instalada permaneceu em `Codex Web GPT` versão `6.1.13`, conferida pelo manifesto em `C:/Program Files/Codex Web GPT/resources/runtime/manifest.json`. O SHA-256 de `resources/app.asar` observado nesta leitura foi `FDAAE12D73D8CEA2CDA043C8657EFE0455E079CAA4B1F5089413A89F9AA0066C`. A consulta ao log do job macOS do PR retornou `GitHub API 404 BlobNotFound`, e o job continuou `cancelled` sem steps. Esses testes são locais e não substituem os E2E OAuth/MCP, a concorrência de anexos físicos, a reconciliação externa e a validação de rollback em staging.
+
+### Instalador e comparação com o runtime instalado — 12/11/2026
+
+O merge `fb1818c7470b64855a68b71238d43e25baae280a` concluiu `bun run app:package` com código zero. O instalador NSIS `launcher/artifacts/codex-continuos-infinity-6.1.18-continuos.1-win-x64.exe` tem **153.697.820 bytes** e SHA-256 `E5FED10474A7B63119E72B33FA3E42E21C369500FDD3D15C34D5116E10A45C82`. O blockmap tem **160.953 bytes** e SHA-256 `3C006E87498998E40BFE8350377712D2759F60908089008B39D25FFE107150DE`. A verificação Authenticode do instalador resultou em **`NotSigned`**. `bun run app:smoke` concluiu com código zero e `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`. Nenhuma instalação de produção foi efetuada.
+
+No inventário da base personalizada `6.1.13`, 28 arquivos modificados e 12 novos foram comparados com o merge Infinity e o commit upstream `f08d165`. Todos os 40 caminhos existem no fork. Sete têm conteúdo idêntico à fonte personalizada, 32 têm conteúdo portado ou atualizado, e `src/chatgpt-session.ts` coincide com o upstream integrado. Igualdade ou diferença de hash por arquivo não substitui a revisão de comportamento descrita em `CUSTOMIZATION_DETAILS.md`.
+
+A comparação dos manifests de runtime encontrou **6.032** entradas na instalação existente (`6.1.13`, bundle `3c9d4c9b21fb1abb66acc46d484268bb9319bf2bd663fb5f7ccdd9a3a8614b9f`) e **4.901** no pacote Infinity (`6.1.18-continuos.1`, bundle `538188e895a8dcd1702cea163a2300ade429414de469947ea601bd0c91f7dee6`). Os hashes de `app/cli.js`, `app/browser-helper.cjs` e `app/package.json` diferem, enquanto `runtime/bun.exe` coincide. Diferenças de contagem exigem revisão de inventário e dependências antes da migração.
