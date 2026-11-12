@@ -20,6 +20,8 @@ O perfil `full` no modo Automatic permite selecionar explicitamente `mcpTranspor
 
 Os endpoints devem ser URLs HTTPS canônicas, sem credenciais, query ou fragmento. A sondagem de saúde verifica a resposta HTTP e os campos `status=ok` e `service=expectedService`. Essa verificação confirma somente a disponibilidade e a identidade declarada do endpoint de health. O acesso MCP efetivo depende de OAuth/PKCE e de um vínculo nativo autorizado pelo Codex e requer homologação autenticada separada.
 
+Em 12/11/2026, consultas HTTPS somente leitura ao ambiente externo confirmaram `HTTP 200` com `{"status":"ok","service":"ContinuosWebIntegracao"}` em `/health`, `HTTP 200` com `{"status":"ok"}` no health do Windows Local e `HTTP 401` em `/mcp` sem credenciais. `/.well-known/oauth-authorization-server` respondeu `HTTP 200` e anunciou `authorization_code`, `refresh_token`, escopo `codex.control` e PKCE `S256`. O endpoint `/.well-known/oauth-protected-resource` respondeu `HTTP 404`. Esses resultados verificam apenas as rotas e os metadados públicos observados naquele momento; ainda é necessário validar uma autorização OAuth/PKCE completa e chamadas MCP com identidade de turno nativa no staging do fork.
+
 No transporte externo, o supervisor observa o gateway e aguarda prontidão durante a inicialização. Ele registra o recurso como externo, sem assumir posse do túnel. O modo Zero Risk conserva o transporte `openai-tunnel` e pode reter a preferência Cloudflare para uma troca posterior. Perfis antigos sem `mcpTransport` continuam usando `openai-tunnel` até configuração explícita. O modo `browser-only` rejeita configuração MCP.
 
 ## Infraestrutura e ferramentas
