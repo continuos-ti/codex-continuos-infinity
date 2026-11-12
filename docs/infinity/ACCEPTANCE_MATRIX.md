@@ -2,7 +2,7 @@
 
 ### Estado atual da branch — 12/11/2026
 
-A branch `feature/continuos-infinity-native` está em `2109107828cd270528e8bc708787d7e62fb7711f` (`2109107`), baseada no merge upstream `b25e1458b10bc86681b6525db722f26e36a33833` que integrou `f08d16509e6a5447a0d0f2943abb172c69705160`. O CI do commit `2109107` terminou com **5/5 jobs aprovados** no run `43261740629`. Windows, Ubuntu, macOS, actionlint e secret-scan passaram. O job macOS foi reenfileirado após cancelamento enquanto aguardava runner e concluiu com sucesso.
+A base funcional de runtime da branch está no commit `2109107828cd270528e8bc708787d7e62fb7711f` (`2109107`), que integra o upstream `f08d16509e6a5447a0d0f2943abb172c69705160` pelo merge `b25e1458b10bc86681b6525db722f26e36a33833`. O CI desse commit de runtime terminou com **5/5 jobs aprovados** no run `43261740629`. Windows, Ubuntu, macOS, actionlint e secret-scan passaram. O job macOS foi reenfileirado após cancelamento enquanto aguardava runner e concluiu com sucesso.
 
 A validação local terminou com `bun run verify` exit 0, **1.299 testes aprovados, 113 ignorados e zero falhas** na suíte principal, **452 aprovados, quatro ignorados e zero falhas** no launcher, typechecks, build Vite e `RELOCATABLE_RUNTIME_SMOKE_OK`. A suíte Windows Local passou com **28/28 testes**, hashes do manifesto conferidos e dry-run aprovado. `bun run app:package` e `bun run app:smoke` passaram. O NSIS tem **153.698.263 bytes**, SHA-256 `8107dd1ad7d9b0881a182d9cf71361ae092020955d378a07d86621d923d2c805`. O blockmap tem **160.993 bytes**, SHA-256 `128f112144afcde0551682d1ec0e36819814543d4416af5eea96e9240c6001dd`. `7z t` retornou `Everything is Ok`, o smoke portátil passou e Authenticode está `NotSigned`.
 
