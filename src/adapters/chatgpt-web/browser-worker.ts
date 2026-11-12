@@ -2603,6 +2603,30 @@ export function insertPlainTextIntoComposer(element: HTMLElement, value: string)
   return document.execCommand("insertText", false, value);
 }
 
+/**
+ * Plain browser turns and Bigger Context stage parts own the whole composer rather than appending
+ * after a connector pill (#977). Select the complete editor contents in the same synchronous page
+ * step so a draft restored by ChatGPT after `fill("")` is replaced instead of prepended.
+ */
+export function replacePlainTextInComposer(element: HTMLElement, value: string): boolean {
+  if (document.activeElement !== element) element.focus();
+  if (document.activeElement !== element) return false;
+  const selection = window.getSelection();
+  if (!selection) return false;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  if (
+    !selection.anchorNode
+    || !element.contains(selection.anchorNode)
+    || (selection.focusNode != null && !element.contains(selection.focusNode))
+  ) {
+    return false;
+  }
+  return document.execCommand("insertText", false, value);
+}
+
 export class ChatGptBrowserWorker {
   static forProvider(provider: CodexProviderConfig): ChatGptBrowserWorker {
     const config = resolveBrowserConfig(provider);
@@ -4230,7 +4254,7 @@ export class ChatGptBrowserWorker {
         if (requireThink) {
           await setChatGptThinkMode(composer, true, captureDiagnostic, abortSignal);
         }
-        await this.insertPromptText(page, prompt, abortSignal);
+        await this.insertPromptText(page, prompt, abortSignal, true);
         await this.assertPromptAttached(page, prompt, abortSignal);
         return;
       }
@@ -4583,7 +4607,12 @@ export class ChatGptBrowserWorker {
     }
   }
 
-  private async insertPromptText(page: Page, text: string, abortSignal?: AbortSignal): Promise<void> {
+  private async insertPromptText(
+    page: Page,
+    text: string,
+    abortSignal?: AbortSignal,
+    replace = false,
+  ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     const composer = await this.activeComposer(page, 30_000, abortSignal);
     await composer.focus({ signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
@@ -4592,7 +4621,7 @@ export class ChatGptBrowserWorker {
     // delimiters from textContent, and leave the next insertion outside the intended block. The
     // browser's plain-text editing command updates the same focused contenteditable atomically
     // without running those Markdown shortcuts. Exact readback below remains the authority.
-    const inserted = await composer.evaluate(insertPlainTextIntoComposer, text, {
+    const inserted = await composer.evaluate(replace ? replacePlainTextInComposer : insertPlainTextIntoComposer, text, {
       timeout: 20_000,
       signal: abortSignal,
     });
@@ -4985,6 +5014,19 @@ export class ChatGptBrowserWorker {
         for (const widget of Array.from(content.querySelectorAll(
           ".chart-widget-container, [data-code-block-preview-pane], script, style, svg, img, picture, source",
         ))) widget.remove();
+        // #974: Mermaid previews mount as top-level `[data-chatgpt-mermaid-preview]` DIVs without
+        // source ranges and can remount after later prose has already streamed. Remove preview-only
+        // shells so remounts do not create empty unanchored DIV blocks, while keeping any code view.
+        for (const preview of Array.from(content.querySelectorAll("[data-chatgpt-mermaid-preview]"))) {
+          if (preview.closest("pre, code")) continue;
+          if (!preview.querySelector('pre, code, [data-markdown-copy="code-block"], .cm-content[data-language]')) {
+            preview.remove();
+          } else {
+            for (const chrome of Array.from(preview.querySelectorAll('[data-block-actions="true"][data-markdown-copy="exclude"]'))) {
+              if (!chrome.closest("pre, code")) chrome.remove();
+            }
+          }
+        }
         for (const button of Array.from(content.querySelectorAll("button"))) {
           // Follow-up labels also live in hidden sizing siblings; removing only buttons leaks them.
           if (button.classList.contains("group/suggested-followup")) {
