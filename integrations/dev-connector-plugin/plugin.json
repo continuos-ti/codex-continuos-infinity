@@ -9,7 +9,7 @@
   "extensions": {
     "com.openai": {
       "interface": {
-        "displayName": "ContinuosWebIntegracao DEV",
+        "displayName": "ContinuosWebIntegracao DEV Web",
         "shortDescription": "Teste isolado de OAuth e MCP",
         "longDescription": "Private development connector for Codex Continuos Infinity. Connects only to the isolated DEV gateway and exposes inert diagnostics: dev_ping, dev_echo and dev_read_fixture.",
         "developerName": "Continuos I.T.",

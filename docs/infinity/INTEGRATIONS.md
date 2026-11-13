@@ -4,6 +4,8 @@
 
 O nome desejado do conector MCP é ContinuosWebIntegracao. A seleção @ContinuosWebIntegracao deve ser confirmada no composer. O modo Zero Risk é isolado e possui sua identidade. O bridge conserva vínculo da tarefa, identificação das ferramentas e permissões emitidas pelo Codex.
 
+O conector do harness DEV usa a identidade visível exata `ContinuosWebIntegracao DEV Web`, correspondente ao `displayName` do pacote privado e ao nome selecionado pelo adaptador no navegador.
+
 Endpoints públicos de referência do ambiente anterior:
 
 - MCP externo: https://codex-native2.continuos.com.br/mcp

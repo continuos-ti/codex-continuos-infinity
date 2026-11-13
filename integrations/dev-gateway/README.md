@@ -1,6 +1,6 @@
 # Isolated DEV OAuth/MCP gateway
 
-This service is a separate, public HTTPS endpoint for the `ContinuosWebIntegracao DEV` connector. It has its own OAuth SQLite database and pairing key, and it exposes only three inert tools: `dev_ping`, `dev_echo`, and `dev_read_fixture`. It does not import `codex_cf_oauth.py`, `codex_cf_gateway_lab.py`, Windows Local, Agent Desktop, Blender, or the production Codex broker.
+This service is a separate, public HTTPS endpoint for the `ContinuosWebIntegracao DEV Web` connector. It has its own OAuth SQLite database and pairing key, and it exposes only three inert tools: `dev_ping`, `dev_echo`, and `dev_read_fixture`. It does not import `codex_cf_oauth.py`, `codex_cf_gateway_lab.py`, Windows Local, Agent Desktop, Blender, or the production Codex broker.
 
 ## State and startup
 
