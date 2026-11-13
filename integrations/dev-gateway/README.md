@@ -16,7 +16,9 @@ $python = 'python'
 
 Restrict the state directory ACL to the current Windows user, SYSTEM, and Administrators. Then start the service with `CODEX_INFINITY_DEV_GATEWAY_STATE` pointing to that directory. The `pairing.secret` is DEV-only and must never be copied into the production state directory.
 
-When ChatGPT opens the DEV consent page, the local operator must read the DEV `pairing.secret` file privately and enter its value in the browser. Do not paste or transmit the key into a chat, ticket, log, repository, or screenshot. The consent request is valid for 20 minutes with a five-attempt limit. If it expires or reaches that limit, begin a new authorization from the connector's **Connect** action. The server accepts incidental surrounding whitespace from manual copying and preserves the pending request after a rejected attempt.
+The first authorization for a ChatGPT client requires the local operator to read the DEV `pairing.secret` file privately and enter its value in the browser. Do not paste or transmit the key into a chat, ticket, log, repository, or screenshot. A successful pairing creates a 30-day trusted consent for that exact client ID, registered redirect URI, `codex.control` scope, and DEV MCP resource. While that consent remains valid and those values match, later OAuth/PKCE authorizations are approved automatically and do not show the pairing form.
+
+The pending authorization request is valid for 20 minutes with a five-attempt limit, and its authorization code is valid for five minutes. An expired pending request or code does not revoke an existing trusted consent. If an old browser page reports `DEV authorization request expired`, close that stale page. A fresh **Connect** action will reuse the consent automatically when the client identity, redirect URI, scope, and resource still match. The pairing key is needed again only when no matching valid consent exists, such as a first pairing, an expired or revoked consent, or changed client/redirect/scope/resource values. The server accepts incidental surrounding whitespace from manual copying and preserves the pending request after a rejected attempt.
 
 ## Cloudflare
 
