@@ -5,6 +5,7 @@ import {
   CHATGPT_SILENT_TURN_RECOVERY_PROBE_MS,
   ChatGptTurnDomHealthTracker,
   shouldProbeChatGptSilentTurnRecovery,
+  shouldRecheckChatGptSilentTurnFinalAnswer,
 } from "../src/adapters/chatgpt-web/browser-worker";
 
 const idle = {
@@ -62,4 +63,22 @@ test("recovery operates on same bound tab and does not re-send prompts or repeat
   expect(recovery).toContain('silentRecoveryAttempted = true');
   expect(recovery).not.toMatch(/sendAttachedPrompt|press\("Enter"\)|\.click\(|page\.goto\(/);
   expect(source).toContain('code: "chatgpt_stalled_same_turn", retryable: false');
+});
+
+test("missing final-action health error triggers a fresh DOM probe before terminal failure", () => {
+  const health = new ChatGptTurnDomHealthTracker(1_000, 500, 750);
+  const idleAnswer = { responsePresent: true, running: false, currentText: "partial answer",
+    completionActionVisible: false };
+  expect(health.update(idleAnswer, 0)).toBeUndefined();
+  expect(health.update(idleAnswer, 749)).toBeUndefined();
+  const domError = health.update(idleAnswer, 750);
+  expect(domError).toContain("no new response activity");
+  expect(shouldRecheckChatGptSilentTurnFinalAnswer(domError)).toBe(true);
+  expect(shouldRecheckChatGptSilentTurnFinalAnswer(
+    "ChatGPT stopped showing generation or tool activity without a final answer.")).toBe(true);
+  expect(shouldRecheckChatGptSilentTurnFinalAnswer(
+    "ChatGPT did not expose its completed-turn action")).toBe(true);
+  expect(shouldRecheckChatGptSilentTurnFinalAnswer(
+    "ChatGPT response DOM disappeared while the browser turn was active")).toBe(false);
+  expect(shouldRecheckChatGptSilentTurnFinalAnswer(undefined)).toBe(false);
 });

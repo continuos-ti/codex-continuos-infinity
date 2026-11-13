@@ -1916,6 +1916,15 @@ export function shouldProbeChatGptSilentTurnRecovery(
     && !evidence.completionActionVisible; // Partial text is also recoverable if generation stopped.
 }
 
+/** Recheck fresh DOM before retiring a non-streaming turn whose final action never appeared. */
+export function shouldRecheckChatGptSilentTurnFinalAnswer(domError: string | undefined): boolean {
+  return !!domError && (
+    domError.startsWith("ChatGPT has shown no new response activity for ")
+    || domError.includes("stopped showing generation or tool activity without a final answer")
+    || domError.includes("did not expose its completed-turn action")
+  );
+}
+
 export class ChatGptTurnDomHealthTracker {
   private sawResponse = false;
   private missingResponseSince?: number;
@@ -6707,7 +6716,7 @@ export class ChatGptBrowserWorker {
             responseStreamActive,
             activityText: JSON.stringify(snapshot.traceBlocks),
           });
-           if ((domError?.includes("stopped showing generation or tool activity without a final answer") || domError?.includes("did not expose its completed-turn action"))) {
+           if (shouldRecheckChatGptSilentTurnFinalAnswer(domError)) {
              // Last chance: invalidate the DOM cache, then independently confirm
              // no activity before retiring an accepted long-running turn.
              responseDomCache.key = undefined;

@@ -517,3 +517,12 @@ A correcao do contrato de inventario e preventiva e **nao comprova a causa nem a
 - O desinstalador removeu o executavel, o diretorio de instalacao e as duas chaves de registro do staging. O processo do desinstalador nao forneceu um codigo de saida observavel pelo PowerShell, portanto a aprovacao foi baseada na verificacao posterior de ausencia de todos esses recursos.
 - O staging temporario foi removido. A instalacao existente permaneceu em `C:\\Users\\Administrador\\AppData\\Local\\Programs\\Codex Continuos Infinity`, versao `6.1.18-continuos.1`, com timestamp do executavel `2026-11-11T00:31:28Z` e seis processos ativos no momento da verificacao. O registro de desinstalacao continuou apontando para a instalacao existente.
 - O primeiro comando de build foi iniciado na raiz do repositorio e falhou porque o electron-builder leu o `package.json` errado. A execucao corrigida no workspace `launcher` concluiu o build e o ciclo de instalacao, smoke e desinstalacao.
+
+
+### Incidente 65ac12f2ab27: última verificação de DOM para falta de controle final — 13/11/2026
+
+- A auditoria dos checkpoints confirmou send-accepted, resposta visível, stall, recuperação de observação sem replay e erro terminal chatgpt_stalled_same_turn na instalação 6.1.13. Nenhum journal canônico do broker foi localizado para comprovar efeitos externos.
+- O fork continha incompatibilidade demonstrável entre a mensagem retornada por ChatGptTurnDomHealthTracker.update e o filtro de erro que aciona a confirmação final de DOM. A função shouldRecheckChatGptSilentTurnFinalAnswer agora reconhece também o erro emitido pelo tracker.
+- Os testes focados passaram: 159/159 com Bun 1.4.0, TypeScript tsc --noEmit e git diff --check concluídos com exit 0. A alteração é exclusiva da fonte isolada e não foi implantada em produção.
+- O diagnóstico e suas limitações estão em docs/infinity/INCIDENT_65ac12f2ab27_20261113.md. A causa do stall original, os efeitos MCP desconhecidos e a homologação E2E Full continuam pendentes.
+- Validação integral adicional do incidente: bun run verify exit 0; runtime 1339 aprovados / 114 ignorados, launcher 456 aprovados / 4 ignorados, builds e smoke relocável passaram. O aviso de chunk e a falha sintética HTTP 502 no catálogo não demonstram disponibilidade E2E do serviço.
