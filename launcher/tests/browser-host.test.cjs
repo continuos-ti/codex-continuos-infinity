@@ -22,6 +22,7 @@ const {
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   MANUAL_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
+  navigationErrorMessageForLog,
   navigationOriginForLog,
 } = require("../electron/browser-host.cjs");
 
@@ -292,6 +293,8 @@ test("primary browser bootstrap accepts only the exact committed idle document",
   await loadCommittedBrowserSurface(contents, IDLE_BROWSER_URL, 50);
 
   assert.deepEqual(calls, [["load", IDLE_BROWSER_URL]]);
+  assert.equal(contents.listenerCount("did-start-loading"), 0);
+  assert.equal(contents.listenerCount("dom-ready"), 0);
   assert.equal(contents.listenerCount("did-stop-loading"), 0);
   assert.equal(contents.listenerCount("did-finish-load"), 0);
   assert.equal(contents.listenerCount("did-fail-load"), 0);
@@ -331,12 +334,33 @@ test("primary browser bootstrap fails closed on navigation, renderer, and timeou
     const calls = [];
     stalled.isDestroyed = () => false;
     stalled.getURL = () => "about:blank";
+    stalled.isLoading = () => true;
+    stalled.isLoadingMainFrame = () => true;
     stalled.stop = () => calls.push("stop");
     stalled.loadURL = () => new Promise(() => {});
-    await assert.rejects(
-      loadCommittedBrowserSurface(stalled, IDLE_BROWSER_URL, 5),
-      /idle document did not commit within 5ms/,
-    );
+    let timeoutError;
+    try {
+      await loadCommittedBrowserSurface(stalled, IDLE_BROWSER_URL, 5);
+    } catch (error) {
+      timeoutError = error;
+    }
+    assert.match(timeoutError.message, /idle document did not commit within 5ms/);
+    assert.equal(timeoutError.code, "BROWSER_IDLE_DOCUMENT_TIMEOUT");
+    assert.deepEqual(timeoutError.navigationState, {
+      urlOrigin: "about:",
+      destroyed: false,
+      isLoading: true,
+      isLoadingMainFrame: true,
+      observed: {
+        didStartLoading: false,
+        domReady: false,
+        didFinishLoad: false,
+        didStopLoading: false,
+        didFailLoad: false,
+        rendererGone: false,
+        loadPromiseResolved: false,
+      },
+    });
     assert.deepEqual(calls, ["stop"]);
   } finally {
     clearTimeout(keepTestAlive);
@@ -458,6 +482,46 @@ test("authentication diagnostics retain only origin and non-sensitive error meta
   assert.deepEqual(
     navigationErrorForLog(Object.assign(new Error("loading https://chatgpt.com/c/private"), { code: "ERR_ABORTED" })),
     { errorType: "Error", errorCode: "ERR_ABORTED" },
+  );
+  assert.deepEqual(
+    navigationErrorForLog(Object.assign(new Error("private URL must not be logged"), {
+      code: "BROWSER_IDLE_DOCUMENT_TIMEOUT",
+      navigationState: {
+        urlOrigin: "data:",
+        destroyed: false,
+        isLoading: true,
+        isLoadingMainFrame: true,
+        observed: { didStartLoading: true, domReady: false },
+        url: "https://chatgpt.com/c/private?token=secret",
+      },
+    })),
+    {
+      errorType: "Error",
+      errorCode: "BROWSER_IDLE_DOCUMENT_TIMEOUT",
+      navigationState: {
+        urlOrigin: "data:",
+        destroyed: false,
+        isLoading: true,
+        isLoadingMainFrame: true,
+        observed: {
+          didStartLoading: true,
+          domReady: false,
+          didFinishLoad: false,
+          didStopLoading: false,
+          didFailLoad: false,
+          rendererGone: false,
+          loadPromiseResolved: false,
+        },
+      },
+    },
+  );
+  assert.equal(
+    navigationErrorMessageForLog(new Error("Navigation failed at data:text/html,<html>private</html>")),
+    "Navigation failed at [URL omitted]",
+  );
+  assert.equal(
+    navigationErrorMessageForLog(new Error("Navigation failed at https://chatgpt.com/c/private?token=secret")),
+    "Navigation failed at [URL omitted]",
   );
 });
 
