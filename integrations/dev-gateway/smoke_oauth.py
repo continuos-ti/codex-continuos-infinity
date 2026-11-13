@@ -167,6 +167,30 @@ def main() -> int:
         code = callback_query.get("code", [""])[0]
         require(bool(code) and callback_query.get("state", [""])[0] == state_value, "PKCE authorization code")
 
+        reuse_verifier = secrets.token_urlsafe(48)
+        reuse_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(reuse_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        reuse_state = secrets.token_urlsafe(24)
+        reuse_authorize = client.get(base + "/authorize", params={
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code_challenge": reuse_challenge,
+            "code_challenge_method": "S256",
+            "scope": "codex.control",
+            "state": reuse_state,
+            "resource": resource,
+        })
+        require(reuse_authorize.status_code in (302, 303),
+                "trusted consent reuse redirect", reuse_authorize.status_code)
+        reuse_callback = urlparse(reuse_authorize.headers.get("location", ""))
+        reuse_query = parse_qs(reuse_callback.query)
+        require(reuse_callback.path == urlparse(redirect_uri).path,
+                "trusted consent reuses authorization without pairing")
+        require(bool(reuse_query.get("code")) and reuse_query.get("state", [""])[0] == reuse_state,
+                "trusted consent reuse authorization code")
+
         def redeem_code() -> httpx.Response:
             with httpx.Client(timeout=10, trust_env=False) as parallel_client:
                 return parallel_client.post(base + "/token", data={
@@ -272,6 +296,7 @@ def main() -> int:
     print("anonymous_mcp=401")
     print("oauth=authorization_code+PKCE_S256+refresh_rotation+revocation")
     print("pairing=" + pairing_flow)
+    print("trusted_consent_reuse=passed")
     print("tools=dev_ping,dev_echo,dev_read_fixture")
     print("production_dispatcher=not_loaded")
     print("secrets=not_logged")

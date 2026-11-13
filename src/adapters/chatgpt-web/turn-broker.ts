@@ -10,8 +10,8 @@ import {
 import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment";
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
-import { recordBrokerCallEvent, type BrokerCallEvent } from "./broker-call-journal";
-import { brokerProviderEpochForTool } from "./broker-operation-identity";
+import { recordBrokerCallEvent, type BrokerCallEvent, type BrokerOperationStatusContract } from "./broker-call-journal";
+import { brokerOperationStatusForTool, brokerProviderEpochForTool, brokerToolIsReadOnly } from "./broker-operation-identity";
 import { acquireBrokerJournalOwnership } from "./broker-journal-ownership";
 import { inspectSettledBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
@@ -41,7 +41,10 @@ export interface BrokerToolRequest {
   callId: string;
   wireName: string;
   freeform: boolean;
+  /** True only when the native provider schema explicitly declares this structured tool read-only. */
+  readOnly?: boolean;
   providerEpoch?: string;
+  operationStatus?: BrokerOperationStatusContract;
   arguments?: Record<string, unknown>;
   input?: string;
 }
@@ -445,7 +448,9 @@ export class TurnBroker implements TurnBrokerOwner {
       directory: this.callJournalDirectory,
       traceId, callId: request.callId, wireName: request.wireName, event,
       ...(channel.nativeOwnerDigest ? { nativeOwnerDigest: channel.nativeOwnerDigest } : {}),
+      ...(request.readOnly !== undefined ? { readOnly: request.readOnly } : {}),
       ...(request.providerEpoch ? { providerEpoch: request.providerEpoch } : {}),
+      ...(request.operationStatus ? { operationStatus: request.operationStatus } : {}),
     });
     if (event === "queued") {
       this.recordedCallsInProcess = true;
@@ -1433,11 +1438,17 @@ export class TurnBroker implements TurnBrokerOwner {
     const callId = opaqueId("call");
     const providerEpoch = request.freeform === true
       ? undefined : brokerProviderEpochForTool(wireName, binding.channel.environment.tools);
+    const operationStatus = request.freeform === true
+      ? undefined : brokerOperationStatusForTool(wireName, binding.channel.environment.tools);
+    const readOnly = request.freeform !== true
+      && brokerToolIsReadOnly(wireName, binding.channel.environment.tools);
     const toolRequest: BrokerToolRequest = {
       callId,
       wireName,
       freeform: request.freeform === true,
+      readOnly,
       ...(providerEpoch ? { providerEpoch } : {}),
+      ...(operationStatus ? { operationStatus } : {}),
       ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
     };
     // Do not expose an invocation to the adapter before recording its existence.

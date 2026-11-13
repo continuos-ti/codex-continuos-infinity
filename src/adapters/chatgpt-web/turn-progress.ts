@@ -2,6 +2,8 @@ export interface ChatGptExternalTurnProgressSnapshot {
   revision: number;
   lastToolBatchRevision: number;
   activeToolCalls: number;
+  /** Cumulative calls not explicitly declared read-only by their native provider. */
+  mutatingToolCalls?: number;
   lastProgressAt?: number;
 }
 
@@ -87,6 +89,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   private lastToolBatchRevision = 0;
   private observedToolBatchRevision = 0;
   private activeToolCalls = 0;
+  private mutatingToolCalls = 0;
   private lastProgressAt?: number;
   private retirementError?: Error;
   private readonly toolBatchObservationWaiters = new Set<ToolBatchObservationWaiter>();
@@ -96,16 +99,21 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
       revision: this.revision,
       lastToolBatchRevision: this.lastToolBatchRevision,
       activeToolCalls: this.activeToolCalls,
+      mutatingToolCalls: this.mutatingToolCalls,
       ...(this.lastProgressAt !== undefined ? { lastProgressAt: this.lastProgressAt } : {}),
     };
   }
 
-  recordToolBatch(count: number, now = Date.now()): number {
+  recordToolBatch(count: number, now = Date.now(), mutatingCount = count): number {
     this.assertNotRetired();
     if (!Number.isSafeInteger(count) || count <= 0) {
       throw new Error("ChatGPT external progress requires a non-empty tool batch");
     }
+    if (!Number.isSafeInteger(mutatingCount) || mutatingCount < 0 || mutatingCount > count) {
+      throw new Error("ChatGPT external progress mutating tool count is invalid");
+    }
     this.activeToolCalls += count;
+    this.mutatingToolCalls += mutatingCount;
     this.advance(now, "tool_batch");
     return this.lastToolBatchRevision;
   }
@@ -242,6 +250,9 @@ export class ChatGptMirroredTurnProgress extends ChatGptTurnProgressBroadcaster 
     // recorder only ever moves these forward, so a regression means a corrupt or forged frame
     // rather than an ordering artefact, and accepting it would desynchronise observed liveness.
     if (next.lastToolBatchRevision < this.current.lastToolBatchRevision
+      || (this.current.mutatingToolCalls !== undefined && next.mutatingToolCalls === undefined)
+      || (next.mutatingToolCalls !== undefined && this.current.mutatingToolCalls !== undefined
+        && next.mutatingToolCalls < this.current.mutatingToolCalls)
       || (next.lastProgressAt === undefined && this.current.lastProgressAt !== undefined)
       || (next.lastProgressAt !== undefined
         && this.current.lastProgressAt !== undefined
@@ -262,6 +273,7 @@ export function assertChatGptTurnProgressSnapshot(
     || !finiteIndex(value.revision)
     || !finiteIndex(value.lastToolBatchRevision)
     || !finiteIndex(value.activeToolCalls)
+    || (value.mutatingToolCalls !== undefined && !finiteIndex(value.mutatingToolCalls))
     || value.lastToolBatchRevision > value.revision
     || (value.lastProgressAt !== undefined && !Number.isFinite(value.lastProgressAt))
     // Any recorded activity stamps a timestamp, so a frame claiming progress without one is

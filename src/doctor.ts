@@ -11,6 +11,7 @@ import { getTunnelServiceStatus } from "./tunnel-service";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
+  LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS,
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
@@ -164,7 +165,7 @@ export async function runDoctor(): Promise<DoctorReport> {
         ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
         : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
       if (config.browserInteractionMode === "automatic") {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
+        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS });
       }
       checks.push({
         id: "browser-host",

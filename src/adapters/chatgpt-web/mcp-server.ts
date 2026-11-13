@@ -9,6 +9,7 @@ import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control"
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerRetirementDiagnostics, type BrokerToolResult } from "./turn-broker";
 import { observeMcpToolCalls } from "./mcp-observation";
 import { McpRequestFence } from "./mcp-request-fence";
+import { modelVisibleToolParameters } from "./model-visible-tool-parameters";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -166,9 +167,10 @@ function browserToolDescription(tool: CodexTool): string {
   return tool.description;
 }
 
-function browserToolParameters(tool: CodexTool): Record<string, unknown> {
+export function browserToolParameters(tool: CodexTool): Record<string, unknown> {
+  const visibleParameters = modelVisibleToolParameters(tool);
   if (!tool.namespace && tool.name === "write_stdin") {
-    const parameters = structuredClone(tool.parameters);
+    const parameters = structuredClone(visibleParameters);
     const properties = parameters.properties as Record<string, Record<string, unknown>> | undefined;
     if (properties?.yield_time_ms) {
       const yieldTime = properties.yield_time_ms;
@@ -178,8 +180,8 @@ function browserToolParameters(tool: CodexTool): Record<string, unknown> {
     }
     return parameters;
   }
-  if (!isAgentWaitTool(tool)) return tool.parameters;
-  const parameters = structuredClone(tool.parameters);
+  if (!isAgentWaitTool(tool)) return visibleParameters;
+  const parameters = structuredClone(visibleParameters);
   const properties = parameters.properties && typeof parameters.properties === "object" && !Array.isArray(parameters.properties)
     ? parameters.properties as Record<string, unknown>
     : {};

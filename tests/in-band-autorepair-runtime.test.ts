@@ -60,7 +60,7 @@ function turn(extra: Record<string, unknown> = {}) {
     prepareRecovery:async()=>({text:"NEW REPAIR ONLY",images:[],turnToken:"turn_00000000000000000000000000000001",release(){}}),
     onTextDelta:(delta:string)=>observed.push(delta),
     onCommentary:(note:string)=>comments.push(note),
-    externalProgress:{snapshot:()=>({revision:1,lastToolBatchRevision:0,activeToolCalls:0})},
+    externalProgress:{snapshot:()=>({revision:1,lastToolBatchRevision:0,activeToolCalls:0,mutatingToolCalls:0})},
     completionFence:{begin:async()=>1,commit:async()=>true},
     ...extra,
   };
@@ -168,6 +168,27 @@ test("stalled turn with active MCP work fails closed without re-sending",async()
     expect(JSON.parse(await Bun.file(join(f.root,"runtime-incidents","ab12cd34ef56.json")).text()))
       .toMatchObject({outcome:"failed",activeToolCallsObserved:1, autoRepairAttempts:0});
   }finally{await f.server.stop(true)}
+});
+
+test("stalled turn with completed mutating MCP work does not enter an unrestricted repair turn", async () => {
+  const f = await fixture(async (request, _reuse, count) => {
+    if (count === 1) {
+      await request.onSubmitted?.();
+      throw new ChatGptWebAdapterError("No final after a mutation", {
+        code: "chatgpt_stalled_same_turn", status: 503, errorType: "server_error", retryable: false,
+      });
+    }
+    return "must not run";
+  });
+  try {
+    const t = turn({ traceId: "cc22dd33ee44", incidentJournalDirectory: join(f.root, "runtime-incidents"),
+      externalProgress: { snapshot: () => ({ revision: 2, lastToolBatchRevision: 2,
+        activeToolCalls: 0, mutatingToolCalls: 1 }) } });
+    await expect(f.worker.runExclusive(t.base)).rejects.toThrow("No final after a mutation");
+    expect(f.count()).toBe(1);
+    const incident = JSON.parse(await Bun.file(join(f.root, "runtime-incidents", "cc22dd33ee44.json")).text());
+    expect(incident).toMatchObject({ outcome: "failed", activeToolCallsObserved: 0, autoRepairAttempts: 0 });
+  } finally { await f.server.stop(true); }
 });
 
 test("unknown MCP progress prevents in-band repair and preserves the original browser error", async () => {

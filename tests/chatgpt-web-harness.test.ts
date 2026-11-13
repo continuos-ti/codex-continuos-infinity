@@ -38,11 +38,12 @@ test("current-turn MCP progress tracks active calls without claiming completion"
   expect(chatGptExternalProgressIsLive(progress.snapshot(), 1_000, 60_000)).toBeFalse();
 
   const changed = progress.waitForChange(0);
-  const toolBatchRevision = progress.recordToolBatch(2, 1_000);
+  const toolBatchRevision = progress.recordToolBatch(2, 1_000, 1);
   expect(await changed).toEqual({
     revision: 1,
     lastToolBatchRevision: 1,
     activeToolCalls: 2,
+    mutatingToolCalls: 1,
     lastProgressAt: 1_000,
   });
   expect(chatGptExternalProgressIsLive(progress.snapshot(), 100_000, 60_000)).toBeTrue();
@@ -56,6 +57,7 @@ test("current-turn MCP progress tracks active calls without claiming completion"
     revision: 3,
     lastToolBatchRevision: 1,
     activeToolCalls: 0,
+    mutatingToolCalls: 1,
     lastProgressAt: 3_000,
   });
   expect(chatGptExternalProgressIsLive(progress.snapshot(), 62_999, 60_000)).toBeTrue();
@@ -97,6 +99,7 @@ test("retiring current-turn MCP progress atomically clears calls and rejects its
     revision: 2,
     lastToolBatchRevision: 1,
     activeToolCalls: 0,
+    mutatingToolCalls: 2,
     lastProgressAt: 1_000,
   });
   const boundaryOutcome = await boundary;
@@ -4473,6 +4476,7 @@ test("mirrored turn progress carries daemon MCP activity into the browser helper
     revision: 2,
     lastToolBatchRevision: 1,
     activeToolCalls: 0,
+    mutatingToolCalls: 1,
     lastProgressAt: 2_000,
   });
 
@@ -4487,6 +4491,7 @@ test("mirrored turn progress ignores replayed frames and rejects malformed ones"
     revision: 4,
     lastToolBatchRevision: 3,
     activeToolCalls: 1,
+    mutatingToolCalls: 1,
     lastProgressAt: 5_000,
   };
 
@@ -4496,6 +4501,7 @@ test("mirrored turn progress ignores replayed frames and rejects malformed ones"
     revision: 2,
     lastToolBatchRevision: 2,
     activeToolCalls: 1,
+    mutatingToolCalls: 1,
     lastProgressAt: 1_000,
   })).toBeFalse();
   expect(mirror.snapshot().lastProgressAt).toBe(5_000);
@@ -4511,12 +4517,14 @@ test("mirrored turn progress wakes waiters exactly like the recording instance",
     revision: 1,
     lastToolBatchRevision: 1,
     activeToolCalls: 2,
+    mutatingToolCalls: 2,
     lastProgressAt: 7_000,
   });
   expect(await changed).toEqual({
     revision: 1,
     lastToolBatchRevision: 1,
     activeToolCalls: 2,
+    mutatingToolCalls: 2,
     lastProgressAt: 7_000,
   });
 });
@@ -4527,25 +4535,26 @@ test("mirrored progress rejects frames that regress against the observed state",
     revision: 3,
     lastToolBatchRevision: 3,
     activeToolCalls: 1,
+    mutatingToolCalls: 1,
     lastProgressAt: 5_000,
   });
 
   // Higher revision but contradicting what it already reported: a corrupt or forged frame, not an
   // ordering artefact, and accepting it would desynchronise observed liveness.
   expect(() => mirror.apply({
-    revision: 4, lastToolBatchRevision: 2, activeToolCalls: 1, lastProgressAt: 6_000,
+    revision: 4, lastToolBatchRevision: 2, activeToolCalls: 1, mutatingToolCalls: 1, lastProgressAt: 6_000,
   })).toThrow("regressed against the observed state");
   expect(() => mirror.apply({
-    revision: 4, lastToolBatchRevision: 3, activeToolCalls: 1, lastProgressAt: 4_000,
+    revision: 4, lastToolBatchRevision: 3, activeToolCalls: 1, mutatingToolCalls: 1, lastProgressAt: 4_000,
   })).toThrow("regressed against the observed state");
 
   // Recorded activity always stamps a timestamp, so a progress frame without one is malformed.
   expect(() => mirror.apply({
-    revision: 5, lastToolBatchRevision: 3, activeToolCalls: 0,
+    revision: 5, lastToolBatchRevision: 3, activeToolCalls: 0, mutatingToolCalls: 1,
   })).toThrow("snapshot is invalid");
 
   expect(mirror.snapshot()).toEqual({
-    revision: 3, lastToolBatchRevision: 3, activeToolCalls: 1, lastProgressAt: 5_000,
+    revision: 3, lastToolBatchRevision: 3, activeToolCalls: 1, mutatingToolCalls: 1, lastProgressAt: 5_000,
   });
 });
 

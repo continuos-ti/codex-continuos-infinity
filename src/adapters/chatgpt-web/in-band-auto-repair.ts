@@ -9,6 +9,8 @@ export function isSafeInBandAutoRepairFailure(error: unknown, state: {
   compaction: boolean;
   /** Unknown progress must never be interpreted as zero active MCP calls. */
   activeToolCalls: number | undefined;
+  /** Unknown tool risk must never be interpreted as a read-only history. */
+  mutatingToolCalls: number | undefined;
 }): error is ChatGptWebAdapterError {
   return error instanceof ChatGptWebAdapterError
     && (error.code === "chatgpt_stalled_same_turn"
@@ -16,7 +18,8 @@ export function isSafeInBandAutoRepairFailure(error: unknown, state: {
       || error.code === "browser_stream_inconsistent"
       || error.code === "browser_dom_observation_failed")
     && state.accepted && state.localTools && state.retained
-    && !state.cancelled && !state.compaction && state.activeToolCalls === 0;
+    && !state.cancelled && !state.compaction && state.activeToolCalls === 0
+    && state.mutatingToolCalls === 0;
 }
 
 export function inBandRepairTaskPrompt(details: {

@@ -26,7 +26,7 @@ function fixture() {
 function evidenceFiles(directory: string, trace = traceId) {
   return readdirSync(join(directory, trace)).filter(name => name.endsWith(".json"))
     .map(name => JSON.parse(readFileSync(join(directory, trace, name), "utf8")) as {
-      event: string; callId: string; providerEpoch?: string;
+      event: string; callId: string; readOnly?: boolean; providerEpoch?: string; operationStatus?: Record<string, unknown>;
     });
 }
 
@@ -83,6 +83,21 @@ test("provider epochs survive journal reconciliation without persisting tool arg
     .toThrow("Conflicting broker call journal event");
 });
 
+test("explicit read-only classification survives reconciliation and cannot change between events", () => {
+  const { directory } = fixture();
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "mcp__windows_local__windows_command_result",
+    event: "queued", readOnly: true });
+  expect(inspectBrokerCallJournal(directory)[0]?.readOnly).toBe(true);
+  expect(evidenceFiles(directory)[0]?.readOnly).toBe(true);
+
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "mcp__windows_local__windows_command_result",
+    event: "delivery_possible", readOnly: true });
+  expect(inspectBrokerCallJournal(directory)[0]?.readOnly).toBe(true);
+  recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local__windows_command_result", event: "retired_uncertain", readOnly: false });
+  expect(() => inspectBrokerCallJournal(directory)).toThrow(/invalid or inconsistent evidence/);
+});
+
 test("rejects a provider epoch change across lifecycle events", () => {
   const { directory } = fixture();
   recordBrokerCallEvent({ directory, traceId, callId,
@@ -91,6 +106,38 @@ test("rejects a provider epoch change across lifecycle events", () => {
     wireName: "mcp__windows_local__windows_command", event: "delivery_possible", providerEpoch: "e".repeat(32) });
 
   expect(() => inspectBrokerCallJournal(directory)).toThrow(/invalid or inconsistent evidence/);
+});
+
+test("provider operation status contracts survive journal reconciliation and cannot change between events", () => {
+  const { directory } = fixture();
+  const operationStatus = {
+    statusTool: "mcp__windows_local___windows_command_result",
+    operationIdArgument: "job_id",
+    providerEpochArgument: "provider_epoch",
+    waitSecondsArgument: "wait_seconds",
+    effectScope: "tracked_process",
+  };
+  recordBrokerCallEvent({ directory, traceId, callId, wireName: "mcp__windows_local___windows_command",
+    event: "queued", providerEpoch: "d".repeat(32), operationStatus });
+
+  const recovered = inspectBrokerCallJournal(directory);
+  expect(recovered[0]?.operationStatus).toEqual(operationStatus);
+  expect(evidenceFiles(directory)[0]?.operationStatus).toEqual(operationStatus);
+  recordBrokerCallEvent({ directory, traceId, callId,
+    wireName: "mcp__windows_local___windows_command", event: "delivery_possible",
+    providerEpoch: "d".repeat(32), operationStatus: { ...operationStatus, effectScope: "provider_operation" } });
+  expect(() => inspectBrokerCallJournal(directory)).toThrow(/invalid or inconsistent evidence/);
+});
+
+test("journal rejects malformed provider operation status contracts", () => {
+  const { directory } = fixture();
+  expect(() => recordBrokerCallEvent({ directory, traceId, callId, wireName: "tracked_tool",
+    event: "queued", operationStatus: {
+      statusTool: "../status",
+      operationIdArgument: "job_id",
+      providerEpochArgument: "provider_epoch",
+      effectScope: "tracked_process",
+    } })).toThrow("Invalid broker operation status contract");
 });
 test("broker journals the provider epoch advertised when a native tool call is queued", async () => {
   const { root, directory } = fixture();
@@ -108,8 +155,22 @@ test("broker journals the provider epoch advertised when a native tool call is q
           command: { type: "string" }, cwd: { type: "string" },
           operation_id: { type: "string" }, provider_epoch: { type: "string" },
         },
-        required: ["command", "cwd"], additionalProperties: false,
+        required: ["command", "cwd", "operation_id", "provider_epoch"], additionalProperties: false,
         "x-codex-operation-id": true, "x-codex-provider-epoch": providerEpoch,
+        "x-codex-operation-status": {
+          status_tool: "windows_command_result",
+          operation_id_argument: "job_id",
+          provider_epoch_argument: "provider_epoch",
+          wait_seconds_argument: "wait_seconds",
+          effect_scope: "tracked_process",
+        },
+      },
+    }, {
+      name: "windows_command_result", namespace: "mcp__windows_local", description: "Read command status.",
+      parameters: {
+        type: "object",
+        properties: { job_id: { type: "string" }, provider_epoch: { type: "string" }, wait_seconds: { type: "integer" } },
+        required: ["job_id", "provider_epoch"], "x-codex-read-only": true,
       },
     }],
   };
@@ -128,11 +189,19 @@ test("broker journals the provider epoch advertised when a native tool call is q
     }, 15_000);
     const [delivered] = await broker.nextToolBatch(token);
     expect(delivered?.providerEpoch).toBe(providerEpoch);
+    expect(delivered?.operationStatus).toEqual({
+      statusTool: "mcp__windows_local__windows_command_result",
+      operationIdArgument: "job_id",
+      providerEpochArgument: "provider_epoch",
+      waitSecondsArgument: "wait_seconds",
+      effectScope: "tracked_process",
+    });
     expect(delivered?.arguments).toEqual({ command: "Get-Date", cwd: root });
     expect(evidenceFiles(directory).every(entry => entry.providerEpoch === providerEpoch)).toBe(true);
+    expect(evidenceFiles(directory).every(entry => JSON.stringify(entry.operationStatus) === JSON.stringify(delivered?.operationStatus))).toBe(true);
 
     broker.completeTool(token, delivered!.callId, result);
-    await expect(pending).resolves.toEqual(result);
+    expect(await pending).toEqual(result);
     expect(evidenceFiles(directory).every(entry => entry.providerEpoch === providerEpoch)).toBe(true);
     expect(JSON.stringify(evidenceFiles(directory))).not.toContain("Get-Date");
   } finally {

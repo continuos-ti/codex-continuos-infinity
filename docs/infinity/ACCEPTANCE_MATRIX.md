@@ -361,3 +361,74 @@ O fluxo foi iniciado pela página do app no ChatGPT Web, em Plugins, pesquisando
 O gateway registrou `dev_authorization_created` às **19:24:13**. A requisição pendente está associada ao cliente ChatGPT, ao recurso `codex-native2-dev.continuos.com.br`, ao redirect host `chatgpt.com` e ao escopo `codex.control`. Na leitura de estado, a requisição tinha zero tentativas e cerca de 19 minutos restantes. Nenhuma chave foi lida ou inserida por automação. A página de pareamento permanece aberta para entrada manual pelo usuário.
 
 O modal `Nenhuma ferramenta disponível para este app` apareceu antes da autorização. A documentação oficial do ChatGPT informa que, em apps OAuth, a autorização deve ser concluída antes de aguardar a varredura das ferramentas. A chamada real `dev_ping` continua pendente até concluir esse pareamento e a varredura do catálogo.
+
+### Reutilização do consentimento DEV após autorização ChatGPT — 13/11/2026
+
+Uma nova leitura somente leitura confirmou HTTP 200 em `https://codex-native2-dev.continuos.com.br/health` e em `http://127.0.0.1:28768/health`, ambos identificando `ContinuosWebIntegracaoDev`. O cliente DCR `ChatGPT` agora possui `trusted_consent` válido até **2026-12-13T02:55:29Z**. O identificador do cliente, o redirect URI registrado, o escopo `codex.control` e o recurso `https://codex-native2-dev.continuos.com.br/mcp` correspondem exatamente às condições de reutilização automática implementadas em `Provider.authorize`.
+
+O último pedido de pareamento contém um redirect de autorização já concluído, mas expirou às **2026-11-13T03:15:22Z**. O authorization code associado expirou às **03:00:29Z**. Os eventos locais registram `dev_pair_approved` às **23:55:29** e `dev_authorization_code_exchanged` às **23:55:32** de 12/11. Portanto, a mensagem `DEV authorization request expired` corresponde ao pedido antigo já concluído e expirado. O consentimento persistido do cliente ChatGPT continua válido. Um novo pedido com a mesma identidade e os mesmos parâmetros deverá seguir a autorização automática, sem solicitar novamente a chave DEV. Nenhum novo pedido foi iniciado nesta verificação.
+
+`integrations/dev-gateway/smoke_oauth.py` agora testa também uma segunda autorização após o pareamento inicial e exige o retorno direto ao redirect URI, sem passar por `/pair`. `run_smoke.py`, executado com o ambiente Python do laboratório, terminou com código **0**, `DEV_GATEWAY_OAUTH_PKCE_MCP_SMOKE_OK`, `trusted_consent_reuse=passed` e `DEV_GATEWAY_LOCAL_E2E_OK`. O teste utilizou estado temporário isolado e removeu esse diretório ao terminar. Nenhuma chave ou credencial do gateway ativo foi lida ou alterada.
+
+A chamada `dev_ping` iniciada pelo broker do Infinity continua pendente de comprovação end-to-end. Na sessão ChatGPT desta verificação, os cinco vínculos disponíveis de `ContinuosWebIntegracao DEV Web` responderam `status=ok`, `service=ContinuosWebIntegracaoDev`, `mode=isolated-dev`, `side_effects=false` e `production_dispatcher_loaded=false`. No primeiro vínculo, `dev_echo` devolveu exatamente a mensagem enviada e `dev_read_fixture` leu `hello.txt` com sucesso. Isso comprova a autenticação e a execução direta das três ferramentas pelo conector ChatGPT. A integração do runtime Infinity com esse conector permanece pendente.
+
+### Descoberta nativa das ferramentas DEV no Codex ativo — 13/11/2026
+
+No turno nativo Codex vinculado ao conector `ContinuosWebIntegracao`, a primeira consulta ao catálogo por nome de ferramenta ainda não encontrou `dev_ping` porque o provedor estava no registro diferido. A descoberta nativa `tool_search` expôs exatamente as ferramentas `dev_ping`, `dev_echo` e `dev_read_fixture` do namespace `mcp__codex_apps__continuoswebintegracao_dev_web`. Uma segunda consulta ao inventário retornou schemas válidos para as três ferramentas.
+
+As três chamadas MCP reais, feitas pela ponte do runtime Codex ativo e roteadas ao conector DEV, concluíram com sucesso. `dev_ping` retornou `status=ok`, `service=ContinuosWebIntegracaoDev`, `mode=isolated-dev`, `side_effects=false` e `production_dispatcher_loaded=false`. `dev_echo` retornou exatamente `infinity-runtime-dev-bridge-2026-11-13`. `dev_read_fixture` leu apenas `hello.txt` e retornou SHA-256 `d641e1b0bda1f43ffb34bae95cfed4802b64c7fc1d0b78030ccf8d89e0939254`. Nenhum novo OAuth, pareamento, Brave ou credencial foi usado nesta sequência.
+
+O comando `dev status --json` do checkout Infinity confirmou `mode=browser-only`, `mcpRuntime.required=false` e launcher DEV parado, referenciando o PID anterior 71632. A evidência acima comprova a descoberta e a execução das ferramentas no runtime Codex atualmente conectado, incluindo o caminho de chamada do conector selecionado. O teste Full iniciado especificamente pelo binário do fork em staging ainda depende de um perfil DEV Full efetivamente iniciado, além dos critérios de concorrência, reconciliação externa e retomada pós-crash.
+### Reconciliacao do incidente 5b67e1914d78 e contrato de inventario MCP - 13/11/2026
+
+Os checkpoints `diagnostics/browser-turns/5b67e1914d78-2415e25c` confirmam envio aceito e resposta visivel, mas nenhuma resposta final verificavel. A observacao entrou em `response-stalled-60s`, a recuperacao no mesmo turno esgotou-se e `24-turn-failed.json` registrou `ChatGPT did not expose a final answer after same-turn observation recovery`. Uma segunda pasta isolada `5b67e1914d78-5badc229` tinha chegado a `19-response-visible` no momento da inspeção, sem conclusao comprovada. Esses checkpoints nao provam a causa da interrupcao nem efeitos MCP externos; nenhum prompt ou operacao anterior foi repetido.
+
+Na auditoria do caminho `codex_tool_inventory` -> `browserToolParameters` -> `emitToolBatch` -> `attachBrokerOperationId`, foi identificada uma incompatibilidade objetiva: o schema de `windows_command` em staging marca `operation_id` e `provider_epoch` como obrigatorios, embora esses campos sejam propriedade do broker e injetados apenas no despacho nativo. O inventario voltado ao modelo agora omite os campos e as extensoes internas em uma copia do schema, preservando integralmente o contrato original do provedor para validacao no broker. A implementacao fica em `model-visible-tool-parameters.ts` e a regressao em `tests/mcp-browser-schema.test.ts`.
+
+Evidencia desta retomada: `node node_modules/typescript/bin/tsc --noEmit` passou; 20 testes Node focados (17 de identidade e tres novos de inventario) passaram usando loader temporario de extensoes TypeScript, removido apos o teste; os 28 testes Python da integracao Windows Local passaram; `git diff --check` permaneceu limpo. `bun` nao estava disponivel no PATH do ambiente local observado; os testes que dependem de modulos `bun:` e a suite `bun run verify` nao foram executados com sucesso nesta retomada. A camada de producao, o navegador Brave, a autorizacao OAuth e o servico Windows Local nao foram alterados nem reiniciados.
+
+A correcao do contrato de inventario e preventiva e **nao comprova a causa nem a resolucao do stall do navegador**. A fonte real do Windows Local segue sem o patch staging, e o schema observado de `windows_command_result` nao exige `provider_epoch`. Portanto o status read-only de uma chamada antiga nao pode ser considerado uma reconciliacao canonica por operacao e epoca. O HTTP 409 `broker_reconciliation_required` e o startup fence permanecem ativos; `replayAuthorized=false` e `externalEffectsReconciled=false` permanecem inalterados. Rebind nativo pos-crash, efeitos externos e E2E Full do fork continuam pendentes.
+
+## Evidências atualizadas — 2026-11-13
+
+### Integridade da base e comparação de versões
+
+- O arquivo `upstream-main.zip` contém a base original 6.1.13, com 353 entradas. A auditoria escopada considera 286 arquivos rastreados, com 28 modificados, 12 novos e nenhum arquivo original ausente na fonte personalizada.
+- A instalação produtiva continua na versão 6.1.13. O manifesto do runtime contém 6.032 arquivos. A verificação integral confirmou zero arquivos ausentes, zero divergências de tamanho e zero divergências SHA-256 tanto na instalação quanto no perfil persistido.
+- O fork remoto é um fork verdadeiro de `miuuyy/codex-chatgpt-web`. A branch local `feature/continuos-infinity-native` está no commit `518759a98b74e74026702a8b68381c9fcaedf01b`, igual ao HEAD da PR #1.
+- O upstream `main` está no commit `f08d165`. A referência local `upstream/main` é ancestral do HEAD atual. A branch está 134 commits à frente e zero commits atrás.
+- A PR #1 permanece draft e mergeable. O workflow de CI associado ao HEAD atual, execução `43332740943`, terminou com sucesso.
+
+### Validação executada
+
+- `bun run verify` terminou com exit code 0. A suíte raiz aprovou 1.335 testes, ignorou 113 e não registrou falhas.
+- A suíte do launcher aprovou 456 testes, ignorou 4 e não registrou falhas.
+- `bun audit` verificou 105 pacotes e não encontrou vulnerabilidades.
+- Os testes Python do Windows Local aprovaram 28 de 28.
+- `integrations/dev-gateway/run_smoke.py` passou usando o ambiente virtual isolado do laboratório e estado temporário. A execução não alterou o banco OAuth do gateway ativo.
+- O build Vite terminou com sucesso. Permanece o aviso não bloqueante de chunk JavaScript acima de 500 KB.
+
+### DEV Full e consentimento existente
+
+- O perfil ativo é `C:\Users\Administrador\.codex-continuos-infinity-dev-full`. O launcher já estava em execução no PID 20144.
+- O perfil está em modo `full`, finalidade `dev-harness`, interação `automatic` e transporte `external-cloudflare`. O endpoint configurado usa o hostname dedicado `codex-native2-dev.continuos.com.br` e a identidade de serviço `ContinuosWebIntegracaoDev`.
+- O comando de status confirmou `mcpRuntime.required=true` e `mcpRuntime.ready=true`. A saúde local em 127.0.0.1:28768 e a saúde pública do hostname DEV responderam com sucesso.
+- A leitura SQLite foi feita em modo somente leitura. O consentimento do cliente ChatGPT para `https://codex-native2-dev.continuos.com.br/mcp`, escopo `codex.control`, permanece válido até 2026-12-12 23:55:29 BRT.
+- O consentimento do cliente de smoke permanece válido até 2026-12-12 16:15:03 BRT.
+- O único pedido pendente do cliente ChatGPT expirou em 2026-11-13 00:15:22 BRT. Isso explica a mensagem de solicitação expirada. O consentimento persistido do mesmo cliente continua válido.
+- Nenhuma nova autorização foi iniciada e o Brave não foi reaberto. Nenhum valor de pairing key ou credencial foi lido ou exposto.
+
+### Reconciliação dos turnos interrompidos
+
+- O trace `c19a2b6d7627-bb3322a3` não possui mais diretório individual. O log do launcher preserva evidência de `send-accepted`, `response-visible` e `turn-completed`, sem evento `turn-failed`.
+- O trace `c19a2b6d7627-ca5f0af6` preserva `send-accepted`, `response-visible`, `response-stalled-60s`, início de recuperação silenciosa, esgotamento da recuperação e `turn-failed`.
+- A falha final registra que a resposta não foi observada após a recuperação e que o prompt original não foi reenviado. O trace não contém um registro estruturado de chamadas MCP. O perfil produtivo 6.1.13 também não possui um journal de broker correspondente. Os efeitos externos desse turno permanecem sem reconciliação independente.
+- Nenhum dos dois prompts foi reenviado.
+
+### Homologação E2E ainda pendente
+
+- Os traces DEV anteriores confirmam sessão autenticada e composer pronto, mas a verificação do conector falhou em `connector-directory-failed-try-in-chat` e `connector-menu-missing`, após três tentativas de abrir o menu.
+- A página de configurações de plugins exibida no launcher continua mostrando `Couldn't load plugin settings`. Não foi possível comprovar a seleção do conector DEV na interface do Infinity.
+- A observação do Agent Desktop retornou `PERM_DENIED`, com erro de DACL em arquivo privado do próprio serviço. O controle Windows Local e as capturas de tela continuam disponíveis.
+- O estado Full e a saúde do gateway estão prontos, mas ainda falta uma chamada MCP real originada pelo Infinity, com journal de broker e reconciliação do resultado. Os testes sintéticos do harness não substituem essa homologação.
+- Permanecem pendentes a homologação E2E do broker, a reconciliação independente de efeitos externos, os testes concorrentes com anexos físicos, a instalação e reinicialização controlada em staging, o rollback e a validação integral do instalador e release.

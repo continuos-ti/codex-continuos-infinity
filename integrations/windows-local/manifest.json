@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "integration":  "windows-local-durable-identity",
-    "version":  "1.0.1",
+    "version":  "1.0.2",
     "generatedAt":  "2026-11-12",
     "provider":  "Windows Local",
     "tools":  [
@@ -17,7 +17,9 @@
               ],
     "schemaExtensions":  {
                              "operationId":  "x-codex-operation-id",
-                             "providerEpoch":  "x-codex-provider-epoch"
+                             "providerEpoch":  "x-codex-provider-epoch",
+                             "operationStatus":  "x-codex-operation-status",
+                             "readOnly":  "x-codex-read-only"
                          },
     "state":  {
                   "database":  "%LOCALAPPDATA%\\WindowsLocalRemote\\command-jobs.sqlite3",
@@ -34,7 +36,8 @@
     "installState":  "staged-not-applied-to-real-provider",
     "validation":  {
                        "pythonTests":  28,
-                       "adapterTests":  11,
+                       "adapterTests":  17,
+                       "journalContractTests":  2,
                        "dryRunAgainstRealProviderSource":  "passed",
                        "fixtureApplyAndRollback":  "passed",
                        "realProviderRestart":  "pending"
@@ -50,13 +53,13 @@
                       "path":  "apply-durable-command-jobs.ps1",
                       "role":  "installer-and-rollback",
                       "packaged":  true,
-                      "sha256":  "c5078cb012fc3180d889393f3e99a17dfd9e0ca509eea4128215f8e4e486a9d4"
+                      "sha256":  "1b51409e813c51335639415023bc39aee066d95d79589a589334ff43a2fbf343"
                   },
                   {
                       "path":  "README.md",
                       "role":  "integration-documentation",
                       "packaged":  true,
-                      "sha256":  "776fdfc12e96b2ca42992faebdf173560649c27cf7a8e1d7b5f36e52aa37b8da"
+                      "sha256":  "0255c33ed9a59373c0f240fc49e83c9e3287625bff9282684bddd11e1d8f3bba"
                   },
                   {
                       "path":  "tests/test_durable_command_jobs.py",
@@ -68,13 +71,43 @@
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
                       "role":  "bridge-identity-adapter",
                       "packaged":  false,
-                      "sha256":  "13873af75515b2dde88610f17eb2a5c1cef4c58cf8c69a642e20c1de47b4a188"
+                      "sha256":  "88ee3421110f150f26bb6148d86e27c693928cb6e8c07614c8cee29448431f93"
                   },
                   {
                       "path":  "../../tests/broker-operation-identity.test.ts",
                       "role":  "bridge-identity-tests",
                       "packaged":  false,
-                      "sha256":  "20de6fbf83af7f6210a783da682ad6b19521736a9a74b5fd31aa723bcfacef46"
+                      "sha256":  "a895b2974ac5018adffc90eed1c210f98a9f5fe979bd2acfabc1f94a5eaaed50"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/broker-call-journal.ts",
+                      "role":  "bridge-journal-contract",
+                      "packaged":  false,
+                      "sha256":  "7e758a7ea57b4d08d8589e27e8e155dd5300c540b4f633dab3a65b5aad91cdd6"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/broker-call-reconciliation.ts",
+                      "role":  "bridge-recovery-contract",
+                      "packaged":  false,
+                      "sha256":  "9e281007283eb37c12420eb7dc3762183365cbd83df98c0c818049e2556e5039"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/turn-broker.ts",
+                      "role":  "bridge-dispatch-binding",
+                      "packaged":  false,
+                      "sha256":  "5c11214981301c6d1fe9208abca527ad2f1eaf5ad7d5e8b86fc788c6eb616a2c"
+                  },
+                  {
+                      "path":  "../../tests/broker-call-journal.test.ts",
+                      "role":  "bridge-journal-tests",
+                      "packaged":  false,
+                      "sha256":  "c0772c0180fbfe7712bb7509bd7e3a4c21b93de8e172943914e6031800ee2903"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/index.ts",
+                      "role":  "bridge-recovery-query-handoff",
+                      "packaged":  false,
+                      "sha256":  "65436e275bd02d66c6e9db5ca8589d84e97d8eb7203fbdf6ffbb4d1a370f2814"
                   }
               ]
 }

@@ -278,14 +278,24 @@ $schemaExtension = @'
                 'pattern': r'^[0-9a-f]{32}$',
                 'description': 'Provider ledger epoch injected by Codex Continuos Infinity.'
             }
+            entry['inputSchema']['required'].extend(['operation_id', 'provider_epoch'])
             entry['inputSchema']['x-codex-operation-id'] = True
             entry['inputSchema']['x-codex-provider-epoch'] = COMMAND_JOBS.epoch
+            entry['inputSchema']['x-codex-operation-status'] = {
+                'status_tool': 'windows_command_result',
+                'operation_id_argument': 'job_id',
+                'provider_epoch_argument': 'provider_epoch',
+                'wait_seconds_argument': 'wait_seconds',
+                'effect_scope': 'tracked_process'
+            }
         elif entry['name'] == 'windows_command_result':
             entry['inputSchema']['properties']['provider_epoch'] = {
                 'type': 'string',
                 'pattern': r'^[0-9a-f]{32}$',
                 'description': 'Epoch returned by the original windows_command call.'
             }
+            entry['inputSchema']['required'].append('provider_epoch')
+            entry['inputSchema']['x-codex-read-only'] = True
     for entry in result:
 '@
 $schemaExtension += $newline

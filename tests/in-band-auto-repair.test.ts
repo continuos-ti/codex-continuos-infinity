@@ -7,7 +7,8 @@ import { inBandRepairTaskPrompt, isSafeInBandAutoRepairFailure } from "../src/ad
 const stall = new ChatGptWebAdapterError("Missing final answer", {
   code: "chatgpt_stalled_same_turn", status: 503, errorType: "server_error", retryable: false,
 });
-const eligible = { accepted: true, localTools: true, retained: true, cancelled: false, compaction: false, activeToolCalls: 0 };
+const eligible = { accepted: true, localTools: true, retained: true, cancelled: false, compaction: false,
+  activeToolCalls: 0, mutatingToolCalls: 0 };
 
 describe("in-band event-driven repair guards", () => {
   test("supervisor and browser worker resolve identical diagnostic directories in each profile", () => {
@@ -47,6 +48,8 @@ describe("in-band event-driven repair guards", () => {
     expect(isSafeInBandAutoRepairFailure(inconsistentStream, eligible)).toBe(true);
     expect(isSafeInBandAutoRepairFailure(inconsistentStream, { ...eligible, activeToolCalls: undefined })).toBe(false);
     expect(isSafeInBandAutoRepairFailure(inconsistentStream, { ...eligible, activeToolCalls: 1 })).toBe(false);
+    expect(isSafeInBandAutoRepairFailure(inconsistentStream, { ...eligible, mutatingToolCalls: 1 })).toBe(false);
+    expect(isSafeInBandAutoRepairFailure(inconsistentStream, { ...eligible, mutatingToolCalls: undefined })).toBe(false);
     for (const change of [{ accepted: false }, { retained: false }, { activeToolCalls: 1 },
       { activeToolCalls: undefined }, { compaction: true }]) {
       expect(isSafeInBandAutoRepairFailure(observationFailed, { ...eligible, ...change })).toBe(false);
@@ -57,6 +60,8 @@ describe("in-band event-driven repair guards", () => {
       { accepted: false }, { localTools: false }, { retained: false },
       { cancelled: true }, { compaction: true }, { activeToolCalls: 1 },
       { activeToolCalls: undefined }, { activeToolCalls: -1 }, { activeToolCalls: Number.NaN },
+      { mutatingToolCalls: 1 }, { mutatingToolCalls: undefined }, { mutatingToolCalls: -1 },
+      { mutatingToolCalls: Number.NaN },
     ]) expect(isSafeInBandAutoRepairFailure(stall, { ...eligible, ...change })).toBe(false);
   });
   test("does not recover auth, approval or arbitrary upstream errors", () => {

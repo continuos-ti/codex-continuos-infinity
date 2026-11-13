@@ -5578,6 +5578,12 @@ export class ChatGptBrowserWorker {
       catch { return undefined; }
       return Number.isSafeInteger(count) && count! >= 0 ? count : undefined;
     };
+    const readMutatingToolCalls = (): number | undefined => {
+      let count: number | undefined;
+      try { count = turn.externalProgress?.snapshot().mutatingToolCalls; }
+      catch { return undefined; }
+      return Number.isSafeInteger(count) && count! >= 0 ? count : undefined;
+    };
     const recordIncident = (error: unknown, outcome: "failed" | "inband_response_completed") => {
       if (!turn.incidentJournalDirectory) return;
       try {
@@ -5705,6 +5711,7 @@ export class ChatGptBrowserWorker {
             cancelled: turn.abortSignal?.aborted === true,
             compaction: turn.compaction === true || turn.captureLunaCheckpoint === true,
             activeToolCalls,
+            mutatingToolCalls: readMutatingToolCalls(),
           });
         if (!repairAllowed || !turn.prepareRecovery) throw initialFailure;
         const failure = initialFailure as ChatGptWebAdapterError;

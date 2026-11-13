@@ -365,7 +365,7 @@ export async function inspectLauncherBrowserHost(
   }
 }
 
-export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
+export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 100_000;
 export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
