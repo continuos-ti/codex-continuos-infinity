@@ -254,7 +254,7 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
       expect(saved).not.toHaveProperty("useSavedChats");
       expect(saved?.appName).toBe("Codex Work");
       expect(interaction === "manual" ? saved?.automaticAppName : saved?.manualAppName)
-        .toBe(interaction === "automatic" ? "Codex Zero Risk" : development ? "ContinuosWebIntegracao DEV" : "ContinuosWebIntegracao");
+        .toBe(interaction === "automatic" ? "Codex Zero Risk" : development ? "ContinuosWebIntegracao DEV Web" : "ContinuosWebIntegracao");
       // Unrelated setup and mode changes retain the suffix; clearing it is explicit.
       const initial = structuredClone(saved!);
       mocks.push(spyOn(configModule, "loadConfigForSetup").mockImplementation(() => structuredClone(initial)));

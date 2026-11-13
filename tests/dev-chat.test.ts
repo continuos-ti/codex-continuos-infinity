@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -381,9 +381,11 @@ test("DEV chat attaches its broker to the launcher-owned tunnel without a Respon
       alias: "production-alias",
     },
   };
+  const devHome = join(root, "dev");
+  const journalDirectory = join(devHome, "diagnostics", "broker-calls");
   let transport: Awaited<ReturnType<typeof startDevChatTransport>> | undefined;
   try {
-    transport = await startDevChatTransport(config, join(root, "dev"), {
+    transport = await startDevChatTransport(config, devHome, {
       status: () => ({
         ok: true,
         processRunning: true,
@@ -394,9 +396,42 @@ test("DEV chat attaches its broker to the launcher-owned tunnel without a Respon
       }),
     });
     expect(transport.config).toBe(config);
+    expect(existsSync(journalDirectory)).toBe(true);
+    expect(existsSync(`${journalDirectory}.owner.sqlite`)).toBe(true);
     expect(await callTurnBroker(transport.config.brokerSocketPath, { method: "owner_status" }))
       .toMatchObject({ protocolVersion: 5 });
     expect(await (await fetch(`http://127.0.0.1:${occupied.port}`)).text()).toBe("normal Codex route");
+    const traceId = "abcdef123456";
+    const token = await transport.broker.register({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [{ name: "dev_probe", description: "Journal test", parameters: { type: "object" } }],
+    }, 20_000, traceId);
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(transport.broker.socketPath, {
+      method: "claim", token,
+    });
+    const pending = callTurnBroker<BrokerToolResult>(transport.broker.socketPath, {
+      method: "invoke", bindingId, wireName: "dev_probe", arguments: {},
+    }, 15_000);
+    const [request] = await transport.broker.nextToolBatch(token);
+    expect(request?.wireName).toBe("dev_probe");
+    transport.broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "ok" }] });
+    await expect(pending).resolves.toMatchObject({ content: [{ text: "ok" }] });
+    const entries = readdirSync(join(journalDirectory, traceId))
+      .filter(name => name.endsWith(".json"))
+      .map(name => JSON.parse(readFileSync(join(journalDirectory, traceId, name), "utf8")) as {
+        event: string;
+        tool: string;
+        resultRecoverable: boolean;
+        replayAuthorized: boolean;
+      });
+    expect(entries.map(entry => entry.event)).toEqual(expect.arrayContaining([
+      "queued", "delivery_possible", "result_received",
+    ]));
+    expect(entries.every(entry => entry.tool === "dev_probe"
+      && entry.resultRecoverable === false && entry.replayAuthorized === false)).toBe(true);
   } finally {
     await transport?.close();
     await occupied.stop(true);

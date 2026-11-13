@@ -2151,6 +2151,10 @@ const CHATGPT_DIAGNOSTIC_SAFE_STRING_KEYS = new Set([
   "dataState",
   "dataHighlighted",
   "origin",
+  "appMentionPath",
+  "appMentionDisplayName",
+  "dataId",
+  "dataKeyword",
 ]);
 
 /** Defense in depth: persisted browser traces contain structure, never rendered UI text. */
@@ -2219,6 +2223,7 @@ class ChatGptBrowserDiagnostics {
           stopButtonSelector,
           completionActionSelector,
           appName,
+          devAppPath,
         }) => {
           const rendered = (element: Element): boolean => {
             const candidate = element as HTMLElement;
@@ -2307,8 +2312,21 @@ class ChatGptBrowserDiagnostics {
                 : [],
               selectedConnectorCount: selectedConnectors.length,
               exactSelectedConnectorCount: selectedConnectors.filter(
-                element => (element.getAttribute("data-keyword") ?? element.getAttribute("app-mention-display-name")) === appName,
+                element => {
+                  const mentionPath = element.getAttribute("app-mention-path");
+                  if (devAppPath) return mentionPath === devAppPath;
+                  return (element.getAttribute("data-keyword")
+                    ?? element.getAttribute("app-mention-display-name")) === appName;
+                },
               ).length,
+              selectedConnectorEvidence: devAppPath
+                ? selectedConnectors.slice(0, 10).map(element => ({
+                    appMentionPath: element.getAttribute("app-mention-path"),
+                    appMentionDisplayName: element.getAttribute("app-mention-display-name"),
+                    dataId: element.getAttribute("data-id"),
+                    dataKeyword: element.getAttribute("data-keyword"),
+                  }))
+                : [],
             },
             focus: {
               tag: document.activeElement?.tagName.toLowerCase() ?? null,
@@ -2367,6 +2385,9 @@ class ChatGptBrowserDiagnostics {
           stopButtonSelector: CHATGPT_STOP_BUTTON_SELECTOR,
           completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
           appName: this.appName,
+          devAppPath: this.appName === DEV_CHATGPT_CONNECTOR_NAME
+            ? "app://asdk_app_6af62965eba881918d00ee180cf36d44"
+            : null,
         })),
         withChatGptBrowserObservationTimeout(
           Promise.resolve().then(() => page.locator(
@@ -3861,24 +3882,39 @@ export class ChatGptBrowserWorker {
   }
 
   private selectedConnectorControl(composer: Locator): Locator {
+    const devAppPath = "app://asdk_app_6af62965eba881918d00ee180cf36d44";
     return composer
       .locator([
         `[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`,
         `[app-mention-path^="app://"][app-mention-display-name=${JSON.stringify(this.config.appName)}][contenteditable="false"]`,
-        '[data-prompt-link-href="plugin://dev-6ade222911a0819182d121f982c5a263@openai-curated-remote"][data-appearance="inline-mention"]',
+        ...(this.config.appName === DEV_CHATGPT_CONNECTOR_NAME
+          ? [`[app-mention-path=${JSON.stringify(devAppPath)}][contenteditable="false"]`]
+          : []),
+        ...(this.config.appName === CHATGPT_CONNECTOR_NAME
+          ? ['[data-prompt-link-href="plugin://dev-6ade222911a0819182d121f982c5a263@openai-curated-remote"][data-appearance="inline-mention"]']
+          : []),
       ].join(", "))
       .filter({ visible: true });
   }
 
   private async connectorIsSelected(composer: Locator, abortSignal?: AbortSignal): Promise<boolean> {
     const selected = this.selectedConnectorControl(composer);
+    const devAppPath = this.config.appName === DEV_CHATGPT_CONNECTOR_NAME
+      ? "app://asdk_app_6af62965eba881918d00ee180cf36d44"
+      : null;
     const keywords = await withBrowserTurnAbort(
-      withChatGptBrowserObservationTimeout(selected.evaluateAll(elements => (
-        elements.map(element => element.getAttribute("data-keyword")
-          ?? element.getAttribute("app-mention-display-name")
-          ?? (element.getAttribute("data-prompt-link-href") === "plugin://dev-6ade222911a0819182d121f982c5a263@openai-curated-remote"
-            ? element.textContent?.trim() : null))
-      ))),
+      withChatGptBrowserObservationTimeout(selected.evaluateAll((elements, expected: { devAppPath: string | null; appName: string }) => (
+        elements.map(element => {
+          const mentionPath = element.getAttribute("app-mention-path");
+          if (expected.devAppPath) {
+            return mentionPath === expected.devAppPath ? expected.appName : null;
+          }
+          return element.getAttribute("data-keyword")
+            ?? element.getAttribute("app-mention-display-name")
+            ?? (element.getAttribute("data-prompt-link-href") === "plugin://dev-6ade222911a0819182d121f982c5a263@openai-curated-remote"
+              ? element.textContent?.trim() : null);
+        })
+      ), { devAppPath, appName: this.config.appName })),
       abortSignal,
     );
     const exactMatches = keywords.filter(keyword => keyword === this.config.appName).length;
@@ -3974,7 +4010,7 @@ export class ChatGptBrowserWorker {
   ): Promise<Locator | null> {
     const detailUrls: Record<string, string> = {
       [CHATGPT_CONNECTOR_NAME]: "https://chatgpt.com/plugins/plugin_asdk_app_6ade222911a0819182d121f982c5a263",
-      [DEV_CHATGPT_CONNECTOR_NAME]: "https://chatgpt.com/plugins/plugins_6af61e4b63e08191a1cf2f59fddfff50",
+      [DEV_CHATGPT_CONNECTOR_NAME]: "https://chatgpt.com/plugins/plugin_asdk_app_6af62965eba881918d00ee180cf36d44",
     };
     const detailUrl = detailUrls[this.config.appName];
     if (!detailUrl) return null;
@@ -4066,8 +4102,7 @@ export class ChatGptBrowserWorker {
             timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS,
           });
           await withBrowserTurnAbort(settleChatGptUi(), personalizationSignal);
-          await composer.pressSequentially(chatGptConnectorMentionQuery(this.config.appName), {
-            delay: 15,
+          await composer.fill(chatGptConnectorMentionQuery(this.config.appName), {
             signal: personalizationSignal,
             timeout: CHATGPT_CONNECTOR_MENTION_TYPE_TIMEOUT_MS,
           });
@@ -4130,14 +4165,24 @@ export class ChatGptBrowserWorker {
         await composer.fill("", { signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
         await composer.focus({ signal: abortSignal, timeout: CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS });
         await withBrowserTurnAbort(settleChatGptUi(), abortSignal);
-        await composer.pressSequentially(chatGptConnectorMentionQuery(this.config.appName), {
-          delay: 15,
+        await composer.fill(chatGptConnectorMentionQuery(this.config.appName), {
           signal: abortSignal,
           timeout: CHATGPT_CONNECTOR_MENTION_TYPE_TIMEOUT_MS,
         });
         if (!firstMenuCaptured) {
           firstMenuCaptured = true;
           await capture("connector-mention-triggered");
+        }
+        if (await this.connectorIsSelected(composer, abortSignal)) {
+          const mentionComposer = await this.activeComposer(page, 30_000, abortSignal);
+          const remainingPrompt = (await this.attachedPromptText(page, abortSignal)).trim();
+          if (remainingPrompt.length > 0) {
+            throw new ChatGptPromptAttachmentIntegrityError(
+              `ChatGPT selected ${JSON.stringify(this.config.appName)} while retaining an unexpected draft (visibleCharacters=${remainingPrompt.length})`,
+            );
+          }
+          await capture("connector-selected-by-mention");
+          return mentionComposer;
         }
         try {
           await appResult.waitFor({

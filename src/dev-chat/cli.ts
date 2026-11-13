@@ -469,7 +469,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
   const features = readDevChatExperimentalFeatures(paths);
   await assertLauncherReady(config);
   const transport = config.mode === "full"
-    ? await startDevChatTransport(config, paths.runtimePath)
+    ? await startDevChatTransport(config, paths.home)
     : undefined;
   let driver: DevChatDriver | undefined;
   try {

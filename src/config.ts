@@ -68,7 +68,8 @@ export type SubagentProtocol = "compatibility-v1" | "native";
  * contract therefore has a new identity instead of mutating the retired connector in place.
  */
 export const CHATGPT_CONNECTOR_NAME = "ContinuosWebIntegracao";
-export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
+export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV Web`;
+const LEGACY_DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
 export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk";
 export function validateConnectorNameSuffix(value: unknown): string {
   if (typeof value !== "string" || value.length > 74
@@ -454,6 +455,14 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
     throw new Error(`Invalid configuration purpose in ${path}`);
+  }
+  if (parsed.purpose === "dev-harness") {
+    if (parsed.appName === LEGACY_DEV_CHATGPT_CONNECTOR_NAME) {
+      parsed.appName = DEV_CHATGPT_CONNECTOR_NAME;
+    }
+    if (parsed.automaticAppName === LEGACY_DEV_CHATGPT_CONNECTOR_NAME) {
+      parsed.automaticAppName = DEV_CHATGPT_CONNECTOR_NAME;
+    }
   }
   if (typeof parsed.releaseVersion !== "string" || !parsed.releaseVersion.trim()) throw new Error(`Missing releaseVersion in ${path}`);
   if (parsed.mode !== "browser-only" && parsed.mode !== "full") throw new Error(`Invalid runtime mode in ${path}`);

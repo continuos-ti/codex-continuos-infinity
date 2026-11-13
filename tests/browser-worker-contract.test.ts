@@ -36,7 +36,7 @@ function personalizedTemporaryChatRole(
 
 test("connector mention query always uses the configured plugin identity", () => {
   expect(chatGptConnectorMentionQuery(CHATGPT_CONNECTOR_NAME)).toBe("@ContinuosWebIntegracao");
-  expect(chatGptConnectorMentionQuery(DEV_CHATGPT_CONNECTOR_NAME)).toBe("@ContinuosWebIntegracao DEV");
+  expect(chatGptConnectorMentionQuery(DEV_CHATGPT_CONNECTOR_NAME)).toBe("@ContinuosWebIntegracao DEV Web");
   expect(chatGptConnectorMentionQuery("Another Approved Connector")).toBe("@Another Approved Connector");
   expect(() => chatGptConnectorMentionQuery("@codex")).toThrow("invalid");
 });
@@ -397,7 +397,7 @@ test("connected ContinuosWebIntegracao detail route selects the connector throug
   ]);
 });
 
-test("ContinuosWebIntegracao DEV detail route can select a web-enabled plugin", async () => {
+test("ContinuosWebIntegracao DEV Web detail route can select the authenticated web plugin", async () => {
   const events: string[] = [];
   const selectedComposer = { kind: "dev-composer" };
   let buttonName: RegExp | undefined;
@@ -413,7 +413,7 @@ test("ContinuosWebIntegracao DEV detail route can select a web-enabled plugin", 
       return {
         first: () => ({
           isVisible: async () => true,
-          click: async () => { events.push("test-now"); },
+          click: async () => { events.push("try-in-chat"); },
         }),
       };
     },
@@ -429,11 +429,11 @@ test("ContinuosWebIntegracao DEV detail route can select a web-enabled plugin", 
     attachedPromptText: async () => "",
   }, page, async label => { events.push("capture:" + label); });
   expect(result).toBe(selectedComposer);
-  expect(buttonName?.test("Testar agora")).toBe(true);
+  expect(buttonName?.test("Try in chat")).toBe(true);
   expect(events).toEqual([
-    "navigate:https://chatgpt.com/plugins/plugins_6af61e4b63e08191a1cf2f59fddfff50",
-    "title:ContinuosWebIntegracao DEV",
-    "test-now",
+    "navigate:https://chatgpt.com/plugins/plugin_asdk_app_6af62965eba881918d00ee180cf36d44",
+    "title:ContinuosWebIntegracao DEV Web",
+    "try-in-chat",
     "capture:connector-selected-from-plugin-directory",
   ]);
 });
@@ -455,7 +455,7 @@ test("DEV desktop-only plugin detail cannot be mistaken for ChatGPT web connecto
   await expect(worker.selectConnectorFromDirectory.call({
     config: { appName: DEV_CHATGPT_CONNECTOR_NAME, useSavedChats: true },
   }, page, async label => { events.push("capture:" + label); })).rejects.toThrow(
-    'ChatGPT displays "ContinuosWebIntegracao DEV" as a desktop-only plugin',
+    'ChatGPT displays "ContinuosWebIntegracao DEV Web" as a desktop-only plugin',
   );
   expect(events).toContain("capture:connector-directory-failed-try-in-chat");
   expect(events.filter(event => event.startsWith("navigate:"))).toHaveLength(2);
@@ -1486,15 +1486,17 @@ test("selected connector identity does not depend on its visible pill text", asy
   const { createDocument } = require("@mixmark-io/domino");
   const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
   worker.config = { appName: "Codex Native2" };
-  const selected = async (html: string) => {
+  const selected = async (html: string, appName = "Codex Native2") => {
+    worker.config = { appName };
     const document = createDocument(`<div id="composer">${html}</div>`);
     const composer = {
       locator: (selector: string) => ({
-        filter: (options: { hasText?: string; visible?: boolean }) => ({
-          evaluateAll: async (read: (elements: Element[]) => unknown) => read(
+        filter: (filterOptions: { hasText?: string; visible?: boolean }) => ({
+          evaluateAll: async (read: (elements: Element[], options: unknown) => unknown, evaluateOptions: unknown) => read(
             Array.from(document.querySelectorAll(selector) as NodeListOf<Element>)
-              .filter(element => !options.visible || !element.hasAttribute("hidden"))
-              .filter(element => !options.hasText || element.textContent?.includes(options.hasText)),
+              .filter(element => !filterOptions.visible || !element.hasAttribute("hidden"))
+              .filter(element => !filterOptions.hasText || element.textContent?.includes(filterOptions.hasText)),
+            evaluateOptions,
           ),
         }),
       }),
@@ -1513,6 +1515,15 @@ test("selected connector identity does not depend on its visible pill text", asy
   expect(await selected(powerPill.replace('contenteditable="false"', 'contenteditable="true"'))).toBeFalse();
   expect(await selected(powerPill.replace('app-mention-display-name="Codex Native2"', 'app-mention-display-name="Other"'))).toBeFalse();
   await expect(selected(pill + powerPill)).rejects.toThrow("duplicate");
+
+  const devPath = "app://asdk_app_6af62965eba881918d00ee180cf36d44";
+  const devPill = `<span app-mention-path="${devPath}" app-mention-display-name="ContinuosWebIntegracao DEV" contenteditable="false">DEV</span>`;
+  expect(await selected(devPill, DEV_CHATGPT_CONNECTOR_NAME)).toBeTrue();
+  // A matching label/keyword without authenticated app identity must fail closed.
+  expect(await selected('<span data-id="plugin:alias" data-keyword="ContinuosWebIntegracao DEV Web">DEV</span>', DEV_CHATGPT_CONNECTOR_NAME)).toBeFalse();
+  expect(await selected(devPill.replace(devPath, "app://wrong"), DEV_CHATGPT_CONNECTOR_NAME)).toBeFalse();
+  expect(await selected('<span app-mention-path="app://wrong" app-mention-display-name="ContinuosWebIntegracao DEV Web" contenteditable="false">DEV</span>', DEV_CHATGPT_CONNECTOR_NAME)).toBeFalse();
+  expect(await selected('<span data-prompt-link-href="plugin://dev-6ade222911a0819182d121f982c5a263@openai-curated-remote" data-appearance="inline-mention">ContinuosWebIntegracao DEV Web</span>', DEV_CHATGPT_CONNECTOR_NAME)).toBeFalse();
 });
 
 test("connector selection re-resolves the active composer after ChatGPT replaces it", async () => {
@@ -1595,7 +1606,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
     ["fill", ""],
     ["fill", ""],
     ["focus"],
-    ["pressSequentially", "@ContinuosWebIntegracao"],
+    ["fill", "@ContinuosWebIntegracao"],
     ["waitForResult"],
     ["press"],
     ["waitForSelectedConnector"],
@@ -1699,12 +1710,8 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
     locator: () => ({ filter: () => selectedConnector }),
   };
   const initialComposer = {
-    fill: async () => { calls.push("clear"); },
+    fill: async (value: string) => { calls.push(value ? `mention:${value}` : "clear"); },
     focus: async (_options?: { signal?: AbortSignal }) => { calls.push("focus"); },
-    pressSequentially: async (value: string) => {
-      expect(value).toBe("@ContinuosWebIntegracao");
-      calls.push("type");
-    },
     press: async (key: string) => {
       expect(key).toBe("Enter");
       selected = true;
@@ -1736,8 +1743,8 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
 
   expect(calls).toEqual([
     "clear",
-    "clear", "focus", "type", "menu:1",
-    "clear", "focus", "type", "menu:2",
+    "clear", "focus", "mention:@ContinuosWebIntegracao", "menu:1",
+    "clear", "focus", "mention:@ContinuosWebIntegracao", "menu:2",
     "activate", "selected",
   ]);
 });
@@ -2190,6 +2197,52 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
   await expect(run([CHATGPT_CONNECTOR_NAME])).rejects.toThrow("exact row was not visible");
 });
 
+test("an exact connector mention pill is accepted before waiting for a menu", async () => {
+  const events: string[] = [];
+  let selected = false;
+  const composer = {
+    fill: async (value: string) => {
+      if (value) {
+        expect(value).toBe(`@${DEV_CHATGPT_CONNECTOR_NAME}`);
+        selected = true;
+      } else {
+        expect(value).toBe("");
+      }
+    },
+    focus: async () => {},
+  };
+  const menuResult = {
+    waitFor: async () => { throw new Error("a verified mention pill must skip the menu wait"); },
+  };
+  const page = {
+    url: () => "https://chatgpt.com/",
+    getByText: () => ({}),
+    locator: () => ({ filter: () => menuResult }),
+  };
+  const attemptBudget = { triggerAttempts: 0 };
+  const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
+    selectConnector(
+      page: unknown,
+      capture?: (checkpoint: string) => Promise<void>,
+      catalogRefreshAvailable?: boolean,
+      attemptBudget?: { triggerAttempts: number },
+    ): Promise<unknown>;
+  }).selectConnector;
+
+  const result = await selectConnector.call({
+    config: { appName: DEV_CHATGPT_CONNECTOR_NAME },
+    activeComposer: async () => composer,
+    connectorIsSelected: async () => selected,
+    attachedPromptText: async () => "",
+    clearChatGptComposerState: async () => { throw new Error("unexpected composer cleanup"); },
+    selectConnectorFromDirectory: async () => { throw new Error("unexpected directory fallback"); },
+  }, page, async checkpoint => { events.push(checkpoint); }, false, attemptBudget);
+
+  expect(result).toBe(composer);
+  expect(attemptBudget.triggerAttempts).toBe(1);
+  expect(events).toEqual(["connector-mention-triggered", "connector-selected-by-mention"]);
+});
+
 test("tool-capable prompts use the shared Playwright connector selection before inserting context", async () => {
   const controller = new AbortController();
   const calls: Array<[string, string?]> = [];
@@ -2286,7 +2339,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
     ["fill", ""],
     ["fill", ""],
     ["focus"],
-    ["type", "@ContinuosWebIntegracao"],
+    ["fill", "@ContinuosWebIntegracao"],
     ["connectorMenu"],
     ["selectConnector"],
     ["selectedConnector"],
@@ -2322,10 +2375,6 @@ test("an aborted real connector selection clears the typed mention before return
       calls.push(key === CHATGPT_COMPOSER_SELECT_ALL_KEY ? "cleanup-select-all" : "cleanup-backspace");
       if (key === "Backspace") composerText = "";
     },
-    pressSequentially: async (value: string) => {
-      composerText += value;
-      calls.push("type");
-    },
     evaluate: async () => { calls.push("cleanup-read"); return composerText.trim(); },
   };
   const page = {
@@ -2354,7 +2403,7 @@ test("an aborted real connector selection clears the typed mention before return
   await expect(selection).rejects.toMatchObject({ name: "AbortError" });
   expect(composerText).toBe("");
   expect(calls).toEqual([
-    "fill", "fill", "focus", "type", "selection-wait", "escape", "focus",
+    "fill", "fill", "focus", "fill", "selection-wait", "escape", "focus",
     "cleanup-select-all", "cleanup-backspace", "cleanup-read",
   ]);
   await new Promise(resolve => setTimeout(resolve, 20));

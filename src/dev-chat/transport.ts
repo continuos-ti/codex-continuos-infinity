@@ -2,6 +2,7 @@ import { TurnBroker } from "../adapters/chatgpt-web/turn-broker";
 import { validateIsolatedDevExternalGateway, type AppConfig } from "../config";
 import { inspectExternalGatewayHealth } from "../doctor";
 import { tunnelStatus } from "../tunnel";
+import { join } from "node:path";
 import { DEV_CONFIG_PURPOSE } from "./constants";
 
 interface DevTransportStatus {
@@ -43,7 +44,7 @@ function assertDevTransportConfig(config: AppConfig): void {
  */
 export async function startDevChatTransport(
   config: AppConfig,
-  _devRoot: string,
+  devHome: string,
   dependencies: DevTransportDependencies = {},
 ): Promise<DevChatTransport> {
   assertDevTransportConfig(config);
@@ -67,6 +68,7 @@ export async function startDevChatTransport(
   }
 
   const broker = TurnBroker.forSocket(config.brokerSocketPath);
+  broker.enableCallJournal(join(devHome, "diagnostics", "broker-calls"));
   await broker.listen();
   let closed = false;
 

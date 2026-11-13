@@ -1,6 +1,46 @@
 import { expect, test } from "bun:test";
 import { chatGptModelFamilyMatches, selectChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
 import { chatGptUsageModelFromAnnouncements } from "../src/adapters/chatgpt-web/limits";
+import { activateChatGptEffortMenu } from "../src/chatgpt-ui/model-picker";
+
+test("a click timeout after opening the owned effort menu is reconciled without another click", async () => {
+  let open = false;
+  let clicks = 0;
+  const menu = { isVisible: async () => open };
+  const slider = { count: async () => 1 };
+  const sliderContainer = {
+    isVisible: async () => open,
+    locator: () => slider,
+  };
+  const control = {
+    getAttribute: async (attribute: string) => {
+      if (attribute === "aria-controls") return "picker";
+      if (attribute === "aria-expanded") return open ? "true" : "false";
+      return null;
+    },
+    click: async () => {
+      clicks++;
+      open = true;
+      const error = new Error("click timed out after the menu opened");
+      error.name = "TimeoutError";
+      throw error;
+    },
+  };
+  const page = {
+    locator: (selector: string) => selector.startsWith("[id=") ? menu : {
+      filter: () => sliderContainer,
+    },
+    keyboard: { press: async () => { throw new Error("unexpected second action"); } },
+  };
+  const result = await activateChatGptEffortMenu(
+    page as unknown as Parameters<typeof activateChatGptEffortMenu>[0],
+    control as unknown as Parameters<typeof activateChatGptEffortMenu>[1],
+  );
+  expect(result.method).toBe("click");
+  expect(result.menu === menu).toBeTrue();
+  expect(result.slider === slider).toBeTrue();
+  expect(clicks).toBe(1);
+});
 
 test("model selection recognizes Latest in the launcher languages without accepting other model names", async () => {
   for (const [label, accepted] of [

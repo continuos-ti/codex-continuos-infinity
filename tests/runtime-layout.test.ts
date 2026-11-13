@@ -119,6 +119,27 @@ test.each([
   });
 });
 
+test("existing DEV profiles select the authenticated DEV Web connector on load", () => {
+  const root = join(tmpdir(), `codex-continuos-infinity-dev-identity-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const existing = defaultConfig("browser-only");
+  existing.purpose = "dev-harness";
+  existing.appName = "ContinuosWebIntegracao DEV";
+  existing.automaticAppName = "ContinuosWebIntegracao DEV";
+  writeFileSync(join(root, "config.json"), `${JSON.stringify(existing)}\n`);
+
+  expect(loadConfig()).toMatchObject({
+    appName: DEV_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: DEV_CHATGPT_CONNECTOR_NAME,
+  });
+  expect(loadConfigForSetup()).toMatchObject({
+    appName: DEV_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: DEV_CHATGPT_CONNECTOR_NAME,
+  });
+});
+
 test("setup repairs a legacy automatic connector name that collides with Zero Risk", () => {
   const root = join(tmpdir(), `codex-chatgpt-web-connector-collision-${process.pid}-${Date.now()}`);
   roots.push(root);
