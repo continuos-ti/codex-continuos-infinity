@@ -1,5 +1,13 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Reteste autenticação DEV Full e turno real do navegador — 13/11/2026
+
+O perfil isolado `C:/Users/Administrador/.codex-continuos-infinity-dev-full` foi verificado pelo comando `dev status --json` usando `CODEX_CONTINUOS_INFINITY_DEV_HOME` explícito. O resultado confirmou `launcher.running=true` (PID 49360), `config.mode=full`, `config.purpose=dev-harness`, `mcpRuntime.required=true` e `mcpRuntime.ready=true`. O gateway DEV local (`127.0.0.1:28768/health`) e o endpoint dedicado Cloudflare (`https://codex-native2-dev.continuos.com.br/health`) responderam HTTP 200, identificando `ContinuosWebIntegracaoDev`, `isolated-dev` e `side_effects=false`. Nenhum novo pareamento, senha ou consentimento foi solicitado.
+
+Um novo chat isolado `infinity-readonly-e2e-20261113` executou `dev chat` pelo código-fonte do Infinity, com o modelo `chatgpt-web/gpt-6-sol-instant`, exclusivamente para pedir `dev_ping` em leitura. O trace `60e8737638de` registrou `14-connector-selected`, uma única submissão aceita, mensagens de ferramenta concluídas no fluxo ChatGPT e resposta final confirmada por `browser_settled outcome=final`, seguida de `completionCommitted=true`. A resposta apresentou `status=ok`, `service=ContinuosWebIntegracaoDev`, `mode=isolated-dev`, `side_effects=false` e `production_dispatcher_loaded=false`. O processo encerrou com código zero. O erro anterior `Browser idle document did not commit within 10000ms` não se reproduziu nesse turno.
+
+O journal local dessa execução terminou com `deliveredTools=0`, `activeMcpRequests=0` e `pendingTools=0`. Portanto, a evidência demonstra seleção do conector e resposta real no navegador, mas **não comprova um despacho de ferramenta pelo broker MCP local nem uma reconciliação independente de efeitos externos**. O gateway DEV não registra uma auditoria por chamada `dev_ping`, de modo que a alegação de exatamente uma chamada permanece dependente do fluxo observado no ChatGPT. A homologação de operação local via broker, pós-crash, anexos físicos concorrentes, instalação/rollback em staging e release assinada continua pendente. A instalação produtiva não foi modificada nesta execução.
+
 ### Diagnóstico do Infinity DEV Full — 13/11/2026
 
 A aprovação OAuth/PKCE e o `dev_ping` direto do conector `ContinuosWebIntegracao DEV Web`, comprovados em 12/11, permanecem como evidências históricas válidas. Nenhum novo pareamento ou senha DEV foi solicitado nesta verificação.
