@@ -490,3 +490,12 @@ A correcao do contrato de inventario e preventiva e **nao comprova a causa nem a
 - Revisao preventiva do codigo eliminou o fallback permissivo de data-keyword para o DEV Web: sem app-mention-path com identidade exata, o pill nao confirma o conector. Um teste de regressao cobre esse caso.
 - bun run verify, antes do pequeno hardening, terminou com exit 0: runtime 1338 aprovados / 114 ignorados / zero falhas; launcher 456 aprovados / 4 ignorados / zero falhas; typechecks, build e smoke passaram. Apos a correcao, typecheck e 161 testes focados passaram, 22 ignorados, zero falhas.
 - Detalhes e limites: docs/infinity/INCIDENT_11ed8f534645_20261113.md. A tarefa geral permanece ativa e o ambiente de producao foi preservado.
+
+### Retomada sem novo pareamento e limite da homologacao broker — 13/11/2026
+
+- O perfil isolado DEV Full foi novamente consultado e retornou `launcher.running=true`, `mode=full` e `mcpRuntime.ready=true`. A verificacao reutilizou a sessao ja autenticada sem solicitar abertura do Brave, nova autorizacao, pairing key ou reinicio de servicos.
+- O teste E2E `infinity-broker-e2e-20261113-1652`, trace `30063aca4436`, passou por `connector-selected`, `send-accepted`, `response-visible` e `turn-completed`. A conversa devolveu resposta final, sem executar o comando `Get-Date` solicitado para uma ferramenta simulada.
+- O conector selecionado `ContinuosWebIntegracao DEV Web` disponibiliza apenas `dev_ping`, `dev_echo` e `dev_read_fixture`. `exec_command` nao esta em seu catalogo. A tentativa, portanto, nao validou o despacho pelo broker do Infinity. A inspecao confirmou `diagnostics/broker-calls` existente, com zero eventos persistidos no perfil DEV Full. Nenhuma chamada real de comando foi realizada nesse teste.
+- `bun run verify` da execucao registrada em `%TEMP%/infinity-full-verify-20261113.log` passou com 1338 testes do runtime aprovados, 114 ignorados e zero falhas, mais 456 testes do launcher aprovados, 4 ignorados e zero falhas; o smoke `RELOCATABLE_RUNTIME_SMOKE_OK` tambem passou.
+- A PR #1 do fork `continuos-ti/codex-continuos-infinity` foi confirmada aberta, em draft, mergeable, no commit `e127c5236c190a8fd6b4656d515b61875f654fcc`. Os runs GitHub Actions `43491606503` e `43491617250` tiveram os cinco jobs concluidos com sucesso.
+- Continua pendente uma chamada E2E de ferramenta local que atravesse o broker do fork, com recibo e eventos duraveis. Permanecem pendentes reconciliacao externa autoritativa de efeitos MCP, rebind apos crash e homologacoes reais de concorrencia, instalacao e rollback.
