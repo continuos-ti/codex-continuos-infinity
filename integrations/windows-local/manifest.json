@@ -95,7 +95,7 @@
                       "path":  "../../src/adapters/chatgpt-web/turn-broker.ts",
                       "role":  "bridge-dispatch-binding",
                       "packaged":  false,
-                      "sha256":  "5c11214981301c6d1fe9208abca527ad2f1eaf5ad7d5e8b86fc788c6eb616a2c"
+                      "sha256":  "019a3bb7a242af2a8b2d45d188dd75a3dcc0f8ee302e9b61de5b980d7ddcd9b3"
                   },
                   {
                       "path":  "../../tests/broker-call-journal.test.ts",
@@ -107,7 +107,7 @@
                       "path":  "../../src/adapters/chatgpt-web/index.ts",
                       "role":  "bridge-recovery-query-handoff",
                       "packaged":  false,
-                      "sha256":  "65436e275bd02d66c6e9db5ca8589d84e97d8eb7203fbdf6ffbb4d1a370f2814"
+                      "sha256":  "f2d193a8722b2aab60c7f604fca82e9d22f73d47a0755cf9be7468c7c90f6183"
                   }
               ]
 }
