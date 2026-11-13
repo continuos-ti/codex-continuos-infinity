@@ -1,5 +1,13 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Classificação de CWD removido e revalidação — 13/11/2026
+
+`MissingTrustedCodexEnvironmentError("existing cwd")` agora é classificado como `removed_or_invalid_cwd`. Uma pasta ausente ou inacessível bloqueia o preflight imediatamente. As duas releituras limitadas continuam reservadas à ausência temporária de autoridade de CWD, permissão ou rollout com identificadores nativos comprovados. Dois testes de regressão verificam a classificação e a ausência de retry para esse erro.
+
+Nesta validação, os testes direcionados passaram com **9 aprovados, zero falhas e 38 asserções**. A suíte integral do runtime terminou com **1.339 aprovados, 114 ignorados, zero falhas e 11.001 asserções**, em 1.453 testes e 113 arquivos. O launcher terminou com **456 aprovados, quatro ignorados e zero falhas**. Typecheck da raiz e do launcher passaram, e os bundles do runtime e do launcher foram compilados. O Vite compilou 444 módulos e emitiu o aviso de tamanho de chunk acima de 500 KB. `git diff --check` passou.
+
+O consentimento DEV e o turno autenticado do navegador já tinham sido observados nas verificações anteriores registradas abaixo. Esta rodada dispensou novo pareamento e não abriu Brave. Permanecem pendentes reconciliação independente de efeitos externos, rebind nativo após crash completo, concorrência física de anexos e instalação/rollback em staging. O PR #1 continua em draft.
+
 ### Reteste autenticação DEV Full e turno real do navegador — 13/11/2026
 
 O perfil isolado `C:/Users/Administrador/.codex-continuos-infinity-dev-full` foi verificado pelo comando `dev status --json` usando `CODEX_CONTINUOS_INFINITY_DEV_HOME` explícito. O resultado confirmou `launcher.running=true` (PID 49360), `config.mode=full`, `config.purpose=dev-harness`, `mcpRuntime.required=true` e `mcpRuntime.ready=true`. O gateway DEV local (`127.0.0.1:28768/health`) e o endpoint dedicado Cloudflare (`https://codex-native2-dev.continuos.com.br/health`) responderam HTTP 200, identificando `ContinuosWebIntegracaoDev`, `isolated-dev` e `side_effects=false`. Nenhum novo pareamento, senha ou consentimento foi solicitado.

@@ -42,6 +42,7 @@ test("ambiguous owner, inaccessible cwd, changed policy and non-native IDs never
   const errors = [
     new Error("Codex thread exists in multiple trusted homes"),
     new Error("Codex rollout cwd no longer exists as an accessible directory"),
+    new MissingTrustedCodexEnvironmentError("existing cwd"),
     new Error("Current environment conflicts with its current Codex rollout (fields: sandbox_policy)"),
   ];
   for (const error of errors) {

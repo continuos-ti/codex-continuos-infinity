@@ -67,6 +67,8 @@ describe("durable trusted preflight incident", () => {
   test("classifies native proof failures and denies unknown or forged trace IDs", () => {
     expect(classifyTrustedPreflightFailure(new Error("Codex rollout cwd no longer exists as an accessible directory")))
       .toBe("removed_or_invalid_cwd");
+    expect(classifyTrustedPreflightFailure(new MissingTrustedCodexEnvironmentError("existing cwd")))
+      .toBe("removed_or_invalid_cwd");
     expect(classifyTrustedPreflightFailure(new MissingTrustedCodexEnvironmentError("network access")))
       .toBe("missing_permission_authority");
     expect(classifyTrustedPreflightFailure(new Error("Codex thread exists in multiple trusted homes")))

@@ -12,8 +12,10 @@ export type TrustedPreflightFailure =
 /** Classify only proven pre-send trusted-environment errors. Do not persist arbitrary error text. */
 export function classifyTrustedPreflightFailure(error: unknown): TrustedPreflightFailure | undefined {
   if (error instanceof MissingTrustedCodexEnvironmentError) {
-    if (error.field === "cwd" || error.field === "existing cwd"
-      || error.field === "current native worktree authority") return "missing_cwd_authority";
+    if (error.field === "existing cwd") return "removed_or_invalid_cwd";
+    if (error.field === "cwd" || error.field === "current native worktree authority") {
+      return "missing_cwd_authority";
+    }
     if (error.field === "network access" || error.field === "current native task ownership") {
       return "missing_permission_authority";
     }
