@@ -585,3 +585,9 @@ A correcao do contrato de inventario e preventiva e **nao comprova a causa nem a
 - O processo filho grava um marcador em diretório temporário. O teste confirma exatamente uma linha, uma execução e nenhuma segunda execução durante o polling. Windows usa PowerShell. Ubuntu e macOS usam `sh`/`sleep`.
 - `npx --yes bun@1.4.0 run verify` passou depois da alteração, com 1.344 aprovados, 114 ignorados, zero falhas e 11.024 chamadas de `expect()`. Launcher com 456 aprovados, quatro ignorados, zero falhas. Typecheck, build Vite e smoke do runtime relocável passaram.
 - Esta prova exercita o servidor MCP, o broker e um processo filho isolado. O provedor Windows Local real ainda não recebeu o ledger e a chamada real pelo conector/browser continua pendente.
+
+### Recuperacao incidente 1930729e125b e smoke Windows Local isolado - 14/11/2026
+
+- Um turno aceito terminou em `failed_without_proven_final` apos 21 checkpoints; a conclusao nativa e os efeitos MCP externos permanecem desconhecidos. Nenhum replay foi autorizado ou executado.
+- `scripts/smoke-windows-local-staging-restart.ts` foi corrigido para aplicar (`-Apply`) a integracao exclusivamente em copia temporaria; o primeiro teste havia falhado por executar dry-run. A reexecucao passou: 21 ferramentas MCP, 11 Windows, comando recuperado apos restart do provedor staging, uma execucao, idempotencia e isolamento por provider epoch. SHA-256 da fonte ativa permaneceu igual.
+- `bun run typecheck` passou. Nao ocorreu reinicio nem alteracao do Windows Local real, launcher ou gateway. A homologacao E2E do fork continua pendente. Evidencias e limites em `docs/infinity/INCIDENT_1930729e125b_20261114.md`.
