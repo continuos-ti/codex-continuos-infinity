@@ -1,0 +1,8 @@
+integrations/windows-local/** text eol=lf
+src/adapters/chatgpt-web/broker-operation-identity.ts text eol=lf
+tests/broker-operation-identity.test.ts text eol=lf
+src/adapters/chatgpt-web/turn-broker.ts text eol=lf
+src/adapters/chatgpt-web/index.ts text eol=lf
+src/adapters/chatgpt-web/broker-call-journal.ts text eol=lf
+src/adapters/chatgpt-web/broker-call-reconciliation.ts text eol=lf
+tests/broker-call-journal.test.ts text eol=lf

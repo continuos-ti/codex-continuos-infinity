@@ -8,6 +8,8 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerRetirementDiagnostics, type BrokerToolResult } from "./turn-broker";
 import { observeMcpToolCalls } from "./mcp-observation";
+import { McpRequestFence } from "./mcp-request-fence";
+import { modelVisibleToolParameters } from "./model-visible-tool-parameters";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -48,6 +50,11 @@ const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly 
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
 export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+/** Keep long native tools alive across short MCP polling requests, without replaying effects. */
+export const CHATGPT_NATIVE_DEFER_AFTER_MS = 40_000;
+export const CHATGPT_NATIVE_DEFER_POLL_MS = 20_000;
+export const CHATGPT_NATIVE_DEFER_MAX_MS = 8 * 60_000;
+export const CHATGPT_NATIVE_PENDING_WIRE_NAME = "codex_pending_result";
 
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
@@ -160,9 +167,10 @@ function browserToolDescription(tool: CodexTool): string {
   return tool.description;
 }
 
-function browserToolParameters(tool: CodexTool): Record<string, unknown> {
+export function browserToolParameters(tool: CodexTool): Record<string, unknown> {
+  const visibleParameters = modelVisibleToolParameters(tool);
   if (!tool.namespace && tool.name === "write_stdin") {
-    const parameters = structuredClone(tool.parameters);
+    const parameters = structuredClone(visibleParameters);
     const properties = parameters.properties as Record<string, Record<string, unknown>> | undefined;
     if (properties?.yield_time_ms) {
       const yieldTime = properties.yield_time_ms;
@@ -172,8 +180,8 @@ function browserToolParameters(tool: CodexTool): Record<string, unknown> {
     }
     return parameters;
   }
-  if (!isAgentWaitTool(tool)) return tool.parameters;
-  const parameters = structuredClone(tool.parameters);
+  if (!isAgentWaitTool(tool)) return visibleParameters;
+  const parameters = structuredClone(visibleParameters);
   const properties = parameters.properties && typeof parameters.properties === "object" && !Array.isArray(parameters.properties)
     ? parameters.properties as Record<string, unknown>
     : {};
@@ -492,7 +500,22 @@ export async function runChatGptMcpServer(options: {
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
   );
+  const requestFence = new McpRequestFence();
 
+  type DeferredNativeOutcome =
+    | { ok: true; value: ReturnType<typeof asMcpResult> | ReturnType<typeof result> }
+    | { ok: false; error: unknown };
+  const pendingNativeCalls = new Map<string, {
+    bindingId: string;
+    token: string;
+    outcome: Promise<DeferredNativeOutcome>;
+    createdAt: number;
+  }>();
+  const pendingNativeResponse = (id: string) => result({
+    code: "codex_tool_in_progress",
+    job_id: id,
+    message: "The original native tool is still running. Do not repeat it. Call codex_tool_call with wire_name=codex_pending_result and arguments={job_id: this job_id} to retrieve the result. Poll again if still running.",
+  });
   const claimTurn = async (
     toolName: string,
     turnToken: string,
@@ -546,8 +569,9 @@ export async function runChatGptMcpServer(options: {
     toolName: string,
     turnToken: string,
     extra: McpRequestExtra,
+    toolInput: unknown,
     action: (claimed: ClaimedTurn) => Promise<T> | T,
-  ): Promise<T> => {
+  ): Promise<T> => requestFence.run(extra, toolName, toolInput, async () => {
     const claimed = await claimTurn(toolName, turnToken, extra);
     try {
       return await action(claimed);
@@ -557,7 +581,7 @@ export async function runChatGptMcpServer(options: {
       // and silently prevent every later completion candidate from committing.
       await settleTurnActivity(turnToken, claimed.activityId);
     }
-  };
+  });
 
   if (contract === "safe") {
     server.registerTool(
@@ -574,14 +598,14 @@ export async function runChatGptMcpServer(options: {
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
-      async ({ request_id }, extra) => {
+      async (input, extra) => requestFence.run(extra, "codex_turn_start", input, async () => {
         console.error(`[chatgpt-web-mcp] codex_turn_start scope=${requestScopeSummary(extra)}`);
         const response = await callTurnBroker<{ started: true; duplicate: boolean }>(options.brokerSocketPath, {
           method: "safe_start",
-          token: request_id,
+          token: input.request_id,
         }, 5_000, extra.signal);
         return result(response);
-      },
+      }),
     );
   }
 
@@ -591,8 +615,9 @@ export async function runChatGptMcpServer(options: {
     tool: CodexTool,
     payload: { arguments?: Record<string, unknown>; input?: string },
     signal?: AbortSignal,
+    timeoutOverrideMs?: number,
   ) => {
-    const timeoutMs = chatGptMcpInvocationTimeout(bound);
+    const timeoutMs = timeoutOverrideMs ?? chatGptMcpInvocationTimeout(bound);
     try {
       const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
         method: "invoke",
@@ -641,6 +666,62 @@ export async function runChatGptMcpServer(options: {
     }
   };
 
+  /** The broker owns this one native invocation; later polls never execute it a second time. */
+  const invokeOrDefer = async (
+    token: string,
+    bindingId: string,
+    bound: ChatGptTurnEnvironment & { expiresAt?: number },
+    tool: CodexTool,
+    payload: { arguments?: Record<string, unknown>; input?: string },
+  ) => {
+    const jobId = "native_" + randomBytes(18).toString("base64url");
+    const maxMs = Math.min(CHATGPT_NATIVE_DEFER_MAX_MS,
+      bound.expiresAt === undefined ? CHATGPT_NATIVE_DEFER_MAX_MS : Math.max(1, bound.expiresAt - Date.now()));
+    const outcome: Promise<DeferredNativeOutcome> = invoke(
+      bindingId, bound, tool, payload, undefined, maxMs,
+    ).then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+    const entry = { bindingId, token, outcome, createdAt: Date.now() };
+    pendingNativeCalls.set(jobId, entry);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), CHATGPT_NATIVE_DEFER_AFTER_MS);
+    });
+    const first = await Promise.race([outcome, deadline]);
+    if (timer) clearTimeout(timer);
+    if (first !== null) {
+      pendingNativeCalls.delete(jobId);
+      if (!first.ok) throw first.error;
+      return first.value;
+    }
+    console.error("[chatgpt-web-mcp] deferred native tool=" + wireName(tool) + " job_id=" + jobId + " after=" + CHATGPT_NATIVE_DEFER_AFTER_MS + "ms; original invocation remains in flight");
+    const gc = setTimeout(() => pendingNativeCalls.delete(jobId), CHATGPT_NATIVE_DEFER_MAX_MS + 60_000);
+    gc.unref?.();
+    return pendingNativeResponse(jobId);
+  };
+
+  const pollDeferredNative = async (token: string, claimed: ClaimedTurn, jobId: unknown) => {
+    if (typeof jobId !== "string" || !/^native_[A-Za-z0-9_-]{24}$/.test(jobId)) {
+      throw new Error("Invalid native tool job_id");
+    }
+    const job = pendingNativeCalls.get(jobId);
+    if (!job || job.token !== token || job.bindingId !== claimed.bindingId) {
+      return result({
+        code: "codex_pending_result_unavailable", job_id: jobId,
+        message: "No matching pending tool result exists in this active turn. Execution state is unknown: do not invoke the original tool again without checking its side effects.",
+      }, true);
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>(resolve => {
+      timer = setTimeout(() => resolve(null), CHATGPT_NATIVE_DEFER_POLL_MS);
+    });
+    const state = await Promise.race([job.outcome, timeout]);
+    if (timer) clearTimeout(timer);
+    if (state === null) return pendingNativeResponse(jobId);
+    pendingNativeCalls.delete(jobId);
+    if (!state.ok) throw state.error;
+    return state.value;
+  };
+
   const invokeNestedNative = (
     bindingId: string,
     bound: ChatGptTurnEnvironment & { expiresAt?: number },
@@ -683,6 +764,7 @@ export async function runChatGptMcpServer(options: {
       "codex_exec",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { cmd, workdir, yield_time_ms, max_output_tokens, tty, sandbox_permissions, justification, prefix_rule } = input;
         const bound = claimed.environment;
@@ -746,6 +828,7 @@ export async function runChatGptMcpServer(options: {
       "codex_write_stdin",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { session_id, chars, yield_time_ms, max_output_tokens } = input;
         const bound = claimed.environment;
@@ -775,6 +858,7 @@ export async function runChatGptMcpServer(options: {
       "codex_apply_patch",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { patch } = input;
         const bound = claimed.environment;
@@ -803,6 +887,7 @@ export async function runChatGptMcpServer(options: {
       "codex_view_image",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { path, detail } = input;
         const bound = claimed.environment;
@@ -835,6 +920,7 @@ export async function runChatGptMcpServer(options: {
       "codex_tool_inventory",
       turnReference(contract, input),
       extra,
+      input,
       async claimed => {
         const { query, offset, limit, include_schema } = input;
         const bound = claimed.environment;
@@ -937,27 +1023,34 @@ export async function runChatGptMcpServer(options: {
     async (toolInput, extra) => {
       const { wire_name, arguments: args, input } = toolInput;
       const requestId = turnReference(contract, toolInput);
-      if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
-        if (input !== undefined) {
-          throw new Error("Compaction control handoff does not accept freeform input");
-        }
-        const handoffId = args?.handoff_id;
-        const summary = args?.summary;
-        if (typeof handoffId !== "string" || handoffId.length === 0) {
-          throw new Error("Compaction control handoff requires handoff_id");
-        }
-        if (typeof summary !== "string") {
-          throw new Error("Compaction control handoff requires summary");
-        }
-        await callTurnBroker(options.brokerSocketPath, {
-          method: "submit_compaction_handoff",
-          token: requestId,
-          handoffId,
-          summary,
-        }, 5_000, extra.signal);
-        return result({ submitted: true });
+      if (wire_name === CHATGPT_NATIVE_PENDING_WIRE_NAME) {
+        if (input !== undefined) throw new Error("Pending native tool polling does not accept freeform input");
+        return withClaimedTurn("codex_tool_call", requestId, extra, toolInput, async claimed =>
+          pollDeferredNative(requestId, claimed, args?.job_id));
       }
-      return withClaimedTurn("codex_tool_call", requestId, extra, async claimed => {
+      if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
+        return requestFence.run(extra, "codex_tool_call", toolInput, async () => {
+          if (input !== undefined) {
+            throw new Error("Compaction control handoff does not accept freeform input");
+          }
+          const handoffId = args?.handoff_id;
+          const summary = args?.summary;
+          if (typeof handoffId !== "string" || handoffId.length === 0) {
+            throw new Error("Compaction control handoff requires handoff_id");
+          }
+          if (typeof summary !== "string") {
+            throw new Error("Compaction control handoff requires summary");
+          }
+          await callTurnBroker(options.brokerSocketPath, {
+            method: "submit_compaction_handoff",
+            token: requestId,
+            handoffId,
+            summary,
+          }, 5_000, extra.signal);
+          return result({ submitted: true });
+        });
+      }
+      return withClaimedTurn("codex_tool_call", requestId, extra, toolInput, async claimed => {
         const bound = claimed.environment;
         const tool = safeVisibleTools(bound, contract)
           .find(candidate => wireName(candidate) === wire_name);
@@ -978,23 +1071,23 @@ export async function runChatGptMcpServer(options: {
           }
           const invocationArguments = args ?? {};
           assertGatewayToolArguments(wire_name, invocationArguments);
-          return invoke(claimed.bindingId, bound, gateway, {
+          return invokeOrDefer(requestId, claimed.bindingId, bound, gateway, {
             input: execGatewayProgram(wire_name, input !== undefined, {
               ...(input !== undefined ? { input } : { arguments: invocationArguments }),
             }, bound.tools.map(wireName)),
-          }, extra.signal);
+          });
         }
         if (tool.freeform) {
           if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
           if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
-          return invoke(claimed.bindingId, bound, tool, {
+          return invokeOrDefer(requestId, claimed.bindingId, bound, tool, {
             input: tool === execGateway(bound) ? transportBoundRawExecProgram(input, wireName(tool)) : input,
-          }, extra.signal);
+          });
         }
         if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
         const invocationArguments = args ?? {};
         assertBrowserToolArguments(tool, invocationArguments);
-        return invoke(claimed.bindingId, bound, tool, { arguments: invocationArguments }, extra.signal);
+        return invokeOrDefer(requestId, claimed.bindingId, bound, tool, { arguments: invocationArguments });
       });
     },
   );
@@ -1015,15 +1108,15 @@ export async function runChatGptMcpServer(options: {
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       },
-      async ({ request_id, final_answer }, extra) => {
+      async (input, extra) => requestFence.run(extra, "codex_turn_complete", input, async () => {
         console.error(`[chatgpt-web-mcp] codex_turn_complete scope=${requestScopeSummary(extra)}`);
         const response = await callTurnBroker<{ completed: true; duplicate: boolean }>(options.brokerSocketPath, {
           method: "safe_complete",
-          token: request_id,
-          finalAnswer: final_answer,
+          token: input.request_id,
+          finalAnswer: input.final_answer,
         }, null, extra.signal);
         return result(response);
-      },
+      }),
     );
   }
 

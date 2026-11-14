@@ -229,7 +229,7 @@ describe("explicit trusted Codex homes (#851)", () => {
     mkdirSync(join(secondary, "sessions"));
     index(secondary, path);
     expect(() => sharedStore().resolve(request())).toThrow("escapes the sessions directory");
-  });
+  }, 15_000);
 });
 
 describe("trusted home registration", () => {

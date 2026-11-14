@@ -6,7 +6,7 @@ import { existsSync, rmSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
 import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } from "./browser-login";
-import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
+import { DEFAULT_CLOUDFLARE_GATEWAY, defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
@@ -80,8 +80,8 @@ Setup options:
   --bigger-context             Enable experimental adaptive 1/2/6-message context
   --fresh-conversation         Start each automatic turn in a fresh browser chat
   --retained-conversation      Reuse the browser chat between turns (default)
-  --temporary-chats            Use Temporary Chat for new task conversations (default)
-  --ordinary-chats             Keep new task conversations in ChatGPT history
+  --temporary-chats            Opt in to Temporary Chat for new task conversations
+  --ordinary-chats             Keep new task conversations in ChatGPT history (default)
   --composer-predictions       Enable next-message suggestions using GPT-6 Sol Medium (default)
   --no-composer-predictions    Disable next-message suggestions for Web models
   --skill-attachments         Experimental selected skills as text attachments
@@ -292,6 +292,27 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   const connectorNameSuffix = takeOption(args, "--connector-name-suffix");
   if (connectorNameSuffix !== undefined) options.connectorNameSuffix = connectorNameSuffix;
+  const mcpTransport = takeOption(args, "--mcp-transport");
+  if (mcpTransport !== undefined) {
+    if (mcpTransport !== "openai-tunnel" && mcpTransport !== "external-cloudflare") {
+      throw new Error("--mcp-transport must be openai-tunnel or external-cloudflare");
+    }
+    options.mcpTransport = mcpTransport;
+  }
+  const externalMcpUrl = takeOption(args, "--external-mcp-url");
+  const externalHealthUrl = takeOption(args, "--external-health-url");
+  const externalService = takeOption(args, "--external-service");
+  if (externalMcpUrl || externalHealthUrl || externalService) {
+    if (mcpTransport !== "external-cloudflare") {
+      throw new Error("External gateway endpoints require --mcp-transport external-cloudflare");
+    }
+    options.externalGateway = {
+      ...DEFAULT_CLOUDFLARE_GATEWAY,
+      ...(externalMcpUrl ? { mcpUrl: externalMcpUrl } : {}),
+      ...(externalHealthUrl ? { healthUrl: externalHealthUrl } : {}),
+      ...(externalService ? { expectedService: externalService } : {}),
+    };
+  }
   const subagentProtocol = takeOption(args, "--subagent-protocol");
   if (subagentProtocol !== undefined) {
     if (subagentProtocol !== "compatibility-v1" && subagentProtocol !== "native") {
@@ -363,13 +384,17 @@ async function setupCommand(args: string[]): Promise<void> {
 
   const existing = existsSync(getConfigPath()) ? loadConfigForSetup() : undefined;
   const interactionMode = options.browserInteractionMode ?? existing?.browserInteractionMode ?? "automatic";
+  const selectedTransport = options.mcpTransport
+    ?? (interactionMode === "manual" ? "openai-tunnel"
+      : existing?.externalGateway ? "external-cloudflare" : existing?.mcpTransport)
+    ?? "openai-tunnel";
   const reusableCredentials = existingFullSetupCredentials(existing, interactionMode);
   const needsTunnelId = !options.tunnelId && !reusableCredentials.tunnelId;
   const needsRuntimeKey = !options.runtimeKeyFile
     && !reusableCredentials.runtimeKey
     && !existsSync(managedRuntimeKeyPath(interactionMode));
 
-  if (full && (needsTunnelId || needsRuntimeKey) && stdin.isTTY) {
+  if (full && selectedTransport === "openai-tunnel" && (needsTunnelId || needsRuntimeKey) && stdin.isTTY) {
     stdout.write("Full mode needs an OpenAI tunnel and a runtime key with Tunnels Read + Use.\n");
     stdout.write("Tunnels: https://platform.openai.com/settings/organization/tunnels\n");
     stdout.write("Runtime keys: https://platform.openai.com/settings/organization/api-keys\n");

@@ -29,6 +29,22 @@ const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
 const PASSKEY_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const MAX_PASSKEY_STATE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_PASSKEY_MARKER_FILE_BYTES = 64 * 1024;
+// Keep aligned with DEFAULT_CLOUDFLARE_GATEWAY in src/config.ts. DEV may not share prod's origin.
+const PRODUCTION_CLOUDFLARE_GATEWAY_ORIGIN = "https://codex-native2.continuos.com.br";
+
+function isIsolatedDevCloudflareGateway(gateway) {
+  try {
+    const mcp = new URL(gateway?.mcpUrl);
+    const health = new URL(gateway?.healthUrl);
+    return mcp.protocol === "https:" && health.protocol === "https:"
+      && mcp.origin !== PRODUCTION_CLOUDFLARE_GATEWAY_ORIGIN
+      && health.origin !== PRODUCTION_CLOUDFLARE_GATEWAY_ORIGIN
+      && mcp.origin === health.origin;
+  } catch {
+    return false;
+  }
+}
+
 function collect(stream, chunks, onLine, onError) {
   let buffered = "";
   let bytes = 0;
@@ -437,7 +453,11 @@ class RuntimeHost {
     }
     const childEnvironment = { ...environment };
     delete childEnvironment.CODEX_CHATGPT_WEB_HOME;
+    delete childEnvironment.CODEX_CONTINUOS_INFINITY_HOME;
+    delete childEnvironment.CODEX_CONTINUOS_INFINITY_DEV_HOME;
     delete childEnvironment.CODEX_HOME;
+    delete childEnvironment.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+    delete childEnvironment.CODEX_CONTINUOS_INFINITY_DATA_DIR;
     delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
     childEnvironment.CODEX_WEB_GPT_DEV_HOME = this.coreHome;
     return childEnvironment;
@@ -469,6 +489,20 @@ class RuntimeHost {
   mcpCredentialsConfigured(requestedMode) {
     const config = this.runtimeConfigSnapshot().config;
     const interactionMode = requestedMode ?? config?.browserInteractionMode ?? "automatic";
+    if (interactionMode !== "automatic" && interactionMode !== "manual") {
+      throw new Error("Browser interaction mode must be automatic or manual");
+    }
+    if (interactionMode === "automatic" && config?.mode === "full"
+      && config.externalGateway && (config.mcpTransport === "external-cloudflare"
+        || config.browserInteractionMode === "manual")) {
+      return Boolean(config.externalGateway?.mcpUrl && config.externalGateway?.healthUrl
+        && config.externalGateway?.expectedService);
+    }
+    return this.mcpTunnelCredentialsConfigured(interactionMode);
+  }
+
+  mcpTunnelCredentialsConfigured(interactionMode = this.browserInteractionMode()) {
+    const config = this.runtimeConfigSnapshot().config;
     if (interactionMode !== "automatic" && interactionMode !== "manual") {
       throw new Error("Browser interaction mode must be automatic or manual");
     }
@@ -810,30 +844,58 @@ class RuntimeHost {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-    const full = config?.mode === "full" && config?.tunnel;
-    checks.push({
-      id: "dev-tunnel-credentials",
-      status: full && fs.existsSync(config.tunnel.runtimeKeyFile) ? "ok" : "error",
-      message: full && fs.existsSync(config.tunnel.runtimeKeyFile)
-        ? "DEV tunnel credentials are configured"
-        : "DEV Full harness tunnel credentials are not configured",
-    });
-    if (full) {
+    const externalCloudflare = config?.mode === "full" && config?.mcpTransport === "external-cloudflare";
+    const fullTunnel = config?.mode === "full" && !externalCloudflare && config?.tunnel;
+    const gateway = config?.externalGateway;
+    const gatewayPresent = externalCloudflare && config?.browserInteractionMode === "automatic"
+      && ["mcpUrl", "healthUrl", "expectedService"].every(key =>
+        typeof gateway?.[key] === "string" && gateway[key].trim().length > 0);
+    const gatewayIsolated = gatewayPresent && isIsolatedDevCloudflareGateway(gateway);
+    const gatewayConfigured = gatewayPresent && gatewayIsolated;
+    if (externalCloudflare) {
+      checks.push({
+        id: "dev-external-cloudflare-configuration",
+        status: gatewayPresent ? "ok" : "error",
+        message: gatewayPresent
+          ? "DEV external Cloudflare gateway is configured without OpenAI tunnel credentials"
+          : "DEV external Cloudflare gateway configuration is incomplete",
+      });
+      checks.push({
+        id: "dev-external-cloudflare-isolation",
+        status: gatewayIsolated ? "ok" : "error",
+        message: gatewayIsolated
+          ? "DEV external Cloudflare gateway uses a dedicated non-production hostname"
+          : "DEV external Cloudflare gateway must use a dedicated hostname; production gateway is forbidden",
+      });
+    } else {
+      const tunnelConfigured = fullTunnel && typeof fullTunnel.runtimeKeyFile === "string"
+        && fs.existsSync(fullTunnel.runtimeKeyFile);
+      checks.push({
+        id: "dev-tunnel-credentials",
+        status: tunnelConfigured ? "ok" : "error",
+        message: tunnelConfigured
+          ? "DEV tunnel credentials are configured"
+          : "DEV Full harness tunnel credentials are not configured",
+      });
+    }
+    if (gatewayConfigured || fullTunnel) {
       try {
         const runtime = await this.supervisor.readTunnelHealth(config);
         checks.push({
-          id: "dev-tunnel-runtime",
+          id: externalCloudflare ? "dev-external-cloudflare-health" : "dev-tunnel-runtime",
           status: runtime.ready ? "ok" : "error",
-          message: runtime.ready
-            ? "Isolated DEV MCP tunnel runtime is ready"
-            : "Isolated DEV MCP tunnel runtime is not ready",
+          message: externalCloudflare
+            ? (runtime.ready ? "External Cloudflare gateway health is ready" : "External Cloudflare gateway health is not ready")
+            : (runtime.ready ? "Isolated DEV MCP tunnel runtime is ready" : "Isolated DEV MCP tunnel runtime is not ready"),
           ...(!runtime.ready ? { detail: runtime.detail } : {}),
         });
       } catch (error) {
         checks.push({
-          id: "dev-tunnel-runtime",
+          id: externalCloudflare ? "dev-external-cloudflare-health" : "dev-tunnel-runtime",
           status: "error",
-          message: "Isolated DEV MCP tunnel runtime could not be inspected",
+          message: externalCloudflare
+            ? "External Cloudflare gateway health could not be inspected"
+            : "Isolated DEV MCP tunnel runtime could not be inspected",
           detail: error instanceof Error ? error.message : String(error),
         });
       }
@@ -1030,7 +1092,7 @@ class RuntimeHost {
           embedded: true,
           env: this.launcherControlEnvironment(),
           message: "Restoring the previous Codex route",
-          successMessage: "Codex Web GPT integration removed",
+          successMessage: "Codex Continuos Infinity integration removed",
           timeoutMs: UNINSTALL_TIMEOUT_MS,
         });
         const verified = await this.bridgeStatus(name);
@@ -1353,7 +1415,9 @@ class RuntimeHost {
       ? existing.config?.manualTunnel
       : existing.config?.automaticTunnel;
     const activeTunnel = existing.config?.tunnel;
-    const tunnelProfileMigrationRequired = existing.mode === "full" && Boolean(activeTunnel) && Boolean(
+    const tunnelProfileMigrationRequired = existing.mode === "full"
+      && existing.config?.mcpTransport !== "external-cloudflare"
+      && Boolean(activeTunnel) && Boolean(
       !explicitTunnel
       || explicitTunnel.tunnelId !== activeTunnel.tunnelId
       || activeTunnel.profileName !== expectedTunnelProfile
@@ -1369,7 +1433,7 @@ class RuntimeHost {
     if (compareVersions(currentVersion, existing.config.releaseVersion) < 0) {
       throw new Error(
         `This launcher is version ${currentVersion}, but a newer runtime ${existing.config.releaseVersion} is already installed. `
-        + `Open Codex Web GPT ${existing.config.releaseVersion} or newer to continue.`,
+        + `Open Codex Continuos Infinity ${existing.config.releaseVersion} or newer to continue.`,
       );
     }
     const args = [
@@ -1383,6 +1447,13 @@ class RuntimeHost {
       "--acknowledge-unofficial",
       "--restart-service",
     ];
+    if (existing.mode === "full" && existing.config?.mcpTransport === "external-cloudflare") {
+      const gateway = existing.config.externalGateway;
+      args.push("--mcp-transport", "external-cloudflare");
+      args.push("--external-mcp-url", gateway.mcpUrl);
+      args.push("--external-health-url", gateway.healthUrl);
+      args.push("--external-service", gateway.expectedService);
+    }
     if (interactionMode === "automatic" && existing.config?.autoApproveToolCalls === true) {
       args.push("--auto-approve-tool-calls");
     }
@@ -1407,11 +1478,36 @@ class RuntimeHost {
     };
   }
 
-  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
+  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode, mcpTransport, externalGateway } = {}, afterRuntimeReady) {
     this.assertProductionProfile("Native Codex MCP setup");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
-    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
+    if (mcpTransport === "external-cloudflare") {
+      if (targetMode !== "automatic" || tunnelId || runtimeKey) {
+        throw new Error("External Cloudflare setup requires Automatic mode without OpenAI tunnel credentials");
+      }
+      const args = [
+        "setup", "--full", "--browser-host-descriptor", this.browserDescriptorPath,
+        ...this.browserInteractionArgs({ mode: targetMode }),
+        "--mcp-transport", "external-cloudflare", "--replace-codex-route",
+        "--acknowledge-unofficial", "--restart-service",
+      ];
+      if (externalGateway) {
+        args.push("--external-mcp-url", externalGateway.mcpUrl,
+          "--external-health-url", externalGateway.healthUrl,
+          "--external-service", externalGateway.expectedService);
+      }
+      return this.runSetup("mcp-setup", args, {
+        message: "Configuring the external Cloudflare MCP gateway",
+        successMessage: "Cloudflare MCP gateway configured",
+        timeoutMs: MCP_SETUP_TIMEOUT_MS,
+        afterRuntimeReady,
+      });
+    }
+    if (mcpTransport !== undefined && mcpTransport !== "openai-tunnel") {
+      throw new Error("Unsupported MCP transport");
+    }
+    const reuseSavedCredentials = replace !== true && this.mcpTunnelCredentialsConfigured(targetMode);
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
       throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     }
@@ -1425,6 +1521,7 @@ class RuntimeHost {
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
       "--replace-codex-route",
+      "--mcp-transport", "openai-tunnel",
     ];
     if (reuseSavedCredentials) {
       args.push("--acknowledge-unofficial", "--restart-service");
@@ -1456,13 +1553,37 @@ class RuntimeHost {
     }).finally(() => fs.rmSync(keyPath, { force: true }));
   }
 
-  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
+  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode, mcpTransport, externalGateway } = {}, afterRuntimeReady) {
     if (this.launcherProfile !== "development") {
       throw new Error("DEV MCP setup requires the isolated DEV launcher");
     }
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
-    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
+    if (mcpTransport === "external-cloudflare") {
+      if (targetMode !== "automatic" || tunnelId || runtimeKey) {
+        throw new Error("DEV external Cloudflare setup requires Automatic mode without OpenAI tunnel credentials");
+      }
+      const args = [
+        "dev", "setup", "--full", "--browser-host-descriptor", this.browserDescriptorPath,
+        ...this.browserInteractionArgs({ mode: targetMode }),
+        "--mcp-transport", "external-cloudflare", "--acknowledge-unofficial",
+      ];
+      if (externalGateway) {
+        args.push("--external-mcp-url", externalGateway.mcpUrl,
+          "--external-health-url", externalGateway.healthUrl,
+          "--external-service", externalGateway.expectedService);
+      }
+      return this.runDevSetup("dev-mcp-setup", args, {
+        message: "Configuring the isolated DEV Cloudflare MCP gateway",
+        successMessage: "DEV Cloudflare MCP gateway configured",
+        timeoutMs: MCP_SETUP_TIMEOUT_MS,
+        afterRuntimeReady,
+      });
+    }
+    if (mcpTransport !== undefined && mcpTransport !== "openai-tunnel") {
+      throw new Error("Unsupported DEV MCP transport");
+    }
+    const reuseSavedCredentials = replace !== true && this.mcpTunnelCredentialsConfigured(targetMode);
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
       throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     }
@@ -1476,6 +1597,7 @@ class RuntimeHost {
       "--browser-host-descriptor",
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
+      "--mcp-transport", "openai-tunnel",
       "--acknowledge-unofficial",
     ];
     if (reuseSavedCredentials) {
@@ -1523,6 +1645,11 @@ class RuntimeHost {
         ? "--bigger-context"
         : "--standard-context",
     ];
+    if (current.mode === "full") {
+      const transport = mode === "manual" ? "openai-tunnel"
+        : current.config?.externalGateway ? "external-cloudflare" : "openai-tunnel";
+      args.push("--mcp-transport", transport);
+    }
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {
       message: mode === "manual"

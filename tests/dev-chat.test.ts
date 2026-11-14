@@ -1,6 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -12,7 +11,13 @@ import {
   TurnBroker,
   type BrokerToolResult,
 } from "../src/adapters/chatgpt-web/turn-broker";
-import { defaultBrokerEndpoint, defaultConfig, providerConfig } from "../src/config";
+import {
+  DEFAULT_CLOUDFLARE_GATEWAY,
+  defaultBrokerEndpoint,
+  defaultConfig,
+  providerConfig,
+  validateIsolatedDevExternalGateway,
+} from "../src/config";
 import { defaultDevChatModel, DEV_CHAT_TOOLS, DevChatDriver } from "../src/dev-chat/driver";
 import {
   createDevCoherentContextPayload,
@@ -22,11 +27,12 @@ import {
 } from "../src/dev-chat/session";
 import { startDevChatTransport } from "../src/dev-chat/transport";
 import type { CodexProviderConfig } from "../src/types";
+import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 const roots: string[] = [];
 
 function scratch(name: string): string {
-  const root = mkdtempSync(join(tmpdir(), `${name}-`));
+  const root = socketFixtureRoot(`${name}-`);
   roots.push(root);
   return root;
 }
@@ -100,6 +106,32 @@ test("remote owners preserve Full Access worktree cwd outside project roots", as
       { type: "workspaceWrite" as const, writableRoots: environment.roots, networkAccess: false },
     ]) {
       await expect(remote.register({ ...environment, sandboxPolicy }, 60_000, "restricted-worktree"))
+        .rejects.toThrow("environment is invalid");
+    }
+  } finally {
+    await broker.close();
+  }
+});
+
+test("remote restricted owners reject a junction cwd outside their workspace", async () => {
+  const base = scratch("cgw-dev-restricted-junction");
+  const root = join(base, "workspace");
+  const outside = join(base, "outside");
+  const cwd = join(root, "junction");
+  mkdirSync(root);
+  mkdirSync(outside);
+  symlinkSync(outside, cwd, process.platform === "win32" ? "junction" : "dir");
+  const socketPath = defaultBrokerEndpoint(base);
+  const broker = TurnBroker.forSocket(socketPath);
+  const remote = new RemoteTurnBroker(socketPath);
+  await broker.listen();
+  try {
+    for (const policy of [
+      { type: "readOnly" as const, networkAccess: false },
+      { type: "workspaceWrite" as const, writableRoots: [root], networkAccess: false },
+    ]) {
+      await expect(remote.register({ cwd, roots: [root], writableRoots: policy.type === "readOnly" ? [] : [root],
+        sandboxPolicy: policy, tools: [] }, 60_000, "escaped-junction"))
         .rejects.toThrow("environment is invalid");
     }
   } finally {
@@ -349,9 +381,11 @@ test("DEV chat attaches its broker to the launcher-owned tunnel without a Respon
       alias: "production-alias",
     },
   };
+  const devHome = join(root, "dev");
+  const journalDirectory = join(devHome, "diagnostics", "broker-calls");
   let transport: Awaited<ReturnType<typeof startDevChatTransport>> | undefined;
   try {
-    transport = await startDevChatTransport(config, join(root, "dev"), {
+    transport = await startDevChatTransport(config, devHome, {
       status: () => ({
         ok: true,
         processRunning: true,
@@ -362,9 +396,42 @@ test("DEV chat attaches its broker to the launcher-owned tunnel without a Respon
       }),
     });
     expect(transport.config).toBe(config);
+    expect(existsSync(journalDirectory)).toBe(true);
+    expect(existsSync(`${journalDirectory}.owner.sqlite`)).toBe(true);
     expect(await callTurnBroker(transport.config.brokerSocketPath, { method: "owner_status" }))
       .toMatchObject({ protocolVersion: 5 });
     expect(await (await fetch(`http://127.0.0.1:${occupied.port}`)).text()).toBe("normal Codex route");
+    const traceId = "abcdef123456";
+    const token = await transport.broker.register({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [{ name: "dev_probe", description: "Journal test", parameters: { type: "object" } }],
+    }, 20_000, traceId);
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(transport.broker.socketPath, {
+      method: "claim", token,
+    });
+    const pending = callTurnBroker<BrokerToolResult>(transport.broker.socketPath, {
+      method: "invoke", bindingId, wireName: "dev_probe", arguments: {},
+    }, 15_000);
+    const [request] = await transport.broker.nextToolBatch(token);
+    expect(request?.wireName).toBe("dev_probe");
+    transport.broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "ok" }] });
+    await expect(pending).resolves.toMatchObject({ content: [{ text: "ok" }] });
+    const entries = readdirSync(join(journalDirectory, traceId))
+      .filter(name => name.endsWith(".json"))
+      .map(name => JSON.parse(readFileSync(join(journalDirectory, traceId, name), "utf8")) as {
+        event: string;
+        tool: string;
+        resultRecoverable: boolean;
+        replayAuthorized: boolean;
+      });
+    expect(entries.map(entry => entry.event)).toEqual(expect.arrayContaining([
+      "queued", "delivery_possible", "result_received",
+    ]));
+    expect(entries.every(entry => entry.tool === "dev_probe"
+      && entry.resultRecoverable === false && entry.replayAuthorized === false)).toBe(true);
   } finally {
     await transport?.close();
     await occupied.stop(true);
@@ -396,7 +463,68 @@ test("DEV chat fails closed until the launcher-owned MCP tunnel is ready", async
       state: "stopped",
       detail: "stopped",
     }),
-  })).rejects.toThrow("launcher-owned DEV MCP tunnel is not ready");
+  })).rejects.toThrow("configured DEV MCP transport is not ready");
+});
+
+test("DEV chat accepts the configured external Cloudflare transport and owns its broker", async () => {
+  const root = scratch("cgw-dev-external-transport");
+  const base = defaultConfig("full");
+  const withoutTunnel = { ...base };
+  delete withoutTunnel.tunnel;
+  const config = {
+    ...withoutTunnel,
+    purpose: "dev-harness" as const,
+    mcpTransport: "external-cloudflare" as const,
+    externalGateway: {
+      mcpUrl: "https://gateway.example.test/mcp",
+      healthUrl: "https://gateway.example.test/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+    brokerSocketPath: defaultBrokerEndpoint(join(root, "dev")),
+  };
+  let inspectedConfig: unknown;
+  let transport: Awaited<ReturnType<typeof startDevChatTransport>> | undefined;
+  try {
+    transport = await startDevChatTransport(config, join(root, "dev"), {
+      status: async value => {
+        inspectedConfig = value;
+        return { ready: true };
+      },
+    });
+    expect(inspectedConfig).toBe(config);
+    expect(transport.config).toBe(config);
+    expect(await callTurnBroker(transport.config.brokerSocketPath, { method: "owner_status" }))
+      .toMatchObject({ protocolVersion: 5 });
+  } finally {
+    await transport?.close();
+  }
+});
+
+test("DEV external Cloudflare gateway rejects the production origin before probing or opening a broker", async () => {
+  const root = scratch("cgw-dev-rejects-production-gateway");
+  const base = defaultConfig("full");
+  const withoutTunnel = { ...base };
+  delete withoutTunnel.tunnel;
+  const config = {
+    ...withoutTunnel,
+    purpose: "dev-harness" as const,
+    mcpTransport: "external-cloudflare" as const,
+    externalGateway: DEFAULT_CLOUDFLARE_GATEWAY,
+    brokerSocketPath: defaultBrokerEndpoint(join(root, "dev")),
+  };
+  let probed = false;
+  await expect(startDevChatTransport(config, join(root, "dev"), {
+    status: async () => {
+      probed = true;
+      return { ready: true };
+    },
+  })).rejects.toThrow("production gateway");
+  expect(probed).toBe(false);
+  expect(() => validateIsolatedDevExternalGateway({
+    mcpUrl: "https://dev.example.test/mcp",
+    healthUrl: "https://health.example.test/health",
+    expectedService: "DevMcpGateway",
+  })).toThrow("share one dedicated hostname");
 });
 
 test("DEV driver uses shared browser methods and its own broker while an unrelated Responses port stays occupied", async () => {

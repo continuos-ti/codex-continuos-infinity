@@ -22,8 +22,10 @@ import {
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
-import { latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import { readAuthenticatedBrokerRecoverySnapshot } from "./broker-call-reconciliation";
+import { isNativeCodexIdentifier, latestCodexRolloutFilesystem, resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { ChatGptWebAdapterError } from "./adapter-error";
+import { cwdIsAccessibleDirectory, cwdWithinRealRoots } from "./trusted-cwd-path";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -40,6 +42,7 @@ interface StoredThreadEnvironmentFile {
 
 const MAX_THREAD_ENVIRONMENTS = 256;
 const THREAD_ENVIRONMENT_TTL_MS = 30 * 24 * 60 * 60_000;
+const THREAD_ENVIRONMENT_CLOCK_SKEW_MS = 5 * 60_000;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -99,7 +102,8 @@ function sandboxPolicy(value: unknown, roots: string[], writableRoots: string[])
 
 function validateStoredEnvironment(value: unknown): StoredThreadEnvironment {
   const parsed = record(value);
-  if (!parsed || typeof parsed.cwd !== "string" || !isAbsolute(parsed.cwd) || typeof parsed.updatedAt !== "number") {
+  if (!parsed || typeof parsed.cwd !== "string" || !isAbsolute(parsed.cwd)
+    || typeof parsed.updatedAt !== "number" || !Number.isFinite(parsed.updatedAt) || parsed.updatedAt < 0) {
     throw new Error("Invalid persisted ChatGPT thread environment");
   }
   const cwd = resolve(parsed.cwd);
@@ -177,6 +181,25 @@ export class ChatGptThreadEnvironmentStore {
     this.codexHomes = getTrustedCodexHomes(codexHome, additionalCodexHomes);
   }
 
+  /** Observe stopped-broker evidence with the same operator-trusted Codex homes as CWD recovery.
+   * This does not bind a new owner, reconcile external tool effects or grant replay.
+   */
+  readBrokerRecoverySnapshot(journalDirectory: string, parsed: CodexParsedRequest) {
+    const identity = extractChatGptTurnIdentity(parsed);
+    const lineage = extractChatGptThreadSpawnLineage(parsed) ?? extractChatGptRootThreadMetadata(parsed);
+    if (!identity.turnId || !lineage) {
+      return { status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false } as const;
+    }
+    return readAuthenticatedBrokerRecoverySnapshot({
+      journalDirectory,
+      codexHome: this.codexHomes[0]!,
+      additionalCodexHomes: this.codexHomes.slice(1),
+      ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+      lineage,
+      turnId: identity.turnId,
+    });
+  }
+
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
     const identity = extractChatGptTurnIdentity(parsed);
     let initialClaim: ChatGptEnvironmentClaim | undefined;
@@ -184,7 +207,8 @@ export class ChatGptThreadEnvironmentStore {
       const claim = extractChatGptTurnEnvironmentClaim(parsed);
       const environment = claim.environment;
       const outsideProjectRoots = environment.cwd !== undefined
-        && !environment.roots.some(root => contains(root, environment.cwd!));
+        && cwdIsAccessibleDirectory(environment.cwd)
+        && !cwdWithinRealRoots(environment.roots, environment.cwd);
       if (environment.cwd === undefined || outsideProjectRoots || this.codexHomes.length > 1
         || (environment.sandboxPolicy.type !== "dangerFullAccess" && !claim.statesNetworkAccess)) {
         // A shared bridge must prove the current native owner even for complete envelopes.
@@ -201,6 +225,10 @@ export class ChatGptThreadEnvironmentStore {
         );
       }
       const completeEnvironment = { ...environment, cwd: environment.cwd };
+      if (!cwdIsAccessibleDirectory(completeEnvironment.cwd)) {
+        initialClaim = claim;
+        throw new MissingTrustedCodexEnvironmentError("existing cwd");
+      }
       if (identity.threadId) this.set(identity.threadId, completeEnvironment);
       return completeEnvironment;
     } catch (error) {
@@ -307,6 +335,12 @@ export class ChatGptThreadEnvironmentStore {
       // Only a current native rollout can supersede an unrecognized historical envelope. Without
       // that proof, do not turn arbitrary history or an invalid update into cached authority.
       if (hasRawChatGptEnvironmentContext(parsed)) throw error;
+      // A native UUID pair identifies a real Codex turn, but it is not its permission grant.
+      // If its current rollout cannot be authenticated, never turn a historic cache into cwd.
+      if (isNativeCodexIdentifier(identity.threadId) && isNativeCodexIdentifier(identity.turnId)) {
+        console.warn("[chatgpt-web] trusted_cwd_preflight rejected=missing_current_native_rollout");
+        throw error;
+      }
       const sameThread = this.get(identity.threadId);
       if (sameThread) return {
         cwd: sameThread.cwd,
@@ -346,11 +380,17 @@ export class ChatGptThreadEnvironmentStore {
     this.load();
     const stored = this.threads.get(threadId);
     if (!stored) return undefined;
-    if (this.now() - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS) {
+    const now = this.now();
+    if (now - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS
+      || stored.updatedAt > now + THREAD_ENVIRONMENT_CLOCK_SKEW_MS) {
       this.threads.delete(threadId);
       this.persist();
       return undefined;
     }
+    // Cached authority cannot refer to a directory that has since been removed.
+    if (!cwdIsAccessibleDirectory(stored.cwd)
+      || (stored.sandboxPolicy.type !== "dangerFullAccess"
+        && !cwdWithinRealRoots(stored.roots, stored.cwd))) return undefined;
     return stored;
   }
 
@@ -402,9 +442,14 @@ export class ChatGptThreadEnvironmentStore {
     if (parsed?.version !== 1 || !rawThreads) throw invalidState("has an unsupported or invalid format");
     let entries: Array<readonly [string, StoredThreadEnvironment]>;
     try {
-      const cutoff = this.now() - THREAD_ENVIRONMENT_TTL_MS;
-      entries = Object.entries(rawThreads)
-        .map(([threadId, value]) => [threadId, validateStoredEnvironment(value)] as const)
+      const now = this.now();
+      const cutoff = now - THREAD_ENVIRONMENT_TTL_MS;
+      const validatedEntries = Object.entries(rawThreads)
+        .map(([threadId, value]) => [threadId, validateStoredEnvironment(value)] as const);
+      if (validatedEntries.some(([, environment]) => environment.updatedAt > now + THREAD_ENVIRONMENT_CLOCK_SKEW_MS)) {
+        throw new Error("Persisted ChatGPT environment timestamp is in the future");
+      }
+      entries = validatedEntries
         .filter(([, environment]) => environment.updatedAt >= cutoff)
         .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
         .slice(-MAX_THREAD_ENVIRONMENTS);

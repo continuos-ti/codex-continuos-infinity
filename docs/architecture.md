@@ -34,7 +34,7 @@ launcher-owned codex-chatgpt-web daemon
   unpinned `chatgpt-web/pro`. They keep old tasks and cached selections working. The existing release
   upgrade reruns integration setup and invalidates the model cache; Codex must restart for the new
   picker. Native models and existing context/compaction budgets are preserved.
-- Sends the complete Codex context and image attachments to a fresh ChatGPT conversation (Temporary Chat by default).
+- Sends the complete Codex context and image attachments to a fresh ChatGPT conversation (saved in ChatGPT history by default).
 - Never starts the broker, tunnel, or MCP server.
 - Emits a nonfatal Codex commentary warning that local tools are unavailable for the selected model.
 
@@ -62,9 +62,9 @@ DEV launchers can therefore run at the same time with different ChatGPT accounts
 
 The working-tree adapter attaches to a tab leased only from that DEV launcher. In Full mode the DEV
 launcher owns one persistent, isolated tunnel runtime; a named CLI chat owns only the private turn
-broker attached to that tunnel for the command's lifetime. The distinct `Codex Native2 DEV`
+broker attached to that tunnel for the command's lifetime. The distinct `ContinuosWebIntegracao DEV`
 connector reaches the same MCP server and turn-token contract without requiring any Responses
-daemon or colliding with the production `Codex Native2` connector.
+daemon or colliding with the production `ContinuosWebIntegracao` connector.
 
 Only the responsibilities normally owned by native Codex are synthetic: named history storage,
 turn metadata, tool-result execution, context-threshold scheduling, and installation of compacted
@@ -80,12 +80,12 @@ probe. The DEV launcher supervisor owns only the isolated MCP tunnel. Browser di
 state, thread authority, checkpoints, and named chat state live
 under `~/.codex-chatgpt-web-dev` by default.
 
-The direct turn-token contract defaults to `Codex Native2`; the retired `Codex Native` identity is
+The direct turn-token contract defaults to `ContinuosWebIntegracao`; the retired `Codex Native` identity is
 never selected or refreshed in place. Setup migrates known legacy local configuration to the new name, clears prior verification state, and
 requires the user to create the new connector. Browser verification accepts the exact new identity,
 reports a specific migration error when only the legacy identity is visible, and never falls back to
 the legacy connector. Future public schema changes require another explicit connector identity.
-Repository DEV mode uses `Codex Native2 DEV` so the same ChatGPT account can keep both production
+Repository DEV mode uses `ContinuosWebIntegracao DEV` so the same ChatGPT account can keep both production
 and development connectors installed without renaming, refreshing, or deleting either one.
 
 Settings fixes only the `Codex ` prefix and edits the rest of the selected mode's name: `Native2`
@@ -156,11 +156,11 @@ Top-level `model_context_window` raises only the proxied native rows' advertised
 Codex to apply its own configured context override without clamping. Routed ChatGPT Web models
 retain their measured adapter-owned limits.
 
-Automatic and Zero Risk task turns use Temporary Chat by default. The `useTemporaryChats`
-preference (`setup --temporary-chats`; `--ordinary-chats` to disable) selects the mode for task
+Automatic and Zero Risk task turns use ordinary, saved chats by default. The `useTemporaryChats`
+preference (`setup --temporary-chats` to enable; `--ordinary-chats` to disable) selects the mode for task
 turns, connector verification and smoke tests. Sign-in and account
 inspection still use ordinary chats. The old `useSavedChats` preference is discarded and cannot
-override the new setting. An absent new setting defaults to true; an explicit false is preserved.
+override the new setting. An absent new setting defaults to false; explicit true and false choices are preserved.
 Changing modes retires idle retained task surfaces after setup succeeds;
 the launcher refuses to change it during active browser work. This is independent of conversation
 reuse. Saved history does not authorize reopening an arbitrary ChatGPT conversation. Compaction

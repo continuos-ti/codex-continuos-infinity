@@ -13,6 +13,20 @@ const repositoryRoot = path.resolve(launcherRoot, "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"));
 const repositoryManifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"));
 
+test("launcher presents the Infinity identity in every locale and credits the upstream author", () => {
+  const html = fs.readFileSync(path.join(launcherRoot, "index.html"), "utf8");
+  const copy = fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8");
+  const native = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
+  const linuxRunner = fs.readFileSync(path.join(launcherRoot, "assets", "linux-appimage-runner.sh"), "utf8");
+  assert.match(html, /<title>Codex Continuos Infinity<\/title>/);
+  assert.equal(copy.match(/^  product: "Codex Continuos Infinity",$/gm)?.length, 5);
+  assert.equal(copy.match(/^  setupTitle: ".*Codex Continuos Infinity.*",$/gm)?.length, 5);
+  assert.match(copy, /fork of Codex Web GPT by miuuyy/);
+  assert.match(copy, /Original author's X/);
+  assert.match(native, /codex-continuos-infinity-diagnostics-/);
+  assert.doesNotMatch(linuxRunner, /Codex Web GPT/);
+});
+
 test("the public launcher command uses the Electron bootstrap", () => {
   assert.equal(repositoryManifest.scripts.launcher, "bun run scripts/start-launcher.ts");
   assert.equal(repositoryManifest.scripts.launcher, repositoryManifest.scripts.app);
@@ -26,8 +40,8 @@ test("the full verification gate audits launcher dependencies", () => {
 });
 
 test("launcher publishes native packages for all supported desktop operating systems", () => {
-  assert.equal(manifest.build.appId, "dev.codexwebgpt.launcher");
-  assert.equal(manifest.build.artifactName, "codex-web-gpt-${version}-${os}-${arch}.${ext}");
+  assert.equal(manifest.build.appId, "br.com.continuos.codexinfinity.launcher");
+  assert.equal(manifest.build.artifactName, "codex-continuos-infinity-${version}-${os}-${arch}.${ext}");
   assert.deepEqual(manifest.build.mac.target, ["dmg", "zip"]);
   assert.deepEqual(
     manifest.build.mac.signIgnore,
@@ -60,7 +74,7 @@ test("release installers resolve checksummed native launcher assets", () => {
   }
   assert.match(shellInstaller, /PLATFORM="mac"/);
   assert.match(shellInstaller, /PLATFORM="linux"/);
-  assert.match(shellInstaller, /codex-web-gpt\.desktop/);
+  assert.match(shellInstaller, /codex-continuos-infinity\.desktop/);
   assert.match(shellInstaller, /--appimage-extract/);
   assert.match(packager, /-linux-x86_64\(\?=\\\.\).*?-linux-x64/);
   assert.match(packager, /const executable = "node"/);
@@ -81,7 +95,7 @@ test("release installers resolve checksummed native launcher assets", () => {
       < shellInstaller.indexOf('"$TEMP_DIR/$ASSET" --appimage-extract'),
     "the downloaded AppImage must be executable before it is inspected",
   );
-  assert.match(windowsInstaller, /codex-web-gpt-\$Version-win-\$Arch\.exe/);
+  assert.match(windowsInstaller, /codex-continuos-infinity-\$Version-win-\$Arch\.exe/);
   assert.match(windowsInstaller, /\[Environment\]::Is64BitOperatingSystem/);
   assert.doesNotMatch(windowsInstaller, /RuntimeInformation/);
   assert.match(windowsInstaller, /function Test-IsFullyQualifiedWindowsPath/);
@@ -90,11 +104,11 @@ test("release installers resolve checksummed native launcher assets", () => {
   const windowsPathPattern = windowsInstaller.match(/return \$Path -match '([^']+)'/)?.[1];
   assert.ok(windowsPathPattern, "the Windows installer must expose its absolute-path contract");
   const fullyQualifiedWindowsPath = new RegExp(windowsPathPattern);
-  assert.equal(fullyQualifiedWindowsPath.test("C:\\Users\\tester\\Codex Web GPT"), true);
-  assert.equal(fullyQualifiedWindowsPath.test("\\\\server\\share\\Codex Web GPT"), true);
-  assert.equal(fullyQualifiedWindowsPath.test("C:Codex Web GPT"), false);
-  assert.equal(fullyQualifiedWindowsPath.test("\\Codex Web GPT"), false);
-  assert.equal(fullyQualifiedWindowsPath.test("Codex Web GPT"), false);
+  assert.equal(fullyQualifiedWindowsPath.test("C:\\Users\\tester\\Codex Continuos Infinity"), true);
+  assert.equal(fullyQualifiedWindowsPath.test("\\\\server\\share\\Codex Continuos Infinity"), true);
+  assert.equal(fullyQualifiedWindowsPath.test("C:Codex Continuos Infinity"), false);
+  assert.equal(fullyQualifiedWindowsPath.test("\\Codex Continuos Infinity"), false);
+  assert.equal(fullyQualifiedWindowsPath.test("Codex Continuos Infinity"), false);
   assert.ok(windowsInstaller.includes(`HKCU:\\Software\\${manifest.build.nsis.guid}`));
   assert.ok(devProfile.includes(`WINDOWS_LAUNCHER_GUID = "${manifest.build.nsis.guid}"`));
   assert.match(windowsInstaller, /Get-ItemPropertyValue[\s\S]*InstallLocation/);
@@ -103,6 +117,21 @@ test("release installers resolve checksummed native launcher assets", () => {
   const packageSmoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");
   assert.match(packageSmoke, /run\(installer, \["\/S", "\/currentuser"\]/);
   assert.match(packageSmoke, /reg\.exe[\s\S]*InstallLocation/);
+  assert.equal(manifest.scripts["smoke:package:uninstall"], "bun run scripts/smoke-package.cjs --verify-uninstall");
+  assert.match(packageSmoke, /process\.env\.GITHUB_ACTIONS !== "true"/);
+  assert.match(packageSmoke, /Refusing NSIS uninstall smoke because this runner already has an Infinity installation/);
+  assert.match(packageSmoke, /PACKAGED_LAUNCHER_UNINSTALL_SMOKE_OK/);
+});
+
+test("NSIS uninstall smoke refuses execution outside an explicit disposable CI runner", () => {
+  const result = spawnSync(process.execPath,
+    [path.join(launcherRoot, "scripts", "smoke-package.cjs"), "--verify-uninstall"], {
+      encoding: "utf8",
+      env: { ...process.env, CI: "false", GITHUB_ACTIONS: "false", RUNNER_OS: "Windows" },
+      timeout: 10_000,
+    });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /NSIS uninstall smoke requires an explicit disposable Windows GitHub Actions runner/);
 });
 
 test("packaged launcher owns a detached checksummed updater for every release platform", () => {
@@ -160,15 +189,15 @@ printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/resources/app.asar.unpacked/asset
       const root = path.join(scratch, `${machine}-${valid}`);
       fs.mkdirSync(root);
       fs.writeFileSync(path.join(root, "fixture.AppImage"), appImage);
-      const asset = `codex-web-gpt-1.2.3-linux-${arch}.AppImage`;
+      const asset = `codex-continuos-infinity-1.2.3-linux-${arch}.AppImage`;
       const checksum = valid ? createHash("sha256").update(appImage).digest("hex") : "0".repeat(64);
       fs.writeFileSync(path.join(root, "checksums.txt"), `${checksum}  ${asset}\n`);
       const result = spawnSync("/bin/sh", [path.join(repositoryRoot, "scripts", "install-launcher.sh")], {
         encoding: "utf8", timeout: 10_000,
         env: {
           ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-          TEST_MACHINE: machine, TEST_ROOT: root, CODEX_WEB_GPT_VERSION: "1.2.3",
-          CODEX_WEB_GPT_LIB_DIR: path.join(root, "lib"), CODEX_WEB_GPT_BIN_DIR: path.join(root, "installed-bin"),
+          TEST_MACHINE: machine, TEST_ROOT: root, CODEX_CONTINUOS_INFINITY_VERSION: "1.2.3",
+          CODEX_CONTINUOS_INFINITY_LIB_DIR: path.join(root, "lib"), CODEX_CONTINUOS_INFINITY_BIN_DIR: path.join(root, "installed-bin"),
           CODEX_CHATGPT_WEB_HOME: path.join(root, "core"), XDG_DATA_HOME: path.join(root, "data"),
         },
       });
@@ -180,8 +209,8 @@ printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/resources/app.asar.unpacked/asset
         assert.match(fs.readFileSync(path.join(root, "downloads"), "utf8"), new RegExp(`${asset.replaceAll(".", "\\.")}$`, "m"));
         if (valid) {
           assert.equal(result.status, 0, result.stderr);
-          assert.deepEqual(fs.readFileSync(path.join(root, "lib", "1.2.3", "Codex Web GPT.AppImage")), appImage);
-          assert.ok(fs.existsSync(path.join(root, "data", "applications", "codex-web-gpt.desktop")));
+          assert.deepEqual(fs.readFileSync(path.join(root, "lib", "1.2.3", "Codex Continuos Infinity.AppImage")), appImage);
+          assert.ok(fs.existsSync(path.join(root, "data", "applications", "codex-continuos-infinity.desktop")));
         } else {
           assert.notEqual(result.status, 0);
           assert.match(result.stderr, /SHA-256 verification failed/);
@@ -198,14 +227,15 @@ printf '#!/bin/sh\\nexit 0\\n' > squashfs-root/resources/app.asar.unpacked/asset
 test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   const ci = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8");
   const release = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
-  assert.match(ci, /macos-15, ubuntu-latest, windows-latest/);
+  assert.match(ci, /macos-15-intel, ubuntu-24\.04, windows-latest/);
   assert.match(ci, /bun run app:package/);
   assert.match(ci, /bun run app:smoke/);
+  assert.match(ci, /bun run --cwd launcher smoke:package:uninstall/);
   assert.match(ci, /prepare-linux-libnotify\.sh/);
   assert.match(ci, /prepare-linux-appimage-tools\.cjs/);
   assert.match(ci, /archlinux:base/);
   assert.match(ci, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0/);
-  for (const runner of ["macos-15", "macos-15-intel", "ubuntu-latest", "ubuntu-24.04-arm", "windows-latest"]) {
+  for (const runner of ["macos-15", "macos-15-intel", "ubuntu-24.04", "ubuntu-24.04-arm", "windows-latest"]) {
     assert.match(release, new RegExp(runner));
   }
   assert.match(release, /launcher\/build\/runtime/);
@@ -213,11 +243,15 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(release, /prepare-linux-libnotify\.sh/);
   assert.match(release, /prepare-linux-appimage-tools\.cjs/);
   assert.match(release, /archlinux:base/);
-  assert.match(release, /runner: ubuntu-24\.04-arm\s+runtime_asset: codex-chatgpt-web-linux-arm64\.tar\.gz/);
+  assert.match(release, /runner: ubuntu-24\.04-arm\s+runtime_asset: codex-continuos-infinity-linux-arm64\.tar\.gz/);
   assert.match(release, /Verify Linux AppImage ABI on current Arch\s+if: runner\.os == 'Linux' && runner\.arch == 'X64'/);
   assert.match(release, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0/);
   assert.match(release, /codesign --verify --deep --strict --verbose=2/);
-  assert.match(release, /Codex Web GPT\.app/);
+  assert.match(release, /Codex Continuos Infinity\.app/);
+  const installer = fs.readFileSync(path.join(repositoryRoot, "scripts", "install.sh"), "utf8");
+  assert.match(installer, /continuos-ti\/codex-continuos-infinity/);
+  assert.match(installer, /codex-continuos-infinity-darwin-\$ARCH\.tar\.gz/);
+  assert.doesNotMatch(installer, /miuuyy\/codex-chatgpt-web/);
   assert.doesNotMatch(release, /gh release create[\s\S]*?--draft/);
 });
 
@@ -229,9 +263,9 @@ test("Linux AppImage fallback uses one owned extraction and removes it on exit",
   // macOS and failed for everyone running `bun test` locally. Returning early is the one form both
   // runners agree on.
   if (process.platform !== "linux") return;
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-appimage-runner-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-appimage-runner-"));
   const runtime = path.join(root, "runtime");
-  const appImage = path.join(root, "Codex Web GPT.AppImage");
+  const appImage = path.join(root, "Codex Continuos Infinity.AppImage");
   const appRunSource = path.join(root, "AppRun");
   const marker = path.join(root, "launched");
   const runner = path.join(launcherRoot, "assets", "linux-appimage-runner.sh");
@@ -249,7 +283,7 @@ test("Linux AppImage fallback uses one owned extraction and removes it on exit",
     "chmod 0755 squashfs-root/AppRun",
     "",
   ].join("\n"), { mode: 0o755 });
-  const fallbackRoot = path.join(runtime, `codex-web-gpt-appimage-${process.getuid?.() ?? 0}`);
+  const fallbackRoot = path.join(runtime, `codex-continuos-infinity-appimage-${process.getuid?.() ?? 0}`);
   const stale = path.join(fallbackRoot, "run.stale");
   const active = path.join(fallbackRoot, "run.active");
   const ownerStart = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8")
@@ -278,7 +312,7 @@ test("Linux AppImage fallback uses one owned extraction and removes it on exit",
   }
 });
 
-test("Linux packaging stages native libnotify in an owned AppImage toolset before assembly", async () => {
+test("Linux packaging stages native libnotify in an owned AppImage toolset before assembly", { timeout: 20_000 }, async () => {
   const source = fs.readFileSync(path.join(launcherRoot, "scripts", "prepare-linux-appimage-tools.cjs"), "utf8");
   const prepare = fs.readFileSync(path.join(repositoryRoot, "scripts", "prepare-linux-libnotify.sh"), "utf8");
   const smoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-linux-appimage-symbols.sh"), "utf8");
@@ -353,7 +387,7 @@ test("Linux packaging stages native libnotify in an owned AppImage toolset befor
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 test("macOS package smoke unregisters its staged app from LaunchServices", () => {
   const smoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");

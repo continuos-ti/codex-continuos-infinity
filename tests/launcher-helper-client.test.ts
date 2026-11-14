@@ -89,7 +89,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       token: "launcher-control-token-0123456789abcdefghijklmnop",
     },
     helper: { executable: process.execPath, script: descriptorHelper },
-    partition: "persist:codex-web-gpt-chatgpt",
+    partition: "persist:codex-continuos-infinity-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     surfaceTargets: { ["launcher_surface_id_0123456789AB"]: "native-owned-target" },
@@ -212,7 +212,7 @@ test("accepted compaction retires through the helper as completed without hiding
     endpoint: `http://127.0.0.1:${server.port}`,
     control: { endpoint: `http://127.0.0.1:${server.port}`, token: "launcher-control-token-0123456789abcdefghijklmnop" },
     helper: { executable: process.execPath, script: helper },
-    partition: "persist:codex-web-gpt-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+    partition: "persist:codex-continuos-infinity-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB", createdAt: new Date().toISOString(),
     surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
   }), { mode: 0o600 });
@@ -314,7 +314,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
     prepare: async () => ({
       text: "commit",
       images: [],
-      turnToken: "turn_0123456789abcdef0123456789abcdef",
+      turnToken: "turn_00000000000000000000000000000001",
       multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
       contextTokenBreakdown: { developer: { records: 1, chars: 400, tokens: 100 } },
@@ -333,7 +333,7 @@ test("launcher helper protocol preserves multipart context, broker identity and 
     type: "prepared_selected_ack",
     prepared: {
         text: "commit",
-        turnToken: "turn_0123456789abcdef0123456789abcdef",
+        turnToken: "turn_00000000000000000000000000000001",
         multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
         trimmedCompactionMessages: 4,
         contextTokenBreakdown: { developer: { records: 1, chars: 400, tokens: 100 } },

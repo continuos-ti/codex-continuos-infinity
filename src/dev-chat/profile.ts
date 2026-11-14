@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from "node:path";
 import { expandUserPath, getConfigPath } from "../config";
 import {
   readLauncherBrowserHostDescriptor,
@@ -21,7 +21,34 @@ export interface DevProfilePaths {
   configPath: string;
 }
 
-const WINDOWS_LAUNCHER_GUID = "d1a6026a-6210-588e-9a2b-da3936f94e02";
+const WINDOWS_LAUNCHER_GUID = "8d70288c-48e8-55c9-94ad-16f56e4d0a88";
+
+/** Resolve existing path aliases, including junctions, before checking DEV isolation. */
+function isolationPath(value: string): string {
+  const absolute = resolve(expandUserPath(value));
+  let ancestor = absolute;
+  while (true) {
+    try {
+      const canonical = resolve(realpathSync.native(ancestor), relative(ancestor, absolute));
+      return process.platform === "win32" ? canonical.toLowerCase() : canonical;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(`Cannot verify DEV profile path isolation: ${absolute}`, { cause: error });
+      }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) {
+        throw new Error(`Cannot verify DEV profile path isolation: ${absolute}`, { cause: error });
+      }
+      ancestor = parent;
+    }
+  }
+}
+
+function overlappingProfilePaths(first: string, second: string): boolean {
+  const inside = (candidate: string): boolean =>
+    candidate === "" || (candidate !== ".." && !candidate.startsWith(`..${sep}`) && !isAbsolute(candidate));
+  return inside(relative(first, second)) || inside(relative(second, first));
+}
 
 function registeredWindowsLauncherInstallLocation(): string | undefined {
   try {
@@ -45,13 +72,23 @@ export function resolveDevProfilePaths({
   homeDirectory?: string;
 } = {}): DevProfilePaths {
   const home = resolve(expandUserPath(
-    environment.CODEX_WEB_GPT_DEV_HOME?.trim() || join(homeDirectory, ".codex-chatgpt-web-dev"),
+    environment.CODEX_CONTINUOS_INFINITY_DEV_HOME?.trim() || environment.CODEX_WEB_GPT_DEV_HOME?.trim() || join(homeDirectory, ".codex-continuos-infinity-dev"),
   ));
-  const productionHome = resolve(expandUserPath(
-    environment.CODEX_CHATGPT_WEB_HOME?.trim() || join(homeDirectory, ".codex-chatgpt-web"),
-  ));
-  if (home === productionHome) {
-    throw new Error("DEV profile home must differ from the production codex-chatgpt-web home");
+  const protectedHomes = [
+    join(homeDirectory, ".codex-continuos-infinity"),
+    join(homeDirectory, ".codex-chatgpt-web"),
+    join(homeDirectory, ".codex"),
+    environment.CODEX_CONTINUOS_INFINITY_HOME?.trim(),
+    environment.CODEX_CHATGPT_WEB_HOME?.trim(),
+    environment.CODEX_HOME?.trim(),
+    environment.CODEX_CONTINUOS_INFINITY_DATA_DIR?.trim(),
+    environment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR?.trim(),
+    ...(process.platform === "win32" && environment.APPDATA?.trim()
+      ? [join(environment.APPDATA.trim(), "Codex Continuos Infinity")] : []),
+  ].filter((value): value is string => Boolean(value));
+  const canonicalDevHome = isolationPath(home);
+  if (protectedHomes.some(productionHome => overlappingProfilePaths(canonicalDevHome, isolationPath(productionHome)))) {
+    throw new Error("DEV profile home must differ from the production profile and Codex homes");
   }
   const launcherUserData = join(home, "launcher");
   return {
@@ -96,8 +133,12 @@ export function readDevChatExperimentalFeatures(
 export function activateDevProfileEnvironment(paths = resolveDevProfilePaths()): DevProfilePaths {
   process.env.CODEX_WEB_GPT_DEV_HOME = paths.home;
   process.env.CODEX_CHATGPT_WEB_HOME = paths.home;
+  process.env.CODEX_CONTINUOS_INFINITY_HOME = paths.home;
   process.env.CODEX_HOME = paths.codexHome;
+  delete process.env.CODEX_CONTINUOS_INFINITY_DEV_HOME;
   delete process.env.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+  delete process.env.CODEX_CONTINUOS_INFINITY_DATA_DIR;
+  delete process.env.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
   if (getConfigPath() !== paths.configPath) {
     throw new Error("DEV profile environment did not resolve to its isolated configuration path");
   }
@@ -124,30 +165,30 @@ export function installedLauncherCandidates({
   platform?: NodeJS.Platform;
   windowsInstallLocation?: string;
 } = {}): string[] {
-  const override = environment.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
+  const override = environment.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE?.trim();
   const candidates = override ? [expandUserPath(override)] : [];
   const targetPath = platform === "win32" ? win32 : posix;
   if (platform === "darwin") {
     candidates.push(
-      "/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT",
-      posix.join(homeDirectory, "Applications", "Codex Web GPT.app", "Contents", "MacOS", "Codex Web GPT"),
+      "/Applications/Codex Continuos Infinity.app/Contents/MacOS/Codex Continuos Infinity",
+      posix.join(homeDirectory, "Applications", "Codex Continuos Infinity.app", "Contents", "MacOS", "Codex Continuos Infinity"),
     );
   } else if (platform === "win32") {
     const registeredLocation = windowsInstallLocation?.trim()
       || (process.platform === "win32" && environment === process.env
         ? registeredWindowsLauncherInstallLocation() : undefined);
     if (registeredLocation && win32.isAbsolute(registeredLocation)) {
-      candidates.push(win32.join(registeredLocation, "Codex Web GPT.exe"));
+      candidates.push(win32.join(registeredLocation, "Codex Continuos Infinity.exe"));
     } else {
       const localAppData = environment.LOCALAPPDATA?.trim();
       if (localAppData) {
-        candidates.push(win32.join(localAppData, "Programs", "Codex Web GPT", "Codex Web GPT.exe"));
+        candidates.push(win32.join(localAppData, "Programs", "Codex Continuos Infinity", "Codex Continuos Infinity.exe"));
       }
     }
   } else if (platform === "linux") {
-    candidates.push(posix.join(homeDirectory, ".local", "bin", "codex-web-gpt"));
+    candidates.push(posix.join(homeDirectory, ".local", "bin", "codex-continuos-infinity"));
     for (const entry of (environment.PATH || "").split(":").filter(Boolean)) {
-      candidates.push(posix.join(entry, "codex-web-gpt"));
+      candidates.push(posix.join(entry, "codex-continuos-infinity"));
     }
   }
   return [...new Set(candidates.map(candidate => targetPath.resolve(candidate)))];
@@ -158,7 +199,7 @@ export function findInstalledLauncherExecutable(options: Parameters<typeof insta
   const executable = candidates.find(executableFile);
   if (executable) return executable;
   throw new Error(
-    "Installed Codex Web GPT launcher was not found. Install it first or set CODEX_WEB_GPT_LAUNCHER_EXECUTABLE to its absolute executable path."
+    "Installed Codex Continuos Infinity launcher was not found. Install it first or set CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE to its absolute executable path."
       + ` Checked: ${candidates.join(", ") || "no platform candidates"}`,
   );
 }
@@ -169,8 +210,11 @@ export function devLauncherEnvironment(
 ): NodeJS.ProcessEnv {
   const childEnvironment = { ...environment };
   delete childEnvironment.CODEX_CHATGPT_WEB_HOME;
+  delete childEnvironment.CODEX_CONTINUOS_INFINITY_HOME;
+  delete childEnvironment.CODEX_CONTINUOS_INFINITY_DEV_HOME;
   delete childEnvironment.CODEX_HOME;
   delete childEnvironment.CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES;
+  delete childEnvironment.CODEX_CONTINUOS_INFINITY_DATA_DIR;
   delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
   childEnvironment.CODEX_WEB_GPT_DEV_HOME = paths.home;
   return childEnvironment;

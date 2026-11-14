@@ -1,15 +1,22 @@
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { isWindowsPipeEndpoint } from "../../config";
 import {
   CompactionTransactionStore,
   type CompactionTransactionHandle,
 } from "./compaction-transaction";
-import type { ChatGptTurnEnvironment } from "./environment";
+import type { ChatGptTurnEnvironment, ChatGptTurnIdentity } from "./environment";
 import { chatGptToolTimeoutError } from "./adapter-error";
 import { subagentModelObservation } from "./mcp-observation";
+import { recordBrokerCallEvent, type BrokerCallEvent, type BrokerOperationStatusContract } from "./broker-call-journal";
+import { brokerOperationStatusForTool, brokerProviderEpochForTool, brokerToolIsReadOnly } from "./broker-operation-identity";
+import { acquireBrokerJournalOwnership } from "./broker-journal-ownership";
+import { inspectSettledBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
+import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
+import { nativeBrokerOwnerDigest } from "./native-broker-owner";
+import { cwdWithinRealRoots } from "./trusted-cwd-path";
 
 interface BrokerRetirementFailure {
   code: "codex_tool_timeout";
@@ -34,6 +41,10 @@ export interface BrokerToolRequest {
   callId: string;
   wireName: string;
   freeform: boolean;
+  /** True only when the native provider schema explicitly declares this structured tool read-only. */
+  readOnly?: boolean;
+  providerEpoch?: string;
+  operationStatus?: BrokerOperationStatusContract;
   arguments?: Record<string, unknown>;
   input?: string;
 }
@@ -99,12 +110,16 @@ interface SafeTurnControl {
 
 interface TurnChannel {
   traceId: string;
+  journalNonce: string;
+  nativeOwnerDigest?: string;
   externalOwner: boolean;
   environment: PendingTurn;
   bindingId?: string;
   queuedCallIds: string[];
   deliveredCallIds: Set<string>;
   invocations: Map<string, PendingInvocation>;
+  /** Recent acknowledgements scoped to this live owner, for idempotent delivery retries. */
+  completedCallDigests: Map<string, string>;
   waiters: Set<ToolWaiter>;
   compactionRequested: boolean;
   compactionResult?: BrokerToolResult;
@@ -158,6 +173,7 @@ interface BrokerRequest {
   environment?: ChatGptTurnEnvironment;
   ttlMs?: number;
   traceId?: string;
+  nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">;
   callId?: string;
   activityId?: string;
   revision?: number;
@@ -180,6 +196,13 @@ const brokers = new Map<string, TurnBroker>();
 const MAX_BROKER_LINE_CHARS = 67_108_864;
 const MAX_RETIRED_TURN_HANDLES = 64;
 const MAX_PENDING_CALL_DIAGNOSTICS = 16;
+const MAX_COMPLETED_CALL_ACKS = 256;
+
+function resultDigest(result: BrokerToolResult): string {
+  const encoded = JSON.stringify(result);
+  if (typeof encoded !== "string") throw new Error("Invalid broker tool result");
+  return createHash("sha256").update(encoded).digest("hex");
+}
 
 function retirementDiagnostics(channel: TurnChannel): BrokerRetirementDiagnostics {
   const now = performance.now();
@@ -253,10 +276,8 @@ function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
   if (typeof environment.cwd !== "string" || !isAbsolute(environment.cwd)
     || !paths(environment.roots) || !Array.isArray(environment.writableRoots)
     || environment.writableRoots.some(path => typeof path !== "string" || !isAbsolute(path))
-    || (environment.sandboxPolicy?.type !== "dangerFullAccess" && !environment.roots.some(root => {
-      const nested = relative(resolve(root), resolve(environment.cwd!));
-      return nested === "" || (!nested.startsWith("..") && !isAbsolute(nested));
-    }))
+    || (environment.sandboxPolicy?.type !== "dangerFullAccess"
+      && !cwdWithinRealRoots(environment.roots, environment.cwd!))
     || !environment.sandboxPolicy || !["dangerFullAccess", "workspaceWrite", "readOnly"].includes(environment.sandboxPolicy.type)
     || !Array.isArray(environment.tools)
     || environment.tools.some(tool => !tool || typeof tool.name !== "string" || typeof tool.description !== "string"
@@ -273,12 +294,14 @@ function assertSurfaceNonce(value: unknown): asserts value is string {
 }
 
 export interface TurnBrokerOwner {
-  register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string): Promise<string>;
+  register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string,
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">): Promise<string>;
   registerSafe(
     environment: ChatGptTurnEnvironment,
     surfaceNonce: string,
     ttlMs?: number,
     traceId?: string,
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
   ): Promise<string>;
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void | Promise<void>;
   confirmSafeTurnSent(
@@ -328,9 +351,112 @@ export class TurnBroker implements TurnBrokerOwner {
   private acceptingExternalOwners = true;
   private server?: Server;
   private startPromise?: Promise<void>;
+  private closePromise?: Promise<void>;
+  private closed = false;
   private socketIdentity?: { dev: number; ino: number };
+  private callJournalDirectory?: string;
+  private releaseJournalOwnership?: () => void;
+  private resultVault?: BrokerResultVault;
+  private startupCallEvidence: BrokerRecoveryCall[] = [];
+  private startupJournalUnreadable = false;
+  private nativeOwnersWithCalls = new Set<string>();
+  private recordedCallsInProcess = false;
 
   private constructor(readonly socketPath: string) {}
+
+  /** Opt-in at startup, before any turn has registered on this socket. */
+  enableCallJournal(directory: string): void {
+    if (!isAbsolute(directory)) throw new Error("Broker call journal directory must be absolute");
+    if (this.closed) throw new Error("Broker call journal cannot be enabled on a closed broker");
+    const normalized = resolve(directory);
+    if (this.callJournalDirectory && existsSync(normalized)
+      && realpathSync.native(normalized) === this.callJournalDirectory) return;
+    // The DEV driver may bind the broker socket before startServer configures its journal.
+    // No turn can interleave with this synchronous acquisition, so a listening broker with
+    // no registered turns is still safe to configure.
+    if (this.callJournalDirectory || this.channels.size > 0) {
+      throw new Error("Broker call journal cannot be enabled or changed after turn registration");
+    }
+    // Acquire before snapshotting. Otherwise two brokers can each see an empty journal, then both
+    // admit native turns and dispatch their calls through different sockets.
+    const release = acquireBrokerJournalOwnership(normalized);
+    try {
+      // Persist and inspect via the same canonical directory that owns the writer lock.
+      const journalDirectory = realpathSync.native(normalized);
+      const vault = new BrokerResultVault(vaultDirectoryForJournal(journalDirectory));
+      // Snapshot only records from before this broker process started. Calls made by an active
+      // session must continue through its in-memory owner, not trip the post-crash fence.
+      let unreadable = false;
+      let evidence: BrokerRecoveryCall[] = [];
+      try {
+        evidence = inspectSettledBrokerCallJournal(journalDirectory);
+      } catch {
+        unreadable = true;
+      }
+      this.resultVault = vault;
+      this.callJournalDirectory = journalDirectory;
+      this.startupCallEvidence = evidence;
+      this.startupJournalUnreadable = unreadable;
+      this.releaseJournalOwnership = release;
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  /** Fence a fresh browser owner if this exact native turn previously dispatched MCP work. */
+  priorNativeCallStates(
+    traceId: string,
+    identity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
+  ): BrokerRecoveryState[] {
+    if (!this.callJournalDirectory) return [];
+    if (this.startupJournalUnreadable) {
+      throw new Error("Previous broker call journal is invalid or unreadable; reconciliation is required");
+    }
+    const ownerDigest = nativeBrokerOwnerDigest(identity);
+    const traceCalls = this.startupCallEvidence.filter(call => call.traceId === traceId);
+    if (traceCalls.length > 0 && (!ownerDigest
+      || traceCalls.some(call => call.nativeOwnerDigest !== ownerDigest))) {
+      throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+    }
+    // The provider configuration can change across restarts and change the diagnostic trace.
+    // Native ownership remains stable and must fence all earlier calls across trace folders.
+    // A changed diagnostic trace cannot establish that an unauthenticated registration is
+    // unrelated to a previous call. Require native identity once any old calls exist.
+    if (!ownerDigest) {
+      if (this.startupCallEvidence.length > 0) {
+        throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+      }
+      return [];
+    }
+    // A legacy call without native ownership may belong to this turn, even when its
+    // diagnostic trace differs. Keep the startup fence closed until independently reconciled.
+    if (this.startupCallEvidence.some(call => !call.nativeOwnerDigest)) {
+      throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+    }
+    return this.startupCallEvidence.filter(call => call.nativeOwnerDigest === ownerDigest)
+      .map(call => call.state);
+  }
+
+  private recordCall(channel: TurnChannel, request: BrokerToolRequest, event: BrokerCallEvent): void {
+    if (!this.callJournalDirectory) return;
+    // Preserve the native 12-hex trace when available. External owners may provide an
+    // arbitrary identifier; give their turn a private per-registration pseudonym instead.
+    const traceId = /^[0-9a-f]{12}$/.test(channel.traceId)
+      ? channel.traceId : createHash("sha256").update(`broker:${channel.journalNonce}`).digest("hex").slice(0, 12);
+    recordBrokerCallEvent({
+      directory: this.callJournalDirectory,
+      traceId, callId: request.callId, wireName: request.wireName, event,
+      ...(channel.nativeOwnerDigest ? { nativeOwnerDigest: channel.nativeOwnerDigest } : {}),
+      ...(request.readOnly !== undefined ? { readOnly: request.readOnly } : {}),
+      ...(request.providerEpoch ? { providerEpoch: request.providerEpoch } : {}),
+      ...(request.operationStatus ? { operationStatus: request.operationStatus } : {}),
+    });
+    if (event === "queued") {
+      this.recordedCallsInProcess = true;
+      if (channel.nativeOwnerDigest) this.nativeOwnersWithCalls.add(channel.nativeOwnerDigest);
+    }
+  }
 
   /**
    * A ChatGPT turn outlives the request that started it, and its Codex Native calls arrive from a
@@ -346,10 +472,12 @@ export class TurnBroker implements TurnBrokerOwner {
     environment: ChatGptTurnEnvironment,
     ttlMs?: number,
     traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
     externalOwner = false,
     handlePrefix = "turn",
   ): Promise<string> {
     await this.start();
+    if (this.closed) throw new Error("ChatGPT turn broker has closed");
     this.prune();
     if (externalOwner && !this.acceptingExternalOwners) {
       throw new Error("turn broker is draining and does not accept new external owners");
@@ -357,9 +485,25 @@ export class TurnBroker implements TurnBrokerOwner {
     if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
       throw new Error("ChatGPT web turn broker TTL must be a positive finite number");
     }
+    // Every owner entry point (including remote IPC and Zero Risk) must respect the
+    // startup fence. The adapter's preflight alone cannot protect direct registrations.
+    const priorStates = this.priorNativeCallStates(traceId, nativeIdentity);
+    if (priorStates.length > 0) {
+      throw new Error("Previous native broker calls require reconciliation before registering a new turn owner");
+    }
+    const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity);
+    if (ownerDigest && (this.nativeOwnersWithCalls.has(ownerDigest)
+      || [...this.channels.values()].some(channel => channel.nativeOwnerDigest === ownerDigest))) {
+      throw new Error("Native Codex turn already owns or previously queued broker calls; reconciliation is required");
+    }
+    if (!ownerDigest && this.recordedCallsInProcess) {
+      throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
+    }
     const token = opaqueId(handlePrefix);
     const channel: TurnChannel = {
       traceId,
+      journalNonce: token,
+      ...(ownerDigest ? { nativeOwnerDigest: ownerDigest } : {}),
       externalOwner,
       environment: {
         ...environment,
@@ -368,6 +512,7 @@ export class TurnBroker implements TurnBrokerOwner {
       queuedCallIds: [],
       deliveredCallIds: new Set(),
       invocations: new Map(),
+      completedCallDigests: new Map(),
       waiters: new Set(),
       compactionRequested: false,
       compactionDeliveryCount: 0,
@@ -388,10 +533,11 @@ export class TurnBroker implements TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
     externalOwner = false,
   ): Promise<string> {
     assertSurfaceNonce(surfaceNonce);
-    const token = await this.register(environment, ttlMs, traceId, externalOwner, "request");
+    const token = await this.register(environment, ttlMs, traceId, nativeIdentity, externalOwner, "request");
     const channel = this.channels.get(token);
     if (!channel) throw new Error("Zero Risk turn registration was revoked before initialization");
     channel.safe = {
@@ -499,11 +645,40 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!channel) throw new Error("turn token is invalid or expired");
     this.assertSafeHarnessRunning(channel, true);
     const invocation = channel.invocations.get(callId);
-    if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
-    if (!channel.deliveredCallIds.delete(callId)) {
+    if (!invocation) {
+      const previousDigest = channel.completedCallDigests.get(callId);
+      if (previousDigest === undefined) throw new Error(`tool call is not pending: ${callId}`);
+      if (previousDigest !== resultDigest(result)) {
+        throw new Error("Conflicting result for a completed Codex tool call");
+      }
+      // An owner may retry the same acknowledgement when the socket reply was lost.
+      // No tool operation is dispatched or resolved a second time.
+      return;
+    }
+    if (!channel.deliveredCallIds.has(callId)) {
       throw new Error(`tool call was completed before it was delivered: ${callId}`);
     }
+    const digest = resultDigest(result);
+    // The native owner digest binds ciphertext to the original thread and turn. A retry after
+    // the journal write failed must find the exact same sealed result, never replace it.
+    // Other platforms can opt in with a user-managed key; the metadata journal remains usable
+    // without it. A call without authoritative native identity cannot become recoverable.
+    if (channel.nativeOwnerDigest && this.resultVault
+      && (process.platform === "win32" || process.env.CODEX_INFINITY_RESULT_VAULT_KEY)) {
+      const traceId = /^[0-9a-f]{12}$/.test(channel.traceId)
+        ? channel.traceId : createHash("sha256").update(`broker:${channel.journalNonce}`).digest("hex").slice(0, 12);
+      this.resultVault.seal({ traceId, callId, tool: /^[A-Za-z0-9_.:-]{1,256}$/.test(invocation.request.wireName)
+        ? invocation.request.wireName : "unclassified_tool", nativeOwnerDigest: channel.nativeOwnerDigest }, result);
+    }
+    // If persistence fails, retain the pending invocation for an owner retry.
+    this.recordCall(channel, invocation.request, "result_received");
+    channel.deliveredCallIds.delete(callId);
     channel.invocations.delete(callId);
+    channel.completedCallDigests.set(callId, digest);
+    if (channel.completedCallDigests.size > MAX_COMPLETED_CALL_ACKS) {
+      const oldest = channel.completedCallDigests.keys().next().value;
+      if (oldest !== undefined) channel.completedCallDigests.delete(oldest);
+    }
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size} isError=${result.isError === true}`);
     invocation.resolve(result);
   }
@@ -550,6 +725,13 @@ export class TurnBroker implements TurnBrokerOwner {
     this.assertSafeHarnessRunning(channel);
     if (channel.compactionRequested) {
       throw new Error("Codex context compaction was already requested for this turn");
+    }
+    // Compaction can resolve queued invocations without delivering them to the adapter.
+    // Persist the possibility of that transition before changing the queue or turn state.
+    // The payload itself is not durable and this event never authorizes replay.
+    for (const callId of channel.queuedCallIds) {
+      const invocation = channel.invocations.get(callId);
+      if (invocation) this.recordCall(channel, invocation.request, "compaction_resolution_possible");
     }
     channel.compactionRequested = true;
     channel.compactionResult = structuredClone(queuedResult);
@@ -683,6 +865,14 @@ export class TurnBroker implements TurnBrokerOwner {
   revoke(token: string, reason = new Error("Codex turn binding was revoked"), failure?: BrokerRetirementFailure): void {
     const channel = this.channels.get(token);
     if (!channel) return;
+    for (const invocation of channel.invocations.values()) {
+      try {
+        this.recordCall(channel, invocation.request, "retired_uncertain");
+      } catch {
+        // Revocation must terminate waiters even when the diagnostic disk is full.
+        console.error(`[chatgpt-web] broker trace=${channel.traceId} could not persist retirement evidence`);
+      }
+    }
     const diagnostics = retirementDiagnostics(channel);
     console.info(`[chatgpt-web] broker_retired ${JSON.stringify({
       ...diagnostics,
@@ -801,9 +991,18 @@ export class TurnBroker implements TurnBrokerOwner {
     waiters.clear();
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.closePromise = this.stop();
+    return this.closePromise;
+  }
+
+  private async stop(): Promise<void> {
     this.compactionTransactions.close();
     for (const token of [...this.channels.keys()]) this.revoke(token);
+    // A pending bind can still create a listener after close() has been requested.
+    await this.startPromise?.catch(() => {});
     const server = this.server;
     this.server = undefined;
     this.startPromise = undefined;
@@ -822,9 +1021,14 @@ export class TurnBroker implements TurnBrokerOwner {
         unlinkSync(this.socketPath);
       }
     }
+    // A new process can snapshot the journal only after all requests have settled and the
+    // listener has stopped. A failed shutdown retains the lock until process termination.
+    this.releaseJournalOwnership?.();
+    this.releaseJournalOwnership = undefined;
   }
 
   private start(): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("ChatGPT turn broker has closed"));
     if (this.startPromise) return this.startPromise;
     const attempt = new Promise<void>((resolveStart, rejectStart) => {
       const windowsPipe = isWindowsPipeEndpoint(this.socketPath);
@@ -1021,7 +1225,8 @@ export class TurnBroker implements TurnBrokerOwner {
       if (request.traceId !== undefined && !/^[A-Za-z0-9_-]{6,128}$/.test(request.traceId)) {
         throw new Error("turn owner trace id is invalid");
       }
-      return this.register(environment, request.ttlMs, request.traceId, true).then(token => ({ token }));
+      return this.register(environment, request.ttlMs, request.traceId, request.nativeIdentity, true)
+        .then(token => ({ token }));
     }
     if (request.method === "owner_register_safe") {
       const environment = ownerEnvironment(request.environment);
@@ -1034,6 +1239,7 @@ export class TurnBroker implements TurnBrokerOwner {
         request.surfaceNonce,
         request.ttlMs,
         request.traceId,
+        request.nativeIdentity,
         true,
       ).then(token => ({ token }));
     }
@@ -1230,12 +1436,23 @@ export class TurnBroker implements TurnBrokerOwner {
     const wireName = request.wireName?.trim();
     if (!wireName) throw new Error("wire tool name is required");
     const callId = opaqueId("call");
+    const providerEpoch = request.freeform === true
+      ? undefined : brokerProviderEpochForTool(wireName, binding.channel.environment.tools);
+    const operationStatus = request.freeform === true
+      ? undefined : brokerOperationStatusForTool(wireName, binding.channel.environment.tools);
+    const readOnly = request.freeform !== true
+      && brokerToolIsReadOnly(wireName, binding.channel.environment.tools);
     const toolRequest: BrokerToolRequest = {
       callId,
       wireName,
       freeform: request.freeform === true,
+      readOnly,
+      ...(providerEpoch ? { providerEpoch } : {}),
+      ...(operationStatus ? { operationStatus } : {}),
       ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
     };
+    // Do not expose an invocation to the adapter before recording its existence.
+    this.recordCall(binding.channel, toolRequest, "queued");
     return new Promise<BrokerToolResult>((resolveInvoke, rejectInvoke) => {
       binding.channel.invocations.set(callId, {
         request: toolRequest, queuedAt: performance.now(), resolve: resolveInvoke, reject: rejectInvoke,
@@ -1253,7 +1470,13 @@ export class TurnBroker implements TurnBrokerOwner {
   }
 
   private takeQueued(channel: TurnChannel): BrokerToolRequest[] {
-    const ids = channel.queuedCallIds.splice(0);
+    // Record all possibly-delivered boundaries before altering the in-memory queue.
+    const ids = [...channel.queuedCallIds];
+    for (const id of ids) {
+      const invocation = channel.invocations.get(id);
+      if (invocation) this.recordCall(channel, invocation.request, "delivery_possible");
+    }
+    channel.queuedCallIds.splice(0, ids.length);
     for (const id of ids) {
       const invocation = channel.invocations.get(id);
       if (invocation) {
@@ -1283,7 +1506,19 @@ export class TurnBroker implements TurnBrokerOwner {
 
   private wakeToolWaiters(channel: TurnChannel): void {
     if (channel.queuedCallIds.length === 0 || channel.waiters.size === 0) return;
-    const batch = this.takeQueued(channel);
+    let batch: BrokerToolRequest[];
+    try {
+      batch = this.takeQueued(channel);
+    } catch (error) {
+      // A timer must not throw outside the request path; notify the waiting adapter.
+      const waiters = [...channel.waiters];
+      channel.waiters.clear();
+      for (const waiter of waiters) {
+        if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
+        waiter.reject(error instanceof Error ? error : new Error("Broker call journal write failed"));
+      }
+      return;
+    }
     this.logToolDelivery(channel, batch, "waiter");
     const waiters = [...channel.waiters];
     channel.waiters.clear();
@@ -1451,12 +1686,14 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     }
   }
 
-  async register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId = "unknown"): Promise<string> {
+  async register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">): Promise<string> {
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
       method: "owner_register",
       environment,
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
+      ...(nativeIdentity ? { nativeIdentity } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("turn_")) {
       throw new Error("DEV turn owner received an invalid broker token");
@@ -1469,6 +1706,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     surfaceNonce: string,
     ttlMs?: number,
     traceId = "unknown",
+    nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
   ): Promise<string> {
     assertSurfaceNonce(surfaceNonce);
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
@@ -1477,6 +1715,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       surfaceNonce,
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
+      ...(nativeIdentity ? { nativeIdentity } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("request_")) {
       throw new Error("DEV Zero Risk turn owner received an invalid broker request id");

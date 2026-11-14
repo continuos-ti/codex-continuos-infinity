@@ -13,7 +13,34 @@ const {
   RuntimeSupervisor,
   managedTunnelConnectArgs,
   validateConfig,
+  waitForExternalCloudflareGatewayReady,
 } = require("../electron/runtime-supervisor.cjs");
+
+test("Cloudflare startup waits for a gateway that becomes ready without resetting the route", async () => {
+  let checks = 0;
+  let delays = 0;
+  const result = await waitForExternalCloudflareGatewayReady({
+    healthCheck: async () => (++checks < 3
+      ? { ready: false, detail: "Booting" }
+      : { ready: true, detail: "ContinuosWebIntegracao healthy" }),
+    pause: async () => { delays++; },
+    timeoutMs: 30_000,
+    pollMs: 1,
+  });
+  assert.equal(result.ready, true);
+  assert.equal(checks, 3);
+  assert.equal(delays, 2);
+});
+
+test("Cloudflare startup still refuses a gateway that never passed identity verification", async () => {
+  const result = await waitForExternalCloudflareGatewayReady({
+    healthCheck: async () => ({ ready: false, detail: "Incorrect gateway identity" }),
+    pause: async () => {},
+    timeoutMs: 0,
+  });
+  assert.equal(result.ready, false);
+  assert.equal(result.detail, "Incorrect gateway identity");
+});
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -128,6 +155,33 @@ test("launcher runtime ownership rejects a different browser descriptor", () => 
     () => validateConfig(launcherConfig("/one/launcher.json"), "/two/launcher.json"),
     /different launcher browser host/,
   );
+});
+
+test("launcher validation retains a verified external gateway only in manual Zero Risk mode", () => {
+  const descriptorPath = path.join(os.tmpdir(), "launcher.json");
+  const tunnel = {
+    binaryPath: path.join(os.tmpdir(), "tunnel-client"),
+    tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
+    runtimeKeyFile: path.join(os.tmpdir(), "runtime.key"),
+    profileDir: path.join(os.tmpdir(), "profiles"),
+    profileName: "codex-manual",
+    alias: "codex-manual",
+  };
+  const gateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "CustomMcpGateway",
+  };
+  const config = launcherConfig(descriptorPath, {
+    mode: "full", browserInteractionMode: "manual", mcpTransport: "openai-tunnel",
+    tunnel, manualTunnel: tunnel, externalGateway: gateway,
+  });
+  assert.equal(validateConfig(config, descriptorPath).externalGateway, gateway);
+  assert.throws(() => validateConfig({ ...config, browserInteractionMode: "automatic" }, descriptorPath),
+    /external gateway can only be retained during Zero Risk mode/);
+  assert.throws(() => validateConfig({ ...config,
+    externalGateway: { ...gateway, healthUrl: "http://gateway.example.org/health" },
+  }, descriptorPath), /externalGateway.healthUrl must be a canonical HTTPS endpoint/);
 });
 
 test("launcher runtime ownership cannot cross production and DEV profiles", () => {

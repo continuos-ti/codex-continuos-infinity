@@ -47,14 +47,14 @@ async function stopChild(child) {
   }
 }
 
-async function runBrowserHelperOperation({ helper, descriptorPath, appName, operation, useTemporaryChats = true, payload = {}, logger }) {
+async function runBrowserHelperOperation({ helper, descriptorPath, appName, operation, useTemporaryChats = false, payload = {}, logger }) {
   if (!helper || typeof helper.executable !== "string" || typeof helper.script !== "string") {
     throw new Error("Browser helper verification command is invalid");
   }
   if (typeof descriptorPath !== "string" || !descriptorPath || typeof appName !== "string" || !appName) {
     throw new Error("Browser helper verification config is invalid");
   }
-  if (!["verify", "inspect", "smoke", "limits"].includes(operation)) {
+  if (!["verify", "inspect", "smoke", "limits", "repair"].includes(operation)) {
     throw new Error(`Unsupported browser helper operation: ${String(operation)}`);
   }
   const id = `${operation}-${randomBytes(12).toString("hex")}`;

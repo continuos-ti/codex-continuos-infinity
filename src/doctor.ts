@@ -11,6 +11,7 @@ import { getTunnelServiceStatus } from "./tunnel-service";
 import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
+  LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS,
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
@@ -28,6 +29,33 @@ export interface DoctorReport {
   ok: boolean;
   mode?: AppConfig["mode"];
   checks: DoctorCheck[];
+}
+
+export async function inspectExternalGatewayHealth(
+  externalGateway: NonNullable<AppConfig["externalGateway"]>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ready: true } | { ready: false; detail: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6_000);
+  try {
+    const response = await fetchImpl(externalGateway.healthUrl, {
+      signal: controller.signal,
+      redirect: "error",
+    });
+    if (!response.ok) throw new Error("Gateway returned HTTP " + response.status);
+    const data = await response.json() as Record<string, unknown>;
+    if (data.status !== "ok" || data.service !== externalGateway.expectedService) {
+      throw new Error("Unexpected Cloudflare gateway identity");
+    }
+    return { ready: true };
+  } catch (error) {
+    return {
+      ready: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function secureFile(path: string): boolean {
@@ -137,7 +165,7 @@ export async function runDoctor(): Promise<DoctorReport> {
         ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
         : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
       if (config.browserInteractionMode === "automatic") {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
+        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS });
       }
       checks.push({
         id: "browser-host",
@@ -200,7 +228,19 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
   checks.push(...await proxyChecks(config));
 
-  if (config.mode === "full") {
+  if (config.mode === "full" && config.mcpTransport === "external-cloudflare") {
+    const gateway = await inspectExternalGatewayHealth(config.externalGateway!);
+    if (gateway.ready) {
+      checks.push({id:"cloudflare-gateway",status:"ok",
+        message:`External Cloudflare gateway is healthy at ${config.externalGateway!.healthUrl}`});
+    } else {
+      checks.push({id:"cloudflare-gateway",status:"error",
+        message:"Cloudflare OAuth MCP gateway is not reachable",
+        detail: gateway.detail});
+    }
+    checks.push({id:"connector",status:"warning",
+      message:`Connector ${config.appName} requires a live ChatGPT turn to confirm task execution`});
+  } else if (config.mode === "full") {
     const settings = config.tunnel!;
     if (!existsSync(settings.binaryPath)) {
       checks.push({ id: "tunnel-binary", status: "error", message: `tunnel-client is missing: ${settings.binaryPath}` });

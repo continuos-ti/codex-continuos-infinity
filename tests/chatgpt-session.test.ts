@@ -52,10 +52,13 @@ test("composer and effort selectors exclude unrelated editable fields and menu b
     <button aria-haspopup="menu" data-tone="neutral" id="effort"></button>
     <button aria-haspopup="menu" data-testid="model-switcher-dropdown-button" id="model"></button>
   </form>
+  <form><div contenteditable="true" data-composer-markdown role="textbox" id="current-form-editor"></div></form>
   <div contenteditable="true" data-composer-markdown role="textbox" id="unowned-power-editor"></div>
   <form data-chatgpt-composer>
     <div contenteditable="true" data-composer-markdown role="textbox" id="power-editor"></div>
     <button data-codex-intelligence-trigger="true" data-composer-navigation-target="reasoning" aria-haspopup="menu" id="power-effort"></button>
+    <button data-composer-navigation-target="reasoning" aria-haspopup="menu" id="modern-model-effort"></button>
+    <button data-composer-navigation-target="reasoning"  id="not-a-menu"></button>
   </form></body>`);
   const matches = (selector: string) => Array.from(document.querySelectorAll(selector)).map(element => element.id);
   expect(matches(CHATGPT_COMPOSER_SELECTOR)).toEqual(["composer-testid", "prompt-textarea", "composer-lexical", "power-editor"]);
@@ -444,6 +447,102 @@ test("power picker omission of lock attributes requires its enabled structural o
     { power: true, max: "3" },
   ]) await expect(detectChatGptAccountCapabilities(reasoningPicker({ ...options, locks: Array(5).fill(null) }).page as never))
     .rejects.toThrow("availability");
+});
+
+test("capability detection activates a closed Radix effort control and captures slider failures before Escape", async () => {
+  let ghostOpen = false;
+  let pointerOpened = false;
+  const events: string[] = [];
+  const slider = {
+    waitFor: async ({ state }: { state: string }) => { expect(state).toBe("attached"); },
+  };
+  const sliderContainer = {
+    filter() { return this; },
+    locator: () => slider,
+    isVisible: async () => pointerOpened,
+    waitFor: async ({ state }: { state: string }) => {
+      expect(state).toBe("visible");
+      expect(pointerOpened).toBe(true);
+    },
+    evaluate: async (read: (element: Element) => unknown) => {
+      const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+      const document = createDocument(`<div data-model-reasoning-effort-slider>
+        <span data-orientation="horizontal" aria-disabled="true">
+          <span data-selected="true"></span>
+          <span data-selected="false"></span>
+          <span data-selected="false"></span>
+        </span>
+        <span role="slider" aria-valuemin="0" aria-valuemax="2" aria-valuenow="0"></span>
+      </div>`);
+      return read(document.querySelector("[data-model-reasoning-effort-slider]")!);
+    },
+  };
+  const ownedMenu = { isVisible: async () => pointerOpened };
+  const hiddenSurface = {
+    filter() { return this; },
+    last() { return this; },
+    locator() { return this; },
+    isVisible: async () => false,
+  };
+  const control = {
+    filter() { return this; },
+    isVisible: async () => true,
+    press: async () => { throw new Error("Capability detection must not rely on Enter to open Radix menus"); },
+    getAttribute: async (name: string) => {
+      if (name === "aria-controls") return pointerOpened ? "radix-effort-menu" : null;
+      if (name === "aria-expanded") return ghostOpen ? "true" : "false";
+      if (name === "data-state") return ghostOpen ? "open" : "closed";
+      return null;
+    },
+    click: async () => {
+      events.push("click");
+      ghostOpen = true;
+    },
+    dispatchEvent: async (name: string) => {
+      events.push(name);
+      ghostOpen = true;
+      pointerOpened = true;
+    },
+  };
+  const composer = {
+    filter() { return this; },
+    count: async () => 1,
+    locator: () => ({ count: async () => 1, locator: () => control }),
+  };
+  const page = {
+    evaluate: async () => true,
+    locator: (selector: string) => {
+      if (selector === CHATGPT_COMPOSER_SELECTOR) return composer;
+      if (selector === '[id="radix-effort-menu"]') return ownedMenu;
+      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return sliderContainer;
+      return hiddenSurface;
+    },
+    keyboard: {
+      press: async (key: string) => {
+        events.push(`key:${key}`);
+        ghostOpen = false;
+        pointerOpened = false;
+      },
+    },
+  };
+
+  await expect(detectChatGptAccountCapabilities(page as never, {
+    settleMs: 0,
+    onFailureBeforeCleanup: async error => {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("slider ticks");
+      expect(pointerOpened).toBe(true);
+      events.push("captured-while-open");
+    },
+  })).rejects.toThrow("ChatGPT effort availability could not be verified from its slider ticks");
+
+  expect(events).toEqual([
+    "click",
+    "key:Escape",
+    "pointerdown",
+    "captured-while-open",
+    "key:Escape",
+  ]);
 });
 
 test("stale saved capabilities cannot activate a locked effort; High remains selectable", async () => {

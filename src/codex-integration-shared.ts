@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { AppConfig, SubagentProtocol } from "./config";
 import { atomicWriteFile, expandUserPath, getConfigDir } from "./config";
 
@@ -309,6 +309,21 @@ export function snapshotFile(path: string, options?: { followSymlink?: boolean }
     let stat;
     try { stat = lstatSync(path); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // Bun on Windows may report ENOENT for a dangling reparse-point link even
+      // though the directory entry still exists. Never interpret it as an
+      // absent config: that would permit overwriting the link on installation.
+      let entryPresent = false;
+      try {
+        entryPresent = readdirSync(dirname(path), { withFileTypes: true }).some(entry =>
+          process.platform === "win32"
+            ? entry.name.toLowerCase() === basename(path).toLowerCase()
+            : entry.name === basename(path));
+      } catch (directoryError) {
+        if ((directoryError as NodeJS.ErrnoException).code !== "ENOENT") throw directoryError;
+      }
+      if (entryPresent) {
+        throw new Error(`Codex config path exists but cannot be inspected safely: ${path}`);
+      }
     }
     if (stat?.isSymbolicLink()) {
       const link = readlinkSync(path);

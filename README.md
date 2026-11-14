@@ -1,15 +1,43 @@
+# Codex Continuos Infinity
+
+Fork da Continuos I.T. baseado no projeto `miuuyy/codex-chatgpt-web`, distribuído sob a licença MIT, com as adaptações de integração MCP, Cloudflare e recuperação do runtime desenvolvidas para o ambiente Continuos.
+
+**Status atual — desenvolvimento e homologação.** A base é `v6.1.18` do upstream, identificada como `6.1.18-continuos.1`. O instalador Windows de teste foi compilado localmente. Os downloads públicos do Infinity somente serão disponibilizados depois da aprovação da integração e do pipeline de release. Nenhum instalador oficial do upstream substitui automaticamente o Infinity.
+
+## Identidade e integração
+
+O launcher usa o nome `Codex Continuos Infinity`, perfil próprio em `~/.codex-continuos-infinity`, partição de navegador independente, appId próprio e canal de atualização do fork. A integração MCP `ContinuosWebIntegracao` é a preferência configurável. Permissões, credenciais, sessões e ferramentas permanecem submetidas à autenticação do usuário e às políticas do Codex.
+
+O supervisor interno reconhece falhas de resposta final após envios aceitos em cenários seguros e permite diagnóstico na mesma conversa sem repetir comandos automaticamente. A recuperação depende da confirmação do estado nativo. O contexto confiável de CWD é validado com a identidade da tarefa e as permissões do rollout do Codex. Casos ainda não comprovados estão documentados em `docs/infinity/SUPERVISOR.md` e `docs/infinity/TRUSTED_CWD.md`.
+
+## Construção e documentação
+
+Instale Bun 1.4.0 e as dependências do projeto. Execute `bun install`, `bun run typecheck`, `bun test ./tests` e `bun run app:package`. Antes da instalação real, confira o SHA-256 publicado. Consulte `docs/infinity/INSTALLATION.md`, `docs/infinity/ARCHITECTURE.md`, `docs/infinity/CUSTOMIZATION_MATRIX.md` e `docs/infinity/MIGRATION_ROLLBACK.md` para detalhes técnicos e atualização segura.
+
+A integração opcional de persistência de `screenshot_id` e jobs do Windows Local está em `integrations/windows-local/` e é incluída como recurso separado no pacote do launcher. O script de instalação começa em dry-run e não reinicia o serviço. Consulte `integrations/windows-local/README.md` antes de aplicar a integração em uma janela sem chamadas ativas.
+
+A produção anterior do Codex Web GPT é mantida isolada durante o desenvolvimento. Relatórios, senhas, credenciais e perfis privados não fazem parte do código público.
+
+## Créditos
+
+Projeto-base por `miuuyy` e colaboradores. Consulte `LICENSE` e `LICENSES` para licença MIT, dependências e atribuições. As seções seguintes preservam referências do upstream para consulta.
+
+---
+
+## Documentação de referência do upstream
+
 <p align="center">
   <img src="assets/readme/hero.svg" width="960" alt="Switch to web models. Stay in Codex. Your ChatGPT plan. Your workflow. Maximum capabilities.">
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/latest">All releases</a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">macOS Intel</a> · <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">All releases</a>
 </p>
 
 <p align="center">
@@ -46,16 +74,18 @@ The app includes its browser and runtime. No separate Chrome, Node, or Bun insta
 
 Quit the launcher before updating. These installers select the platform and architecture, verify the published checksums, and preserve your ChatGPT profile and launcher settings.
 
+These commands require a published Infinity release. Until the first release, build from source using the development instructions below.
+
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 </details>
@@ -123,10 +153,10 @@ that option clicks **Allow once**, never a permanent grant.
 
 Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
 Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
-**Settings → Temporary Chat** is on by default and keeps new task conversations out of ChatGPT
-history. Turn it off to use ordinary saved chats or if your connector is unavailable in that mode.
-ChatGPT memory and custom instructions may apply in either mode. **New browser chat for each turn**
-separately controls conversation reuse. An explicit choice to disable Temporary Chat is preserved when updating.
+**Settings → Temporary Chat** is off by default, keeping new task conversations in ChatGPT
+history. Turn it on to opt in to Temporary Chat. ChatGPT memory and custom instructions may
+apply in either mode. **New browser chat for each turn** separately controls conversation reuse.
+Explicit Temporary Chat choices are preserved when updating.
 Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
 
 New installs use **Compatibility V1** for cross-backend subagents. **Native** preserves Codex's own
@@ -134,9 +164,9 @@ feature settings and enables plaintext Web-to-Web V2 delegation. Restart Codex a
 after changing the protocol:
 
 ```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
+codex-continuos-infinity subagents status
+codex-continuos-infinity subagents compatibility-v1
+codex-continuos-infinity subagents native
 ```
 
 </details>
@@ -176,8 +206,8 @@ and workspace policies; it does not bypass authentication or access controls.
 <a id="development"></a>
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
+git clone https://github.com/continuos-ti/codex-continuos-infinity.git && \
+cd codex-continuos-infinity && \
 bun run app
 ```
 

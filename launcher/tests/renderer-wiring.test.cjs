@@ -10,6 +10,62 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
+test("browser data reset is explicitly confirmed and exposed through launcher IPC", () => {
+  assert.match(appSource, /confirmBrowserReset \? \(/);
+  assert.match(appSource, /await api!\.resetEmbeddedBrowserData\(\)/);
+  assert.match(preloadSource, /launcher:browser-reset-data/);
+  assert.match(electronMain, /"launcher:browser-logout", "launcher:browser-reset-data"/);
+  assert.match(electronMain, /handle\("launcher:browser-reset-data", async \(\) => \{\s*const browser = await browserHost\.resetEmbeddedBrowserData\(\);\s*dismissSessionReminder\(\);\s*return browser;/);
+});
+
+test("browser reset waits for runtime startup and dismisses the reminder after success", async () => {
+  const vm = require("node:vm");
+  for (const fails of [false, true]) {
+    let finishStartup;
+    let finishReset;
+    let resetStarted;
+    const runtimeStartup = new Promise(resolve => { finishStartup = resolve; });
+    const resetReady = new Promise(resolve => { finishReset = resolve; });
+    const started = new Promise(resolve => { resetStarted = resolve; });
+    const calls = [];
+    const handlers = new Map();
+    const state = { sessionRefreshReminderAt: "stale" };
+    const stateStore = { read: () => state, update: patch => Object.assign(state, patch) };
+    const context = vm.createContext({
+      runtimeStartup, stateStore, logger: {},
+      SessionReminderView: class {}, mainWindow: {}, loadRenderer() {},
+      ipcMain: { on() {} }, registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler),
+      browserHost: { resetEmbeddedBrowserData: async () => {
+        calls.push("reset");
+        resetStarted();
+        await resetReady;
+        if (fails) throw new Error("reset failed");
+        return { status: "signed-out" };
+      } },
+      nextSessionRefreshReminderAt: () => "next",
+      send: (channel) => calls.push(channel),
+    });
+    vm.runInContext(electronMain.slice(electronMain.indexOf("function registerIpc("),
+      electronMain.indexOf("async function requestQuit(")) + "\nregisterIpc({ logger, stateStore });", context);
+    const reset = handlers.get("launcher:browser-reset-data")();
+    await Promise.resolve();
+    assert.deepEqual(calls, [], "reset must wait for runtime startup");
+    finishStartup();
+    await started;
+    assert.deepEqual(calls, ["reset"], "reminder must remain until storage reset finishes");
+    finishReset();
+    if (fails) {
+      await assert.rejects(reset, /reset failed/);
+      assert.equal(state.sessionRefreshReminderAt, "stale");
+      assert.deepEqual(calls, ["reset"]);
+    } else {
+      assert.equal((await reset).status, "signed-out");
+      assert.equal(state.sessionRefreshReminderAt, "next");
+      assert.deepEqual(calls, ["reset", "launcher:state-changed"]);
+    }
+  }
+});
+
 test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
   for (const fails of [false, true]) {
@@ -240,8 +296,9 @@ test("packaged runtime is verified before launcher browser surfaces can bind por
   const browserReady = electronMain.indexOf("await browserHost.ready();", start);
 
   assert.ok(runtimeValidation > start, "startup must eagerly verify the packaged runtime");
+  assert.ok(cdpPortAllocation > start && cdpPortAllocation < runtimeValidation, "CDP flags must be set before runtime installation yields control");
   for (const [surface, position] of [
-    ["CDP port allocation", cdpPortAllocation],
+    // A free-port lookup does not bind or expose a listener.
     ["launcher window", windowCreation],
     ["browser control server", controlServerStart],
     ["embedded browser", browserReady],
@@ -340,22 +397,14 @@ test("passkey buttons show launch progress, wait for Chrome, and preserve import
   }
 });
 
-test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {
-  assert.match(
-    appSource,
-    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\([\s\S]*?snapshot\.state\.browserInteractionMode === "automatic"[\s\S]*?snapshot\.state\.coreSetupComplete === true[\s\S]*?snapshot\.state\.biggerContextAvailable === true[\s\S]*?!snapshot\.state\.experimentalBiggerContext,/,
-  );
-  assert.match(appSource, /&& !biggerContextRecommendationOpen;/);
+test("Bigger Context stays closed at startup and preserves its Settings transaction", () => {
+  assert.match(appSource, /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\(false\)/);
+  assert.doesNotMatch(appSource, /setBiggerContextRecommendationOpen\(true\)/);
   assert.match(appSource, /updateState\(await api!\.setBiggerContext\(enabled\)\)/);
-  assert.match(
-    appSource,
-    /<BiggerContextRecommendation[\s\S]*?checked=\{snapshot\.state\.experimentalBiggerContext\}[\s\S]*?onClose=\{\(\) => setBiggerContextRecommendationOpen\(false\)\}/,
-  );
-  assert.match(appSource, /<Switch checked=\{checked\} disabled=\{busy\} onChange=\{onChange\} \/>/);
+  assert.match(appSource, /checked=\{snapshot\.state\.experimentalBiggerContext\}/);
+  assert.match(appSource, /onChange=\{\(checked\) => void setBiggerContext\(checked\)\}/);
   assert.match(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*position:\s*fixed;/s);
-  assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*backdrop-filter:/s);
 });
-
 test("Zero Risk setup commits state after the runtime transaction and preserves manual inspection boundaries", () => {
   const modeSwitchHandler = electronMain.slice(
     electronMain.indexOf('handle("launcher:browser-interaction-mode"'),
@@ -404,13 +453,19 @@ test("installed integration can connect MCP while the native catalog refresh is 
   const translated = { exports: {} };
   vm.runInNewContext(transpile(fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8"), "i18n.ts"), translated);
   let connected = 0;
+  let lastMcpInput;
   const sandbox = {
     element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
     useState: value => [value, () => {}], useMemo: callback => callback(), useEffect() {},
     React: { Fragment: "Fragment" },
     AnimatePresence: "AnimatePresence", motion: { section: "section" }, PANEL_TRANSITION: {},
     MCP_GUIDE_MEDIA: ["fixture", "fixture", "fixture"], messageOf: String,
-    api: { setupMcp: async () => { connected++; }, snapshot: async () => ({ state: {} }), setMcpStep: async () => ({}) },
+    DEFAULT_EXTERNAL_GATEWAY: {
+      mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+      healthUrl: "https://codex-native2.continuos.com.br/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+    api: { setupMcp: async input => { connected++; lastMcpInput = input; }, snapshot: async () => ({ state: {} }), setMcpStep: async () => ({}) },
   };
   for (const name of ["ContentSurface", "SectionHeading", "SetupRow", "PrimaryButton", "SecondaryButton", "NoticeRow", "Icon", "DoctorSummary", "FieldRow", "ZeroRiskModelMenu", "McpMark", "TutorialVideo"]) sandbox[name] = name;
   vm.runInNewContext(transpile(surfaces, "surfaces.tsx") + "\nrenderSetup = SetupSurface; renderMcp = McpSurface;", sandbox);
@@ -421,7 +476,8 @@ test("installed integration can connect MCP while the native catalog refresh is 
     for (const installed of [false, true]) {
       const snapshot = { state: { browserInteractionMode: "automatic", coreSetupComplete: installed,
         codexCatalogVerified: false, codexRestartRequired: true, mcpGuideStep: 1 },
-        smokePassed: true, mcpCredentialsConfigured: true };
+        smokePassed: true, mcpCredentialsConfigured: true,
+        connectorNames: { automatic: "Other Authorized Connector", manual: "Codex Zero Risk" } };
       const base = { snapshot, copy, devProfile: false, operation: null, updateState() {}, setError(error) { if (error) throw new Error(error); } };
       const setup = visit(sandbox.renderSetup({ ...base, activateBrowser: async () => {}, browser: { authenticated: true }, showMcp() {} }));
       assert.equal(setup.find(node => node.type === "SetupRow" && node.props.index === 3).props.complete, installed);
@@ -436,6 +492,34 @@ test("installed integration can connect MCP while the native catalog refresh is 
     }
   }
   assert.equal(connected, 5);
+  const cloudflareSnapshot = { state: { browserInteractionMode: "automatic", coreSetupComplete: true, mcpGuideStep: 1 },
+    mcpTransport: "external-cloudflare", mcpCredentialsConfigured: false,
+    connectorNames: { automatic: "Authorized Custom Connector", manual: "Codex Zero Risk" } };
+  const copy = translated.exports.copyFor("en");
+  const cloudflare = visit(sandbox.renderMcp({ snapshot: cloudflareSnapshot, copy,
+    devProfile: false, language: "en", interactionMode: "automatic", operation: null,
+    updateState() {}, setError(error) { if (error) throw new Error(error); }, onDone() {} }));
+  const connect = cloudflare.find(node => node.type === "PrimaryButton" && node.children.includes(copy.connect));
+  assert.ok(connect, "Cloudflare setup requires an explicit connect action");
+  assert.equal(connect.props.disabled, false);
+  await connect.props.onClick();
+  assert.equal(connected, 6);
+  assert.equal(lastMcpInput.mcpTransport, "external-cloudflare");
+  assert.equal(lastMcpInput.runtimeKey, undefined);
+  assert.equal(lastMcpInput.tunnelId, undefined);
+    const devCloudflare = visit(sandbox.renderMcp({ snapshot: cloudflareSnapshot, copy,
+      devProfile: true, language: "en", interactionMode: "automatic", operation: null,
+      updateState() {}, setError(error) { if (error) throw new Error(error); }, onDone() {} }));
+    const transportSelector = devCloudflare.find(node => node.type === "select"
+      && node.props.value === "external-cloudflare");
+    assert.ok(transportSelector, "DEV setup must allow Cloudflare transport selection");
+    const devConnect = devCloudflare.find(node => node.type === "PrimaryButton"
+      && node.children.includes(copy.connect));
+    assert.ok(devConnect);
+    assert.equal(devConnect.props.disabled, false);
+    await devConnect.props.onClick();
+    assert.equal(connected, 7);
+    assert.equal(lastMcpInput.mcpTransport, "external-cloudflare");
 });
 
 test("MCP navigation remains locked while an operation is active", () => {
@@ -620,6 +704,7 @@ test("fresh-conversation snapshot uses runtime configuration and mode switching 
     currentOperation: () => null,
     runtimeConfigSnapshot: () => ({ config }), browserConnectorName: () => "Codex Native2",
     setupConnectorName: () => "Codex Native2", mcpCredentialsConfigured: () => true,
+    mcpTunnelCredentialsConfigured: () => true,
     setBrowserInteractionMode: async mode => { config.browserInteractionMode = mode; return { configured: true }; },
   };
   const sandbox = {

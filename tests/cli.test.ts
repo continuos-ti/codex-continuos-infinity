@@ -400,7 +400,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
       endpoint: "http://127.0.0.1:48121",
       control: { endpoint: `http://127.0.0.1:${address.port}`, token: controlToken },
       helper: { executable: process.execPath, script: helperScript },
-      partition: "persist:codex-web-gpt-dev-chatgpt",
+      partition: "persist:codex-continuos-infinity-dev-chatgpt",
       idleUrl: LAUNCHER_BROWSER_IDLE_URL,
       surfaceId: "d".repeat(32),
       surfaceTargets: { ["d".repeat(32)]: "native-owned-target" },
@@ -422,13 +422,14 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
     });
     expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" });
     expect(result.stdout).toContain("No Codex route, Responses listener, or system service was installed");
-    expect(result.stdout).toContain("DEV launcher owns the isolated MCP tunnel");
+    expect(result.stdout).toContain("Isolated DEV profile configured (browser-only)");
+    expect(result.stdout).not.toContain("DEV launcher owns the isolated MCP tunnel");
     expect(inspections).toBe(1);
     expect(JSON.parse(readFileSync(join(devHome, "config.json"), "utf8"))).toMatchObject({
       version: 3,
       purpose: "dev-harness",
       mode: "browser-only",
-      appName: "Codex Native2 DEV",
+      appName: "ContinuosWebIntegracao DEV Web",
       browserHost: "launcher",
       browserHostDescriptorPath: descriptorPath,
       solAvailable: true,
@@ -461,7 +462,7 @@ test("DEV setup accepts explicit browser-interaction flags and preserves manual 
         token: "dev-manual-control-token-0123456789abcdefghijklmnop",
       },
       helper: { executable: process.execPath, script: helperScript },
-      partition: "persist:codex-web-gpt-dev-chatgpt",
+      partition: "persist:codex-continuos-infinity-dev-chatgpt",
       idleUrl: LAUNCHER_BROWSER_IDLE_URL,
       surfaceId: "m".repeat(32),
       surfaceTargets: { ["m".repeat(32)]: "native-owned-target" },
@@ -535,7 +536,7 @@ test("browser check uses metadata-only launcher liveness in Zero Risk", async ()
         token: "manual-browser-check-token-0123456789abcdefghijklmnop",
       },
       helper: { executable: process.execPath, script: helperScript },
-      partition: "persist:codex-web-gpt-chatgpt",
+      partition: "persist:codex-continuos-infinity-chatgpt",
       idleUrl: LAUNCHER_BROWSER_IDLE_URL,
       surfaceId: "s".repeat(32),
       surfaceTargets: { ["s".repeat(32)]: "native-owned-target" },
@@ -584,7 +585,7 @@ test("terminal uninstall refuses to race a launcher-owned runtime", async () => 
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    appName: "Codex Native",
+    appName: "ContinuosWebIntegracao",
     browserHost: "launcher",
     browserHostDescriptorPath: join(appHome, "runtime", "launcher-browser.json"),
     chromeExecutablePath: process.execPath,
@@ -634,7 +635,7 @@ test("authorized launcher uninstall does not re-probe an already stopped full ru
     endpoint: "http://127.0.0.1:48111",
     control: { endpoint: "http://127.0.0.1:48112", token },
     helper: { executable: process.execPath, script: helperScript },
-    partition: "persist:codex-web-gpt-chatgpt",
+    partition: "persist:codex-continuos-infinity-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "a".repeat(32),
     surfaceTargets: { ["a".repeat(32)]: "native-owned-target" },
@@ -647,7 +648,7 @@ test("authorized launcher uninstall does not re-probe an already stopped full ru
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    appName: "Codex Native",
+    appName: "ContinuosWebIntegracao",
     browserHost: "launcher",
     browserHostDescriptorPath: descriptorPath,
     chromeExecutablePath: process.execPath,

@@ -1,6 +1,7 @@
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
+import { inspectBrokerCallJournal } from "./adapters/chatgpt-web/broker-call-reconciliation";
 import { timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import {
@@ -21,7 +22,8 @@ import { assertComposerPredictionFits, configureComposerPrediction } from "./com
 import { rememberCompactionContinuation } from "./adapters/chatgpt-web/compaction-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
-import { providerConfig } from "./config";
+import { getConfigDir, providerConfig } from "./config";
+import { join } from "node:path";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import { httpStatusFromTerminalError } from "./lib/errors";
@@ -786,6 +788,7 @@ export async function responseRequest(
   const abort = new AbortController();
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
+  let preflightReconciliationFailure: ChatGptWebAdapterError | undefined;
   const run = async () => {
     try {
       await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
@@ -793,7 +796,20 @@ export async function responseRequest(
         queue.push(event);
       });
     } catch (error) {
-      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      const event: AdapterEvent = {
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ChatGptWebAdapterError ? {
+          status: error.status,
+          errorType: error.errorType,
+          code: error.code,
+          retryable: error.retryable,
+        } : {}),
+      };
+      if (error instanceof ChatGptWebAdapterError && (error.code === "broker_reconciliation_required"
+        || error.code === "broker_reconciliation_unavailable")) {
+        preflightReconciliationFailure = error;
+      }
       options.onAdapterEvent?.(event);
       queue.push(event);
     } finally {
@@ -842,7 +858,9 @@ export async function responseRequest(
     ...(compactionItem ? { compaction: true } : {}),
   });
   rememberCompletedResponse(json);
-  return Response.json(json);
+  return Response.json(json, preflightReconciliationFailure
+    ? { status: preflightReconciliationFailure.status }
+    : undefined);
 }
 
 export async function compactRequest(
@@ -976,6 +994,20 @@ export function startServer(
   const startedAt = Date.now();
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
   if (config.mode === "full") {
+    const brokerCallDirectory = join(getConfigDir(), "diagnostics", "broker-calls");
+    turnBroker!.enableCallJournal(brokerCallDirectory);
+    // Startup inspection observes prior boundaries only. It must never replay a tool or treat
+    // a past result_received marker as a recoverable tool result.
+    try {
+      const priorCalls = inspectBrokerCallJournal(brokerCallDirectory);
+      if (priorCalls.length > 0) {
+        const states: Record<string, number> = {};
+        for (const call of priorCalls) states[call.state] = (states[call.state] ?? 0) + 1;
+        console.warn(`[chatgpt-web] previous broker call evidence (review required; no replay): ${JSON.stringify(states)}`);
+      }
+    } catch {
+      console.error("[chatgpt-web] previous broker call evidence is invalid or unreadable; manual reconciliation required");
+    }
     void turnBroker!.listen().catch(error => {
       console.error(
         `[chatgpt-web] turn broker endpoint is unavailable: ${error instanceof Error ? error.message : String(error)}`,

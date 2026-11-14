@@ -319,7 +319,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rich-text rebind requires th
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
-    const token = "turn_0123456789abcdef0123456789abcdef";
+    const token = "turn_00000000000000000000000000000001";
     const foreign = "turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const prompt = 'Task JSON with links.\nPass turn_token ' + token;
     for (const scenario of ["matching", "foreign", "missing", "duplicate", "token-prefix", "competing-turn"] as const) {
@@ -361,7 +361,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rebind reads token boundarie
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
-    const token = "turn_0123456789abcdef0123456789abcdef";
+    const token = "turn_00000000000000000000000000000001";
     const foreign = "turn_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     for (const [name, html, accepted] of [
       ["line-after", `${token}<br>Continue`, true],

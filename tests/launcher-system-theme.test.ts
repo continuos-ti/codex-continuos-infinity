@@ -58,7 +58,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("launcher CDP attachments pre
       endpoint,
       control: { endpoint: "http://127.0.0.1:39111", token: "theme-fixture-token-0123456789abcdefghijklmnop" },
       helper: { executable: process.execPath, script: import.meta.path },
-      partition: "persist:codex-web-gpt-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+      partition: "persist:codex-continuos-infinity-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
       surfaceId, surfaceTargets: { [surfaceId]: targetInfo.targetId }, createdAt: new Date().toISOString(),
     }), { mode: 0o600 });
     for (let i = 0; i < 2; i++) {

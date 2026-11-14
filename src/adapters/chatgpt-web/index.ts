@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
-import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
+import { defaultBrokerEndpoint, expandUserPath, getConfigDir, resolveBrokerEndpoint } from "../../config";
 import {
   cancelLauncherManualTurn,
   endLauncherManualTurn,
@@ -17,17 +17,21 @@ import {
   type LauncherManualTurnOwner,
   type LauncherManualTurnStart,
 } from "../../launcher-browser-host";
-import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexToolResultMessage, type CodexUsage } from "../../types";
+import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexTool, type CodexToolResultMessage, type CodexUsage } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { parseDataUrl } from "../image";
+import { inBandRepairTaskPrompt } from "./in-band-auto-repair";
+import { classifyTrustedPreflightFailure, recordTrustedPreflightIncident } from "./trusted-preflight-incident";
+import { resolveTrustedPreflightWithRecovery } from "./trusted-preflight-recovery";
 import { ChatGptWebAdapterError, chatGptToolTimeoutError } from "./adapter-error";
-import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs } from "./browser-worker";
+import { ChatGptBrowserWorker, chatGptSuspensionClock, remainingStageBudgetMs, resolveChatGptBrowserDiagnosticsPath } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
+import { attachBrokerOperationId, brokerOperationStatusQueryForCall } from "./broker-operation-identity";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnRoundKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
 import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -253,14 +257,20 @@ function brokerResult(message: CodexToolResultMessage): BrokerToolResult {
   };
 }
 
-function emitToolBatch(requests: BrokerToolRequest[], usage: CodexUsage, emit: (event: AdapterEvent) => void): void {
+function emitToolBatch(
+  requests: BrokerToolRequest[],
+  tools: CodexTool[],
+  usage: CodexUsage,
+  emit: (event: AdapterEvent) => void,
+): void {
   for (const request of requests) {
-    emit({ type: "tool_call_start", id: request.callId, name: request.wireName });
+    const operationRequest = attachBrokerOperationId(request, tools);
+    emit({ type: "tool_call_start", id: operationRequest.callId, name: operationRequest.wireName });
     emit({
       type: "tool_call_delta",
-      arguments: request.freeform
-        ? JSON.stringify({ input: request.input ?? "" })
-        : JSON.stringify(request.arguments ?? {}),
+      arguments: operationRequest.freeform
+        ? JSON.stringify({ input: operationRequest.input ?? "" })
+        : JSON.stringify(operationRequest.arguments ?? {}),
     });
     emit({ type: "tool_call_end" });
   }
@@ -325,6 +335,14 @@ function submittedTurnFailure(session: ChatGptTurnSession, error: unknown, parse
     }
   }
   if (normalized instanceof ChatGptWebAdapterError) return normalized;
+  if (normalized.name === "AbortError") {
+    // Do not disguise a cancellation as an upstream silence timeout. Its cause is
+    // observable in the retained browser diagnostics and must not trigger replay.
+    return new ChatGptWebAdapterError(
+      "The browser turn or Codex request was cancelled before final delivery. Earlier native tool actions may already have completed. Inspect the original ChatGPT tab before resuming; this turn was not resent.",
+      { status: 499, errorType: "client_closed_request", code: "client_cancelled", retryable: false, cause: normalized },
+    );
+  }
   const phase = session.runtime.submission?.phase;
   if (!phase || phase === "prepared") return normalized;
   const ambiguous = phase === "send_activated";
@@ -585,7 +603,9 @@ export function createChatGptWebAdapter(
       };
       const runManual = async (): Promise<string> => {
         try {
-          activeToken = await broker.registerSafe(environment, surfaceNonce, undefined, traceId);
+          activeToken = await broker.registerSafe(
+            environment, surfaceNonce, undefined, traceId, extractChatGptTurnIdentity(parsed),
+          );
           observeCapabilityRetirement(activeToken, externalProgress);
           const compiled = compileChatGptWebPrompt(
             checkpointInput.parsed,
@@ -778,6 +798,7 @@ export function createChatGptWebAdapter(
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
+        extractChatGptTurnIdentity(parsed),
       );
       activeToken = turnToken;
       try {
@@ -803,12 +824,39 @@ export function createChatGptWebAdapter(
     };
     const browserTurn = cancellableBrowserTurn(trackBrowserOwner(finalizeCheckpoint(worker.run({
       traceId,
+      nativeTurnIdentity: extractChatGptTurnIdentity(parsed),
+      incidentJournalDirectory: join(getConfigDir(), "diagnostics", "runtime-incidents"),
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       capabilities: turnCapabilities,
       prepare: () => prepareWith(checkpointInput.parsed),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
+      ...(retainConversation && !parsed._compactionRequest ? {
+        prepareRecovery: async (failure: { traceId: string; code: string }) => {
+          if (!activeToken) throw new Error("In-band repair has no still-active Codex tool binding");
+          const recoveryParsed: CodexParsedRequest = {
+            ...checkpointInput.parsed,
+            context: {
+              ...checkpointInput.parsed.context,
+              messages: [{
+                role: "user",
+                timestamp: Date.now(),
+                content: inBandRepairTaskPrompt({
+                  traceId: failure.traceId,
+                  code: failure.code,
+                  diagnosticsDirectory: resolveChatGptBrowserDiagnosticsPath(provider.chatgptWeb?.browserDiagnosticsPath),
+                }),
+              }],
+            },
+          };
+          const compiled = compileChatGptWebPrompt(
+            recoveryParsed, turnCapabilities, activeToken,
+            { ...compileOptionsFor(recoveryParsed), experimentalSkillAttachments: false },
+          );
+          return { ...compiled, release: () => {} };
+        },
+      } : {}),
       ...(retainConversation ? { retainConversation: true, conversationKey } : {}),
       abortSignal: browserAbort.signal,
       ...(parsed._compactionRequest ? { compaction: true } : {}),
@@ -923,9 +971,53 @@ export function createChatGptWebAdapter(
         let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
         if (mode.localTools) {
           try {
-            environment = environmentStore.resolve(parsed);
+            const identity = extractChatGptTurnIdentity(parsed);
+            const resolved = await resolveTrustedPreflightWithRecovery(
+              identity, () => environmentStore.resolve(parsed), incoming.abortSignal,
+              undefined,
+              () => emit({
+                type: "text_delta",
+                text: "Codex Continuos Infinity: falha pré-envio no contexto confiável. Verificando novamente o registro nativo da mesma tarefa; nenhum prompt ou comando será repetido.",
+                phase: "commentary",
+              }),
+            );
+            environment = resolved.value;
+            if (resolved.recoveryAttempts > 0) {
+              console.warn(`[chatgpt-web] trusted_cwd_preflight_recovered trace=${chatGptWebTraceId(provider, parsed)} attempts=${resolved.recoveryAttempts}`);
+              emit({
+                type: "text_delta",
+                text: "Codex Continuos Infinity: contexto nativo recuperado e validado. Continuando a tarefa original.",
+                phase: "commentary",
+              });
+            }
           } catch (error) {
             const identity = extractChatGptTurnIdentity(parsed);
+            // This attempt has not been submitted. Persist a bounded local incident before
+            // terminating; native Codex remains the sole authority for cwd and permissions.
+            try {
+              const traceId = chatGptWebTraceId(provider, parsed);
+              const incident = recordTrustedPreflightIncident({
+                directory: join(getConfigDir(), "diagnostics", "preflight-incidents"),
+                traceId,
+                identity,
+                error,
+              });
+              if (incident) console.warn(`[chatgpt-web] trusted_cwd_preflight_blocked trace=${traceId} kind=${incident.classification} recorded=${incident.recorded}`);
+            } catch (journalError) {
+              // A journal IO failure must not replace the original authorization error.
+              console.error(`[chatgpt-web] trusted_cwd_preflight_journal_failed type=${journalError instanceof Error ? journalError.name : "unknown"}`);
+            }
+            if (classifyTrustedPreflightFailure(error)) {
+              try {
+                emit({
+                  type: "text_delta",
+                  text: "Codex Continuos Infinity: a tentativa atual não comprovou o contexto nativo desta tarefa. Esta tentativa foi bloqueada antes de enviar um novo prompt ou despachar ferramentas. Chamadas anteriores da tarefa continuam sujeitas à reconciliação. Aguardando contexto confiável válido.",
+                  phase: "commentary",
+                });
+              } catch (notificationError) {
+                if (incoming.abortSignal?.aborted) throw incoming.abortSignal.reason ?? notificationError;
+              }
+            }
             console.warn(
               `[chatgpt-web] trusted environment unavailable (thread_id=${identity.threadId ? "present" : "missing"}, turn_id=${identity.turnId ? "present" : "missing"}, previous_response_id=${parsed.previousResponseId ?? "none"}, replay_prefix_items=${parsed._replayPrefixLen ?? 0}, context_messages=${parsed.context.messages.length})`,
             );
@@ -1267,7 +1359,60 @@ export function createChatGptWebAdapter(
         const session = await chatGptTurnSessions.getOrCreateAfterOwnerRetirement(
           executionKey,
           ownerKey,
-          () => startRuntime(parsed, environment, traceId, turnCapabilities),
+          () => {
+            if (mode.localTools && structuredBroker) {
+              let priorStates: ReturnType<TurnBroker["priorNativeCallStates"]>;
+              try {
+                priorStates = structuredBroker.priorNativeCallStates(traceId, nativeIdentity);
+              } catch (error) {
+                throw new ChatGptWebAdapterError(
+                  "Previous MCP call evidence cannot be verified. Reconcile the original native Codex turn before continuing.",
+                  { status: 409, errorType: "invalid_request_error", code: "broker_reconciliation_unavailable",
+                    retryable: false, cause: error },
+                );
+              }
+              if (priorStates.length > 0) {
+                // This is an authenticated observation of the stopped process, never a
+                // continuation decision. Keep the startup fence closed for every outcome.
+                let providerStatusQueries: Array<{
+                  callId: string;
+                  state: string;
+                  wireName: string;
+                  arguments: Record<string, unknown>;
+                  effectScope: string;
+                }> = [];
+                try {
+                  const snapshot = environmentStore.readBrokerRecoverySnapshot(
+                    join(getConfigDir(), "diagnostics", "broker-calls"), parsed,
+                  );
+                  if (snapshot.status === "verified_native_recovery_snapshot") {
+                    const sealed = snapshot.calls.filter(entry =>
+                      entry.resultEvidence.status === "verified_result_evidence").length;
+                    const nativeOutputs = snapshot.calls.filter(entry =>
+                      entry.nativeOutputEvidence === "recorded_in_native_rollout").length;
+                    providerStatusQueries = snapshot.calls.flatMap(entry => {
+                      const query = brokerOperationStatusQueryForCall(entry.call, environment?.tools ?? []);
+                      return query ? [{ callId: entry.call.callId, state: entry.call.state, ...query }] : [];
+                    }).slice(0, 16);
+                    console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} calls=${snapshot.calls.length} sealed_results=${sealed} native_outputs=${nativeOutputs} provider_status_queries=${providerStatusQueries.length} replay_authorized=false external_effects_reconciled=false`);
+                  } else {
+                    console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=unavailable`);
+                  }
+                } catch (error) {
+                  console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=invalid type=${error instanceof Error ? error.name : "unknown"}`);
+                }
+                const reconciliationHint = providerStatusQueries.length > 0
+                  ? ` Validated read-only provider status checks are available. Invoke only these tools and arguments, then verify the reported effect scope before resuming: ${JSON.stringify(providerStatusQueries)}`
+                  : " No current provider status query passed validation for these calls.";
+                throw new ChatGptWebAdapterError(
+                  `The original native Codex turn has ${priorStates.length} persisted MCP call(s) from an earlier broker process. Reconcile canonical tool results and external effects before resuming the browser turn.${reconciliationHint}`,
+                  { status: 409, errorType: "invalid_request_error", code: "broker_reconciliation_required",
+                    retryable: false },
+                );
+              }
+            }
+            return startRuntime(parsed, environment, traceId, turnCapabilities);
+          },
           traceId,
           incoming.abortSignal,
           nativeTurnId,
@@ -1361,6 +1506,7 @@ export function createChatGptWebAdapter(
                   if (replay.length === 0) emitRoundEvents(session.eventsForOutstandingReplay());
                   emitRoundBatch(buffer => emitToolBatch(
                     outstanding,
+                    parsed.context.tools ?? [],
                     estimateChatGptWebUsage(currentUsageInput(parsed), { reasoning, toolRequests: outstanding }, turnCapabilities, experimentalBiggerContext, experimentalSkillAttachments, provider.chatgptWeb?.appName),
                     buffer,
                   ));
@@ -1406,7 +1552,8 @@ export function createChatGptWebAdapter(
                     throw new Error("ChatGPT broker returned tools for a read-only browser turn");
                   }
                   if (requests.length > 0) {
-                    const revision = externalProgress.recordToolBatch(requests.length);
+                    const mutatingCount = requests.filter(request => request.readOnly !== true).length;
+                    const revision = externalProgress.recordToolBatch(requests.length, Date.now(), mutatingCount);
                     session.runtime.trace.recordProgress();
                     if (!session.runtime.manualControl) {
                       // The browser outcome is in the same race below and owns the semantic DOM and
@@ -1507,6 +1654,7 @@ export function createChatGptWebAdapter(
                 session.setOutstanding(next.requests, roundReasoning, session.roundEvents(roundKey));
                 emitRoundBatch(buffer => emitToolBatch(
                   next.requests,
+                  parsed.context.tools ?? [],
                   estimateChatGptWebUsage(currentUsageInput(parsed), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities, experimentalBiggerContext, experimentalSkillAttachments, provider.chatgptWeb?.appName),
                   buffer,
                 ));

@@ -1,9 +1,10 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { APP_ID, PRODUCT_NAME } = require("./brand.cjs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 
-const LINUX_DESKTOP_NAME = "dev.codexwebgpt.launcher.desktop";
+const LINUX_DESKTOP_NAME = APP_ID + ".desktop";
 
 function linuxDesktopPath() {
   const configHome = process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), ".config");
@@ -28,8 +29,8 @@ function linuxDesktopEntry(app, executable = linuxExecutable(app)) {
   return `[Desktop Entry]
 Type=Application
 Version=1.0
-Name=Codex Web GPT
-Comment=Start the Codex Web GPT launcher in the background
+Name=${PRODUCT_NAME}
+Comment=Start ${PRODUCT_NAME} in the background
 Exec=${desktopExecArgument(executable)} --hidden
 Terminal=false
 X-GNOME-Autostart-enabled=true

@@ -70,7 +70,7 @@ export interface BrowserTabState {
     state: "preparing" | "sending" | "chatgpt" | "tools" | "approval" | "unknown";
     since: number;
     updatedAt: number;
-    activeToolCalls: number;
+    activeToolCalls: number | null;
   };
   manualState?: "awaiting-user" | "sent" | "running" | "completed" | "timed-out" | "cancelled" | "failed";
   manualDeadlineAt?: string;
@@ -120,7 +120,11 @@ export interface LauncherSnapshot {
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
+  mcpTransport?: "openai-tunnel" | "external-cloudflare";
+  automaticMcpTransport?: "openai-tunnel" | "external-cloudflare";
+  externalGateway?: { mcpUrl: string; healthUrl: string; expectedService: string };
   mcpCredentialsConfigured: boolean;
+  mcpTunnelCredentialsConfigured?: boolean;
   logs: LogRecord[];
   urls: {
     github: string;
@@ -156,6 +160,7 @@ export interface LauncherApi {
   copyManualPrompt(tabId: string): Promise<BrowserState>;
   confirmManualSent(tabId: string): Promise<BrowserState>;
   openLogin(): Promise<BrowserState>;
+  resetEmbeddedBrowserData(): Promise<BrowserState>;
   openPasskeyLogin(): Promise<BrowserState>;
   continuePasskeyLogin(): Promise<boolean>;
   logoutChatGpt(): Promise<{ browser: BrowserState; state: LauncherState }>;
@@ -173,6 +178,8 @@ export interface LauncherApi {
     runtimeKey?: string;
     replace?: boolean;
     interactionMode?: BrowserInteractionMode;
+    mcpTransport?: "openai-tunnel" | "external-cloudflare";
+    externalGateway?: { mcpUrl: string; healthUrl: string; expectedService: string };
   }): Promise<{ ok: boolean; stdout: string }>;
   setConnectorNameSuffix(suffix: string): Promise<LauncherState>;
   setMcpStep(step: number): Promise<LauncherState>;

@@ -38,6 +38,11 @@ const MCP_GUIDE_MEDIA = [
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
   new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
 ] as const;
+const DEFAULT_EXTERNAL_GATEWAY = {
+  mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+  healthUrl: "https://codex-native2.continuos.com.br/health",
+  expectedService: "ContinuosWebIntegracao",
+};
 
 export function App() {
   const [snapshot, setSnapshot] = useState<LauncherSnapshot | null>(null);
@@ -364,12 +369,8 @@ function LauncherShell({
   const [browserSlot, setBrowserSlot] = useState<HTMLDivElement | null>(null);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
-  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(
-    snapshot.state.browserInteractionMode === "automatic"
-      && snapshot.state.coreSetupComplete === true
-      && snapshot.state.biggerContextAvailable === true
-      && !snapshot.state.experimentalBiggerContext,
-  );
+  // No unsolicited startup modal. Experimental feature remains available in Settings.
+  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser"
@@ -1304,24 +1305,38 @@ function McpSurface({
   const [runtimeKey, setRuntimeKey] = useState("");
   const [credentialsConfigured, setCredentialsConfigured] = useState(
     interactionMode === snapshot.state.browserInteractionMode
-      ? snapshot.mcpCredentialsConfigured
+      ? snapshot.mcpTunnelCredentialsConfigured
+        ?? (snapshot.mcpTransport !== "external-cloudflare" && snapshot.mcpCredentialsConfigured)
       : false,
   );
   const [replacingCredentials, setReplacingCredentials] = useState(false);
+  const [automaticTransport, setAutomaticTransport] = useState<"openai-tunnel" | "external-cloudflare">(
+    snapshot.automaticMcpTransport ?? (snapshot.mcpCredentialsConfigured ? "openai-tunnel" : "external-cloudflare"),
+  );
+  const [externalGateway, setExternalGateway] = useState(
+    snapshot.externalGateway ?? { ...DEFAULT_EXTERNAL_GATEWAY },
+  );
   const [localBusy, setLocalBusy] = useState(false);
   const busy = localBusy || operation?.status === "running";
   const [doctor, setDoctor] = useState<DoctorReport | null>(null);
   const verified = !configuringInactiveMode && snapshot.state.mcpSetupComplete === true;
   const manualInteraction = interactionMode === "manual";
+  const cloudflareAutomatic = !manualInteraction && automaticTransport === "external-cloudflare";
   const steps = useMemo(() => [
-    { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
-    { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
+    cloudflareAutomatic
+      ? { title: "Cloudflare route", body: `The external OAuth gateway publishes ${externalGateway.mcpUrl}. Its lifecycle is managed independently of this launcher.` }
+      : { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
+    cloudflareAutomatic
+      ? { title: "Verify Cloudflare gateway", body: "The cloudflared tunnel and OAuth gateway run independently of the Codex launcher. Restarting Codex must not stop the shared Windows Local tunnel." }
+      : { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
     {
       title: copy.mcpStepThree,
-      body: manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
+      body: cloudflareAutomatic
+        ? `In ChatGPT, authorize ${snapshot.connectorNames.automatic} using the dedicated DEV gateway ${externalGateway.mcpUrl}. The gateway identifies itself as ${externalGateway.expectedService}. DEV must use a hostname separate from production; the production codex-native2.continuos.com.br gateway is rejected.`
+        : manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody,
     },
-  ], [copy, manualInteraction]);
-  const guideMedia = MCP_GUIDE_MEDIA[step];
+  ], [copy, manualInteraction, cloudflareAutomatic, externalGateway, snapshot.connectorNames.automatic]);
+  const guideMedia = cloudflareAutomatic ? null : MCP_GUIDE_MEDIA[step];
 
   const move = async (next: number) => {
     setStep(next);
@@ -1351,13 +1366,15 @@ function McpSurface({
     try {
       await api!.setupMcp({
         interactionMode,
-        ...(credentialsConfigured && !replacingCredentials
+        mcpTransport: cloudflareAutomatic ? "external-cloudflare" : "openai-tunnel",
+        ...(cloudflareAutomatic ? { externalGateway } : {}),
+        ...(cloudflareAutomatic ? {} : credentialsConfigured && !replacingCredentials
           ? { replace: false }
           : { tunnelId, runtimeKey, replace: true }),
       });
       setRuntimeKey("");
       setTunnelId("");
-      setCredentialsConfigured(true);
+      if (!cloudflareAutomatic) setCredentialsConfigured(true);
       setReplacingCredentials(false);
       updateState((await api!.snapshot()).state);
       await move(2);
@@ -1385,11 +1402,26 @@ function McpSurface({
   return (
     <ContentSurface
       fit
-      subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
+      subtitle={cloudflareAutomatic ? `ChatGPT uses ${snapshot.connectorNames.automatic} through the external OAuth gateway.` : devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : "MCP"}
     >
       {!manualInteraction && !configuringInactiveMode && !snapshot.state.coreSetupComplete ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpSetupRequired}</NoticeRow>
+      ) : null}
+
+      {!manualInteraction ? (
+        <div className="field-list">
+          <FieldRow label="Automatic MCP transport">
+            <select
+              disabled={busy}
+              onChange={(event) => setAutomaticTransport(event.target.value as "openai-tunnel" | "external-cloudflare")}
+              value={automaticTransport}
+            >
+              <option value="external-cloudflare">External Cloudflare gateway (OAuth)</option>
+              <option value="openai-tunnel">OpenAI tunnel</option>
+            </select>
+          </FieldRow>
+        </div>
       ) : null}
 
       <div className="wizard-stepper" aria-label={`${step + 1} / 3`}>
@@ -1434,6 +1466,12 @@ function McpSurface({
             </header>
 
             {step === 0 ? (
+              cloudflareAutomatic ? (
+                <div className="inline-actions">
+                  <SecondaryButton icon="external" onClick={() => void openExternal("https://one.dash.cloudflare.com/")}>Cloudflare One</SecondaryButton>
+                  <SecondaryButton icon="external" onClick={() => void openExternal(externalGateway.healthUrl)}>Gateway health</SecondaryButton>
+                </div>
+              ) : (
               <div className="inline-actions">
                 <SecondaryButton icon="external" onClick={() => void openExternal(snapshot.urls.tunnels)}>
                   {copy.openTunnels}
@@ -1442,9 +1480,23 @@ function McpSurface({
                   {copy.openKeys}
                 </SecondaryButton>
               </div>
+              )
             ) : null}
             {step === 1 ? (
-              credentialsConfigured && !replacingCredentials ? (
+              cloudflareAutomatic ? (
+                <div className="field-list">
+                  <FieldRow label="Gateway MCP URL">
+                    <input value={externalGateway.mcpUrl} onChange={(event) => setExternalGateway({ ...externalGateway, mcpUrl: event.target.value })} spellCheck={false} />
+                  </FieldRow>
+                  <FieldRow label="Gateway health URL">
+                    <input value={externalGateway.healthUrl} onChange={(event) => setExternalGateway({ ...externalGateway, healthUrl: event.target.value })} spellCheck={false} />
+                  </FieldRow>
+                  <FieldRow label="Gateway service identity">
+                    <input value={externalGateway.expectedService} onChange={(event) => setExternalGateway({ ...externalGateway, expectedService: event.target.value })} spellCheck={false} />
+                  </FieldRow>
+                  <NoticeRow icon="check" tone="success">The Cloudflare Tunnel and OAuth gateway are managed outside this launcher.</NoticeRow>
+                </div>
+              ) : credentialsConfigured && !replacingCredentials ? (
                 <div className="saved-credentials">
                   <NoticeRow icon="check" tone="success">
                     <span>
@@ -1501,7 +1553,7 @@ function McpSurface({
                 </div>
               )
             ) : null}
-            {step === 1 ? (
+            {step === 1 && !cloudflareAutomatic ? (
               <p className="mcp-step-two-hint">
                 {manualInteraction || configuringInactiveMode || snapshot.state.coreSetupComplete
                   ? copy.mcpStepTwoHint
@@ -1511,9 +1563,11 @@ function McpSurface({
             {step === 2 ? (
               <div className="connector-actions">
                 <NoticeRow icon="alert" tone="warning">
-                  {manualInteraction
-                    ? copy.manualConnectorNotice
-                    : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
+                  {cloudflareAutomatic
+                    ? `Automatic mode uses ${snapshot.connectorNames.automatic}. Verify this connector is authorized in ChatGPT.`
+                    : manualInteraction
+                      ? copy.manualConnectorNotice
+                      : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
                 </NoticeRow>
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>
@@ -1551,11 +1605,11 @@ function McpSurface({
             disabled={
               busy
               || (!manualInteraction && !configuringInactiveMode && !snapshot.state.coreSetupComplete)
-              || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
+              || (!cloudflareAutomatic && (!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
             }
             onClick={() => void install()}
           >
-            {busy ? copy.running : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
+            {busy ? copy.running : cloudflareAutomatic ? copy.connect : credentialsConfigured && !replacingCredentials ? copy.reconnect : copy.connect}
           </PrimaryButton>
         ) : null}
         {step === 2 ? (
@@ -1691,6 +1745,8 @@ function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [confirmBrowserReset, setConfirmBrowserReset] = useState(false);
+  const [browserDataReset, setBrowserDataReset] = useState(false);
   const currentPluginName = snapshot.connectorNames[snapshot.state.browserInteractionMode];
   const [nameSuffix, setNameSuffix] = useState(currentPluginName.slice(6));
   const [confirmNameChange, setConfirmNameChange] = useState(false);
@@ -1802,6 +1858,19 @@ function SettingsSurface({
     setError(null);
     try {
       updateState(await api!.setTemporaryChats(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resetEmbeddedBrowserData = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api!.resetEmbeddedBrowserData();
+      setBrowserDataReset(true);
+      setConfirmBrowserReset(false);
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -1954,7 +2023,23 @@ function SettingsSurface({
             onChange={(checked) => void setTemporaryChats(checked)}
           />
         </SettingRow>
-        <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
+        <SettingRow
+          body={confirmBrowserReset ? copy.embeddedBrowserResetConfirm
+            : browserDataReset ? copy.embeddedBrowserResetSuccess : copy.embeddedBrowserResetBody}
+          label={copy.embeddedBrowserReset}
+        >
+          {confirmBrowserReset ? (
+            <div className="manual-turn-actions">
+              <SecondaryButton disabled={busy} onClick={() => setConfirmBrowserReset(false)}>{copy.close}</SecondaryButton>
+              <PrimaryButton disabled={busy} onClick={() => void resetEmbeddedBrowserData()}>{copy.reset}</PrimaryButton>
+            </div>
+          ) : (
+            <SecondaryButton disabled={busy} onClick={() => { setBrowserDataReset(false); setConfirmBrowserReset(true); }}>
+              {copy.reset}
+            </SecondaryButton>
+          )}
+        </SettingRow>
+        <SettingRow body={copy.embeddedBrowserLanguageHint} label={copy.language}>
           <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
       </div>
@@ -2762,7 +2847,7 @@ function FatalMessage({ message }: { message: string }) {
   return (
     <main className="fatal-message">
       <BrandMark />
-      <h1>Codex Web GPT</h1>
+      <h1>Codex Continuos Infinity</h1>
       <p>{message}</p>
     </main>
   );
