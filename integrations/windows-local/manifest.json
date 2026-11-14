@@ -1,8 +1,8 @@
 {
     "schemaVersion":  1,
     "integration":  "windows-local-durable-identity",
-    "version":  "1.0.2",
-    "generatedAt":  "2026-11-12",
+    "version":  "1.0.3",
+    "generatedAt":  "2026-11-13",
     "provider":  "Windows Local",
     "tools":  [
                   "windows_screenshot",
@@ -35,19 +35,20 @@
     "effectScope":  "The tracked PowerShell wrapper process. Detached processes and external services require resource-specific reconciliation.",
     "installState":  "staged-not-applied-to-real-provider",
     "validation":  {
-                       "pythonTests":  28,
+                       "pythonTests":  29,
                        "adapterTests":  17,
                        "journalContractTests":  2,
                        "dryRunAgainstRealProviderSource":  "passed",
                        "fixtureApplyAndRollback":  "passed",
-                       "realProviderRestart":  "pending"
+                       "realProviderRestart":  "pending",
+                       "stagingMcpRestartE2E":  "passed"
                    },
     "files":  [
                   {
                       "path":  "durable_command_jobs.py",
                       "role":  "provider-ledger",
                       "packaged":  true,
-                      "sha256":  "a8fac393f6405bc5b04dd309845aff195a9defdacd238b8307ebba7dc827a384"
+                      "sha256":  "f6c6092d252753e4c50a554dc5fe0e6848ff2a71fd0afc8f2256ad884646a48d"
                   },
                   {
                       "path":  "apply-durable-command-jobs.ps1",
@@ -59,13 +60,13 @@
                       "path":  "README.md",
                       "role":  "integration-documentation",
                       "packaged":  true,
-                      "sha256":  "0255c33ed9a59373c0f240fc49e83c9e3287625bff9282684bddd11e1d8f3bba"
+                      "sha256":  "5ad74a802bf6649c3c32175b416be037edc7f05c4016dc95583522f2bd009304"
                   },
                   {
                       "path":  "tests/test_durable_command_jobs.py",
                       "role":  "provider-tests",
                       "packaged":  false,
-                      "sha256":  "ce7df69ddb54e1498198ff823a63537fb5e8eade3b13d0551a1be9e90bcfa92a"
+                      "sha256":  "ef9770cbf89542b907c1c1a529093e717eda81c782e2291f52f59097754d481f"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",

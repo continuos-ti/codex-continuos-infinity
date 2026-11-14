@@ -395,8 +395,8 @@ class DurableCommandJobs:
             connection.execute(
                 """
                 UPDATE command_jobs
-                SET pid = ?, status = 'running', updated_at = ?
-                WHERE operation_id = ? AND status IN ('starting', 'running')
+                SET pid = ?, updated_at = ?
+                WHERE operation_id = ? AND status = 'starting'
                 """,
                 (pid, time.time(), operation_id),
             )
@@ -527,7 +527,7 @@ class DurableCommandJobs:
                 connection.execute(
                     """
                     UPDATE command_jobs
-                    SET pid = ?, process_created_filetime = ?, updated_at = ?
+                    SET pid = ?, process_created_filetime = ?, status = 'running', updated_at = ?
                     WHERE operation_id = ?
                     """,
                     (pid, created, time.time(), operation_id),

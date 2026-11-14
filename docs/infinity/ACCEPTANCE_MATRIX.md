@@ -558,6 +558,14 @@ A correcao do contrato de inventario e preventiva e **nao comprova a causa nem a
 
 ### Revalidacao do ledger Windows Local em staging - 13/11/2026
 
-- A suite `integrations/windows-local/tests` foi executada novamente com o Python do Windows Local. Resultado **28/28 aprovados**, incluindo reserva concorrente, idempotencia, validacao de `provider_epoch`, reanexacao a processo ativo apos reconstruir o ledger, persistencia de captura e imutabilidade do codigo de saida.
+- A suite `integrations/windows-local/tests` foi executada novamente com o Python do Windows Local. Resultado **29/29 aprovados**, incluindo reserva concorrente, idempotencia, validacao de `provider_epoch`, reanexacao a processo ativo apos reconstruir o ledger, persistencia de captura e imutabilidade do codigo de saida.
+- A regressao de inicializacao confirmou que o ledger permanece em `starting` ate o marcador duravel validar PID e creation time. O estado `running` e persistido somente apos essa verificacao.
+- O E2E MCP em copia isolada passou. Um comando permaneceu ativo durante o reinicio do servidor de teste, foi reanexado por `windows_command_result`, terminou com exit code 0 e gravou um unico marcador. Repetir o mesmo `operation_id` retornou o resultado armazenado, argumentos diferentes foram rejeitados e um `provider_epoch` divergente retornou `provider_changed`.
 - `integrations/windows-local/apply-durable-command-jobs.ps1` concluiu o dry-run contra `H:\Projetos\windows-local`. A copia temporaria foi compilada com sucesso e o script confirmou que a fonte real e os processos em execucao nao foram alterados. Os tamanhos e timestamps dos tres arquivos-fonte principais permaneceram iguais.
 - A fonte ativa continua com `SHOTS` e `JOBS` em memoria, sem `operation_id` nem `provider_epoch` no schema MCP. O ledger duravel segue staged. Aplicacao e reinicio continuam aguardando uma janela drenada. O status `completed` do wrapper PowerShell nao comprova efeitos de processos destacados ou servicos externos.
+
+### Verificacao integral do fork - 13/11/2026
+
+- `npx --yes bun@1.4.0 run verify` concluiu com **1344 aprovados, 114 ignorados e zero falhas**, em 1458 testes distribuidos por 114 arquivos e 11021 chamadas de `expect()`.
+- A suite do launcher concluiu com **456 aprovados, 4 ignorados e zero falhas**. Typecheck, build Vite e smoke do runtime relocavel passaram.
+- O build registrou um aviso nao bloqueante para o bundle `launcher/dist/assets/index-CGhuEkFq.js` com 505.32 kB, acima do limite de aviso de 500 kB. Nenhuma alteracao de code splitting foi feita nesta validacao.

@@ -84,6 +84,27 @@ class DurableCommandJobsTests(unittest.TestCase):
 
         self.assertEqual(sum(created), 1)
 
+    def test_startup_status_waits_for_start_marker_before_becoming_running(self):
+        record, _ = self.reserve()
+        self.store.mark_started(self.operation_id, 4242)
+
+        before_start_marker = self.store.result(
+            self.operation_id, self.store.epoch, process=FakeProcess(), wait_seconds=0
+        )
+        self.assertEqual(before_start_marker["status"], "starting")
+        self.assertEqual(self.store._load(self.operation_id)["status"], "starting")
+
+        marker = {"pid": 4242, "process_created_filetime": 133700000000000000}
+        Path(record["start_path"]).write_text(json.dumps(marker), encoding="utf-8")
+        after_start_marker = self.store.result(
+            self.operation_id, self.store.epoch, process=FakeProcess(), wait_seconds=0
+        )
+        persisted = self.store._load(self.operation_id)
+        self.assertEqual(after_start_marker["status"], "running")
+        self.assertTrue(after_start_marker["running"])
+        self.assertEqual(persisted["status"], "running")
+        self.assertEqual(persisted["process_created_filetime"], marker["process_created_filetime"])
+
     def test_running_state_survives_store_reconstruction(self):
         record, _ = self.reserve()
         marker = {
