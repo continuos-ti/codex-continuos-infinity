@@ -153,13 +153,49 @@ def main() -> int:
             })
             require(rejected_unicode.status_code == 403,
                     "non-ASCII invalid DEV key rejected without server error", rejected_unicode.status_code)
-            paired = client.post(base + "/pair/submit", data={
-                "request_id": pair_request_id,
-                "pairing_key": " \n" + pairing_key + "\r\n",
-            })
+            def approve_pairing() -> httpx.Response:
+                with httpx.Client(timeout=10, follow_redirects=False, trust_env=False) as concurrent_client:
+                    return concurrent_client.post(base + "/pair/submit", data={
+                        "request_id": pair_request_id,
+                        "pairing_key": " \n" + pairing_key + "\r\n",
+                    })
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                approval_responses = list(pool.map(lambda _: approve_pairing(), range(2)))
+            require(sum(response.status_code == 303 for response in approval_responses) == 1,
+                    "concurrent DEV approval issues one OAuth redirect")
+            require(sum(response.status_code == 200 for response in approval_responses) == 1,
+                    "duplicate DEV approval confirms existing pairing")
+            paired = next(response for response in approval_responses if response.status_code == 303)
             require(paired.status_code == 303, "DEV pairing approval after copied whitespace", paired.status_code)
             callback = urlparse(paired.headers.get("location", ""))
             pairing_flow = "performed"
+            completed_page = client.get(pair_url)
+            require(completed_page.status_code == 200 and "authorization already completed" in completed_page.text,
+                    "completed pairing page", completed_page.status_code)
+            require("name=\"pairing_key\"" not in completed_page.text and pairing_key not in completed_page.text,
+                    "completed pairing page does not request or expose DEV key")
+            pending_hash = hashlib.sha256(pair_request_id.encode()).hexdigest()
+            with sqlite3.connect(state / "oauth.sqlite", timeout=10) as db:
+                row = db.execute("SELECT data FROM entries WHERE kind='pending' AND key=?", (pending_hash,)).fetchone()
+                require(row is not None, "completed pending request exists")
+                pending = json.loads(row[0])
+                pending["expires_at"] = 0
+                db.execute("UPDATE entries SET data=? WHERE kind='pending' AND key=?",
+                           (json.dumps(pending), pending_hash))
+            expired_completed_page = client.get(pair_url)
+            require(expired_completed_page.status_code == 200 and
+                    "authorization already completed" in expired_completed_page.text,
+                    "expired completed pairing page", expired_completed_page.status_code)
+            expired_submit = client.post(base + "/pair/submit", data={
+                "request_id": pair_request_id,
+                "pairing_key": wrong_key,
+            })
+            require(expired_submit.status_code == 200 and "authorization already completed" in expired_submit.text,
+                    "expired completed pairing submit", expired_submit.status_code)
+            require("name=\"pairing_key\"" not in expired_submit.text and
+                    pairing_key not in expired_submit.text and "location" not in expired_submit.headers,
+                    "expired completed pairing submission does not request key or reuse OAuth code")
         else:
             callback = authorize_location
             pairing_flow = "existing-trusted-consent"

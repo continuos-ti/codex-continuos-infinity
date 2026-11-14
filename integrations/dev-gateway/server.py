@@ -423,6 +423,18 @@ HEADERS = {
 }
 
 
+def pairing_already_completed() -> HTMLResponse:
+    """Explain an approved pairing without exposing its OAuth redirect or code."""
+    return HTMLResponse(
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
+        "<title>DEV connector authorized</title>"
+        "<h2>DEV connector authorization already completed</h2>"
+        "<p>Close this tab and return to ChatGPT. A new connection can reuse consent while it remains valid.</p>"
+        "</html>",
+        status_code=200, headers=HEADERS,
+    )
+
+
 def pairing_form(nonce: str, error: str = "") -> HTMLResponse:
     """Keep a rejected DEV pairing attempt on the same authorization request."""
     page = (
@@ -443,6 +455,8 @@ def pairing_form(nonce: str, error: str = "") -> HTMLResponse:
 async def pair(request):
     nonce = request.query_params.get("request_id", "")
     entry = provider.get("pending", hashlib.sha256(nonce.encode()).hexdigest())
+    if entry and entry.get("completed_redirect"):
+        return pairing_already_completed()
     if not entry or entry["expires_at"] < time.time():
         return HTMLResponse("DEV authorization request expired. Start a new connector authorization.", status_code=400, headers=HEADERS)
     if entry["attempts"] >= 5:
@@ -461,6 +475,9 @@ async def pair_submit(request):
     nonce_hash = hashlib.sha256(nonce.encode()).hexdigest()
     with provider.lock:
         entry = provider.get("pending", nonce_hash)
+        if entry and entry.get("completed_redirect"):
+            audit("dev_pair_already_completed", nonce)
+            return pairing_already_completed()
         if not entry or entry["expires_at"] < time.time():
             audit("dev_pair_expired", nonce)
             return HTMLResponse("DEV authorization request expired.", status_code=400, headers=HEADERS)
@@ -473,36 +490,39 @@ async def pair_submit(request):
         if entry["attempts"] >= 5:
             return HTMLResponse("Too many attempts. Start a new DEV authorization.", status_code=429, headers=HEADERS)
         return pairing_form(nonce, "Incorrect DEV pairing key. Check the DEV key and try again.")
-    if entry.get("completed_redirect"):
-        if entry.get("completed_code_expires_at", 0) <= time.time():
-            return HTMLResponse("DEV authorization code expired. Start a new authorization.", status_code=409, headers=HEADERS)
-        audit("dev_pair_resubmitted", nonce)
-        return RedirectResponse(entry["completed_redirect"], status_code=303, headers=HEADERS)
-    params = AuthorizationParams.model_validate(entry["params"])
-    now = time.time()
-    code = AuthorizationCode(
-        code=secrets.token_urlsafe(48), scopes=params.scopes, expires_at=now + 300,
-        client_id=entry["client_id"], code_challenge=params.code_challenge,
-        redirect_uri=params.redirect_uri,
-        redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
-        resource=RESOURCE, subject="dev-test-client",
-    )
-    provider.put("auth_code", hashlib.sha256(code.code.encode()).hexdigest(), code.model_dump(mode="json"))
-    old = urlsplit(str(params.redirect_uri))
-    query = {"code": code.code}
-    if params.state is not None:
-        query["state"] = params.state
-    combined = urlencode([*parse_qsl(old.query), *query.items()])
-    target = urlunsplit((old.scheme, old.netloc, old.path, combined, old.fragment))
-    entry["completed_redirect"] = target
-    entry["completed_code_expires_at"] = code.expires_at
-    provider.put("pending", nonce_hash, entry)
-    provider.put("trusted_consent", entry["client_id"], {
-        "redirect_uri": str(params.redirect_uri),
-        "scope": SCOPE,
-        "resource": RESOURCE,
-        "expires_at": time.time() + 30 * 86400,
-    })
+    with provider.lock:
+        entry = provider.get("pending", nonce_hash)
+        if not entry or entry["expires_at"] < time.time():
+            audit("dev_pair_expired", nonce)
+            return HTMLResponse("DEV authorization request expired.", status_code=400, headers=HEADERS)
+        if entry.get("completed_redirect"):
+            audit("dev_pair_already_completed", nonce)
+            return pairing_already_completed()
+        params = AuthorizationParams.model_validate(entry["params"])
+        now = time.time()
+        code = AuthorizationCode(
+            code=secrets.token_urlsafe(48), scopes=params.scopes, expires_at=now + 300,
+            client_id=entry["client_id"], code_challenge=params.code_challenge,
+            redirect_uri=params.redirect_uri,
+            redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
+            resource=RESOURCE, subject="dev-test-client",
+        )
+        old = urlsplit(str(params.redirect_uri))
+        query = {"code": code.code}
+        if params.state is not None:
+            query["state"] = params.state
+        combined = urlencode([*parse_qsl(old.query), *query.items()])
+        target = urlunsplit((old.scheme, old.netloc, old.path, combined, old.fragment))
+        entry["completed_redirect"] = target
+        entry["completed_code_expires_at"] = code.expires_at
+        provider.put("auth_code", hashlib.sha256(code.code.encode()).hexdigest(), code.model_dump(mode="json"))
+        provider.put("pending", nonce_hash, entry)
+        provider.put("trusted_consent", entry["client_id"], {
+            "redirect_uri": str(params.redirect_uri),
+            "scope": SCOPE,
+            "resource": RESOURCE,
+            "expires_at": time.time() + 30 * 86400,
+        })
     audit("dev_pair_approved", nonce)
     return RedirectResponse(target, status_code=303, headers=HEADERS)
 
