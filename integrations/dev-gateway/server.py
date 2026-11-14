@@ -47,6 +47,7 @@ STATE = Path(os.environ.get(
 CONFIG = json.loads((STATE / "config.json").read_text(encoding="utf-8"))
 BASE = CONFIG["public_url"].rstrip("/")
 RESOURCE = BASE + "/mcp"
+PAIR_COMPLETION_RETENTION_SECONDS = 30 * 86400
 PAIR_KEY = (STATE / "pairing.secret").read_text(encoding="ascii").strip()
 
 if not PAIR_KEY or len(PAIR_KEY) < 32:
@@ -161,15 +162,23 @@ class Provider(OAuthAuthorizationServerProvider):
             audit("trusted_dev_client_auto_authorized", client.client_id)
             return self.create_code_redirect(client.client_id, params)
         now = time.time()
+        live = []
         with self.lock:
             pending = self.db.execute("SELECT key,data FROM entries WHERE kind='pending'").fetchall()
-        live = []
-        for key, raw in pending:
-            entry = json.loads(raw)
-            if entry["expires_at"] <= now:
-                self.delete("pending", key)
-            else:
-                live.append(key)
+            for key, raw in pending:
+                entry = json.loads(raw)
+                if entry.get("completed_redirect"):
+                    completed_at = entry.get("completed_at", entry.get("completed_code_expires_at", now) - 300)
+                    completed_until = completed_at + PAIR_COMPLETION_RETENTION_SECONDS
+                    if completed_until > now:
+                        # Keep only a bounded completion marker, never an old OAuth code/redirect.
+                        self.put("pending", key, {"completed": True, "expires_at": completed_until})
+                        continue
+                    self.delete("pending", key)
+                elif entry["expires_at"] <= now:
+                    self.delete("pending", key)
+                elif entry.get("completed") is not True:
+                    live.append(key)
         if len(live) >= 40:
             raise AuthorizeError("temporarily_unavailable", "DEV pending authorization limit reached.")
         nonce = secrets.token_urlsafe(32)
@@ -435,6 +444,12 @@ def pairing_already_completed() -> HTMLResponse:
     )
 
 
+def pairing_completed(entry: dict | None) -> bool:
+    return bool(entry and (entry.get("completed_redirect") or (
+        entry.get("completed") is True and entry.get("expires_at", 0) > time.time()
+    )))
+
+
 def pairing_form(nonce: str, error: str = "") -> HTMLResponse:
     """Keep a rejected DEV pairing attempt on the same authorization request."""
     page = (
@@ -455,7 +470,7 @@ def pairing_form(nonce: str, error: str = "") -> HTMLResponse:
 async def pair(request):
     nonce = request.query_params.get("request_id", "")
     entry = provider.get("pending", hashlib.sha256(nonce.encode()).hexdigest())
-    if entry and entry.get("completed_redirect"):
+    if pairing_completed(entry):
         return pairing_already_completed()
     if not entry or entry["expires_at"] < time.time():
         return HTMLResponse("DEV authorization request expired. Start a new connector authorization.", status_code=400, headers=HEADERS)
@@ -475,7 +490,7 @@ async def pair_submit(request):
     nonce_hash = hashlib.sha256(nonce.encode()).hexdigest()
     with provider.lock:
         entry = provider.get("pending", nonce_hash)
-        if entry and entry.get("completed_redirect"):
+        if pairing_completed(entry):
             audit("dev_pair_already_completed", nonce)
             return pairing_already_completed()
         if not entry or entry["expires_at"] < time.time():
@@ -495,7 +510,7 @@ async def pair_submit(request):
         if not entry or entry["expires_at"] < time.time():
             audit("dev_pair_expired", nonce)
             return HTMLResponse("DEV authorization request expired.", status_code=400, headers=HEADERS)
-        if entry.get("completed_redirect"):
+        if pairing_completed(entry):
             audit("dev_pair_already_completed", nonce)
             return pairing_already_completed()
         params = AuthorizationParams.model_validate(entry["params"])
@@ -514,6 +529,7 @@ async def pair_submit(request):
         combined = urlencode([*parse_qsl(old.query), *query.items()])
         target = urlunsplit((old.scheme, old.netloc, old.path, combined, old.fragment))
         entry["completed_redirect"] = target
+        entry["completed_at"] = now
         entry["completed_code_expires_at"] = code.expires_at
         provider.put("auth_code", hashlib.sha256(code.code.encode()).hexdigest(), code.model_dump(mode="json"))
         provider.put("pending", nonce_hash, entry)

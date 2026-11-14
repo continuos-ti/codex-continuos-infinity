@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import secrets
 import sqlite3
+import time
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import httpx
@@ -196,6 +197,56 @@ def main() -> int:
             require("name=\"pairing_key\"" not in expired_submit.text and
                     pairing_key not in expired_submit.text and "location" not in expired_submit.headers,
                     "expired completed pairing submission does not request key or reuse OAuth code")
+            # A later unmatched authorization runs pending-request cleanup. It must not
+            # erase the completed page or retain the original callback and OAuth code.
+            with sqlite3.connect(state / "oauth.sqlite", timeout=10) as db:
+                consent_row = db.execute(
+                    "SELECT data FROM entries WHERE kind='trusted_consent' AND key=?", (client_id,)
+                ).fetchone()
+                require(consent_row is not None, "approved DEV client has trusted consent")
+                db.execute("DELETE FROM entries WHERE kind='trusted_consent' AND key=?", (client_id,))
+            cleanup_authorize = client.get(base + "/authorize", params={
+                "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
+                "code_challenge": challenge, "code_challenge_method": "S256",
+                "scope": "codex.control", "state": state_value, "resource": resource,
+            })
+            require(cleanup_authorize.status_code in (302, 303)
+                    and urlparse(cleanup_authorize.headers.get("location", "")).path == "/pair",
+                    "unmatched authorization triggers pending cleanup", cleanup_authorize.status_code)
+            with sqlite3.connect(state / "oauth.sqlite", timeout=10) as db:
+                db.execute("INSERT INTO entries(kind,key,data) VALUES('trusted_consent',?,?)",
+                           (client_id, consent_row[0]))
+                cleaned_row = db.execute(
+                    "SELECT data FROM entries WHERE kind='pending' AND key=?", (pending_hash,)
+                ).fetchone()
+                require(cleaned_row is not None, "completed pairing survives cleanup")
+                cleaned = json.loads(cleaned_row[0])
+                require(cleaned.get("completed") is True and set(cleaned) == {"completed", "expires_at"},
+                        "completed pairing retained as a minimal bounded marker")
+                require(cleaned["expires_at"] > time.time(), "completed pairing marker retention")
+            after_cleanup = client.get(pair_url)
+            require(after_cleanup.status_code == 200 and "authorization already completed" in after_cleanup.text,
+                    "stale completed pairing survives subsequent OAuth cleanup", after_cleanup.status_code)
+            with sqlite3.connect(state / "oauth.sqlite", timeout=10) as db:
+                db.execute("DELETE FROM entries WHERE kind='trusted_consent' AND key=?", (client_id,))
+                db.execute("UPDATE entries SET data=? WHERE kind='pending' AND key=?",
+                           (json.dumps({"completed": True, "expires_at": 0}), pending_hash))
+            expiry_cleanup = client.get(base + "/authorize", params={
+                "response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri,
+                "code_challenge": challenge, "code_challenge_method": "S256",
+                "scope": "codex.control", "state": state_value, "resource": resource,
+            })
+            require(expiry_cleanup.status_code in (302, 303),
+                    "expired marker cleanup authorization", expiry_cleanup.status_code)
+            with sqlite3.connect(state / "oauth.sqlite", timeout=10) as db:
+                require(db.execute("SELECT 1 FROM entries WHERE kind='pending' AND key=?",
+                                   (pending_hash,)).fetchone() is None,
+                        "expired completion marker removed")
+                db.execute("INSERT INTO entries(kind,key,data) VALUES('trusted_consent',?,?)",
+                           (client_id, consent_row[0]))
+            expired_marker_page = client.get(pair_url)
+            require(expired_marker_page.status_code == 400,
+                    "expired completion marker no longer accepted", expired_marker_page.status_code)
         else:
             callback = authorize_location
             pairing_flow = "existing-trusted-consent"
