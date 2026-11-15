@@ -272,6 +272,18 @@ test("resolves a provider-declared read-only status tool in the same MCP namespa
     { type: "integer", minimum: 1 };
   assert.throws(() => brokerOperationStatusForTool(request().wireName, blockingWait),
     /wait argument is invalid/);
+
+  for (const invalidWaitSchema of [
+    { type: "integer", maximum: -1 },
+    { type: "integer", exclusiveMaximum: 0 },
+    { type: "integer", minimum: 0, exclusiveMinimum: true },
+    { type: "integer", maximum: 0, exclusiveMaximum: true },
+  ]) {
+    const invalidWait = structuredClone(tools);
+    (invalidWait[1]!.parameters.properties as Record<string, unknown>).wait_seconds = invalidWaitSchema;
+    assert.throws(() => brokerOperationStatusForTool(request().wireName, invalidWait),
+      /wait argument is invalid/);
+  }
 });
 
 test("rejects operation status tools without an explicit read-only declaration", () => {

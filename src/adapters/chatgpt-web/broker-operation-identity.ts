@@ -116,6 +116,10 @@ export function brokerOperationStatusForTool(
       || !["integer", "number"].includes(String(waitSchema?.type))
       || (typeof waitSchema?.minimum === "number" && waitSchema.minimum > 0)
       || (typeof waitSchema?.exclusiveMinimum === "number" && waitSchema.exclusiveMinimum >= 0)
+      || (waitSchema?.exclusiveMinimum === true && typeof waitSchema.minimum === "number" && waitSchema.minimum >= 0)
+      || (typeof waitSchema?.maximum === "number" && waitSchema.maximum < 0)
+      || (typeof waitSchema?.exclusiveMaximum === "number" && waitSchema.exclusiveMaximum <= 0)
+      || (waitSchema?.exclusiveMaximum === true && typeof waitSchema.maximum === "number" && waitSchema.maximum <= 0)
       || (Array.isArray(waitSchema?.enum) && !waitSchema.enum.includes(0))
       || (waitSchema?.const !== undefined && waitSchema.const !== 0))) {
     throw new Error("Codex tool " + wireName + " operation status wait argument is invalid");
