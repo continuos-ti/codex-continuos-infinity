@@ -72,13 +72,13 @@
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
                       "role":  "bridge-identity-adapter",
                       "packaged":  false,
-                      "sha256":  "b0db77e9aa4941ff58b921aec03295250cfea96643f0469854678b269efd8d69"
+                      "sha256":  "951c9d7f054141136efd92f0bbce0395f5a1123992632f43f8b3bb40bda79641"
                   },
                   {
                       "path":  "../../tests/broker-operation-identity.test.ts",
                       "role":  "bridge-identity-tests",
                       "packaged":  false,
-                      "sha256":  "7d58a8f9afd0d3d8ce96a2e36cd1bdba1fad1225bb8509e6b82af69decb027c1"
+                      "sha256":  "2ec68d3b7257151ccdf661d7f291acbe5ffbd2b7da1eb2539dba47a611171e82"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/broker-call-journal.ts",

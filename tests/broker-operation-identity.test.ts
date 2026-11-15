@@ -247,6 +247,20 @@ test("resolves a provider-declared read-only status tool in the same MCP namespa
   assert.equal(delivered.arguments?.operation_id, callId);
   assert.equal(delivered.arguments?.provider_epoch, providerEpoch);
 
+  const statusEpochMatches = structuredClone(tools);
+  statusEpochMatches[1]!.parameters["x-codex-provider-epoch"] = providerEpoch;
+  assert.deepEqual(brokerOperationStatusForTool(request().wireName, statusEpochMatches), contract);
+
+  const mismatchedStatusEpoch = structuredClone(tools);
+  mismatchedStatusEpoch[1]!.parameters["x-codex-provider-epoch"] = "e".repeat(32);
+  assert.throws(() => brokerOperationStatusForTool(request().wireName, mismatchedStatusEpoch),
+    /status provider epoch differs/);
+
+  const invalidStatusEpoch = structuredClone(tools);
+  invalidStatusEpoch[1]!.parameters["x-codex-provider-epoch"] = "not-an-epoch";
+  assert.throws(() => brokerOperationStatusForTool(request().wireName, invalidStatusEpoch),
+    /invalid provider epoch/);
+
   const unsupportedRequired = structuredClone(tools);
   unsupportedRequired[1]!.parameters.required = ["job_id", "provider_epoch", "authorization"];
   assert.throws(() => brokerOperationStatusForTool(request().wireName, unsupportedRequired),

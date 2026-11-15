@@ -95,6 +95,16 @@ export function brokerOperationStatusForTool(
     throw new Error("Codex tool " + wireName + " operation status tool is missing or ambiguous");
   }
   const statusTool = statusTools[0]!;
+  // A status provider may advertise its own epoch. It must identify the same
+  // ledger as the original operation, or the returned status is not attributable
+  // to the queued call. Providers without this optional extension still use
+  // the explicit epoch argument validated below.
+  const statusProviderEpoch = brokerProviderEpochForTool(
+    namespacedToolName(statusTool.namespace, statusTool.name), tools,
+  );
+  if (statusProviderEpoch !== undefined && statusProviderEpoch !== providerEpoch) {
+    throw new Error("Codex tool " + wireName + " operation status provider epoch differs from the operation provider");
+  }
   const statusParameters = asRecord(statusTool.parameters);
   const statusProperties = asRecord(statusParameters?.properties);
   const operationIdArgument = declaration.operation_id_argument;

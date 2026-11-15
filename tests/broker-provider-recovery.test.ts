@@ -89,6 +89,16 @@ test("prepares stable native read-only recovery calls with the original identity
   const changedTools = structuredClone(tools);
   changedTools[0]!.parameters["x-codex-provider-epoch"] = "c".repeat(32);
   assert.equal(prepareBrokerProviderRecoveryChecks([recoveryCall], changedTools).length, 0);
+
+  const matchingStatusEpoch = structuredClone(tools);
+  matchingStatusEpoch[1]!.parameters["x-codex-provider-epoch"] = providerEpoch;
+  const withStatusEpoch = prepareBrokerProviderRecoveryChecks([recoveryCall], matchingStatusEpoch);
+  assert.equal(withStatusEpoch.length, 1);
+  assert.equal(withStatusEpoch[0]!.request.providerEpoch, providerEpoch);
+  assert.deepEqual(withStatusEpoch[0]!.request.arguments, first[0]!.request.arguments);
+  const conflictingStatusEpoch = structuredClone(tools);
+  conflictingStatusEpoch[1]!.parameters["x-codex-provider-epoch"] = "c".repeat(32);
+  assert.deepEqual(prepareBrokerProviderRecoveryChecks([recoveryCall], conflictingStatusEpoch), []);
 });
 
 test("does not issue status queries for duplicate provider operation IDs or invalid batch limits", () => {
