@@ -24,8 +24,30 @@ assert.ok(match, "Could not derive a distinct candidate version");
 const candidateVersion = `${match[1]}${Number(match[2]) + 1}`;
 assert.notEqual(candidateVersion, version);
 
+// The packaged runtime embeds src/version.ts independently of package.json.
+// Keep every version checked by scripts/check-version.ts coherent in the CI fixture.
+const versionFiles = [
+  "src/version.ts",
+  "scripts/install.sh",
+  "README.md",
+  "README.zh-CN.md",
+  "README.ja.md",
+  "README.ko.md",
+];
+const updatedVersions = versionFiles.map(relativePath => {
+  const file = path.join(repositoryRoot, relativePath);
+  const original = fs.readFileSync(file, "utf8");
+  assert.ok(original.includes(version), `${relativePath} does not contain the baseline version`);
+  return { file, updated: original.replaceAll(version, candidateVersion) };
+});
+assert.equal(fs.readFileSync(path.join(repositoryRoot, "src/version.ts"), "utf8").trim(),
+  `export const VERSION = ${JSON.stringify(version)};`, "Unexpected runtime version declaration");
+
 for (let index = 0; index < manifests.length; index++) {
   packages[index].version = candidateVersion;
   fs.writeFileSync(manifests[index], `${JSON.stringify(packages[index], null, 2)}\n`);
+}
+for (const { file, updated } of updatedVersions) {
+  fs.writeFileSync(file, updated);
 }
 process.stdout.write(`NSIS_VERSION_ROLLBACK_CANDIDATE ${version} -> ${candidateVersion}\n`);

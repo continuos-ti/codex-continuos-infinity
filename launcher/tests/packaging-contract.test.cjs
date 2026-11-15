@@ -143,12 +143,58 @@ test("semantic-version rollback fixtures cannot modify manifests outside disposa
   });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Rollback candidate preparation requires a disposable Windows GitHub Actions runner/);
+  const source = fs.readFileSync(fixtureScript, "utf8");
+  assert.match(source, /"src\/version\.ts"/);
+  assert.match(source, /"scripts\/install\.sh"/);
+  assert.match(source, /"README\.ko\.md"/);
+  assert.match(source, /original\.replaceAll\(version, candidateVersion\)/);
   const rollback = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package-rollback.cjs"), "utf8");
   assert.match(rollback, /NSIS rollback smoke requires an explicit disposable Windows GitHub Actions runner/);
   assert.match(rollback, /NSIS rollback requires distinct semantic versions/);
   const ci = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8");
   assert.match(ci, /prepare-rollback-candidate\.cjs/);
+  assert.match(ci, /bun run check-version/);
   assert.match(ci, /smoke-package-rollback\.cjs \$savedBaseline \$candidate\[0\]\.FullName --nsis/);
+});
+
+test("rollback candidate updates the runtime's embedded version in an isolated fixture", {
+  skip: process.platform !== "win32" && "Candidate generation runs only on Windows",
+}, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "infinity-candidate-version-"));
+  const baselineVersion = "6.1.18-continuos.1";
+  const candidateVersion = "6.1.18-continuos.2";
+  const inputs = new Map([
+    ["package.json", JSON.stringify({ version: baselineVersion })],
+    ["launcher/package.json", JSON.stringify({ version: baselineVersion })],
+    ["src/version.ts", `export const VERSION = "${baselineVersion}";\n`],
+    ["scripts/install.sh", `VERSION="\${CODEX_CONTINUOS_INFINITY_VERSION:-${baselineVersion}}"\n`],
+    ...["README.md", "README.zh-CN.md", "README.ja.md", "README.ko.md"]
+      .map(file => [file, `Current version ${baselineVersion}\n`]),
+  ]);
+  try {
+    for (const [relativePath, content] of inputs) {
+      const destination = path.join(root, relativePath);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, content);
+    }
+    const fixtureScript = path.join(root, "launcher/scripts/prepare-rollback-candidate.cjs");
+    fs.mkdirSync(path.dirname(fixtureScript), { recursive: true });
+    fs.copyFileSync(path.join(launcherRoot, "scripts/prepare-rollback-candidate.cjs"), fixtureScript);
+    const result = spawnSync(process.execPath, [fixtureScript], {
+      encoding: "utf8",
+      env: { ...process.env, CI: "true", GITHUB_ACTIONS: "true", RUNNER_OS: "Windows" },
+      timeout: 10_000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /6\.1\.18-continuos\.1 -> 6\.1\.18-continuos\.2/);
+    for (const relativePath of inputs.keys()) {
+      const content = fs.readFileSync(path.join(root, relativePath), "utf8");
+      assert.ok(content.includes(candidateVersion), `${relativePath} retained the baseline version`);
+      assert.ok(!content.includes(baselineVersion), `${relativePath} contains the old version`);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("packaged launcher owns a detached checksummed updater for every release platform", () => {

@@ -110,6 +110,8 @@ jobs:
           Copy-Item -LiteralPath $baseline[0].FullName -Destination $baselineDir
           node launcher/scripts/prepare-rollback-candidate.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run check-version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun run app:package
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $candidate = @(Get-ChildItem launcher/artifacts/codex-continuos-infinity-*-win-x64.exe)
