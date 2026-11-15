@@ -198,8 +198,15 @@ test("rejects conflicting identities or execution claims in provider status enve
   assert.equal(observe({ ok: false, result: completed }), "unverified");
   assert.equal(observe({ success: false, result: completed }), "unverified");
   assert.equal(observe({ error: "provider failed", result: completed }), "unverified");
+  assert.equal(observe({ ...completed, ok: false }), "unverified");
+  assert.equal(observe({ ...completed, success: false }), "unverified");
+  assert.equal(observe({ ...completed, error: "operation failed" }), "unverified");
+  assert.equal(observe({ result: { ...completed, ok: false } }), "unverified");
+  assert.equal(observe({ result: { ...completed, success: false } }), "unverified");
+  assert.equal(observe({ result: { ...completed, error: "operation failed" } }), "unverified");
   assert.equal(observe({ exit_code: 1, result: completed }), "unverified");
   assert.equal(observe({ ...completed, operation_id: originalCallId }), "completed");
+  assert.equal(observe({ ...completed, error: null, ok: true }), "completed");
   assert.equal(observe({ job_id: originalCallId, result: completed }), "completed");
   assert.equal(observe({ status: "completed", error: null, ok: true, result: completed }), "completed");
 });

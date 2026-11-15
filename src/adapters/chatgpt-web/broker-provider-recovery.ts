@@ -173,10 +173,14 @@ export function observeBrokerProviderRecoveryChecks(
           || outer.status === nested?.status;
         const outerExitConsistent = outer?.exit_code === undefined
           || outer.exit_code === nested?.exit_code;
+        // A provider may report a terminal status alongside an explicit failure in
+        // the status body itself. Those flags must be checked in both envelopes.
+        const nestedFailureAbsent = nested?.ok !== false && nested?.success !== false
+          && (nested?.error === undefined || nested.error === null);
         const outerFailureAbsent = outer?.ok !== false && outer?.success !== false
           && (outer?.error === undefined || outer.error === null);
         if (nested && idsConsistent && outerEpochConsistent && outerStatusConsistent && outerExitConsistent
-          && outerFailureAbsent
+          && nestedFailureAbsent && outerFailureAbsent
           && (providerChanged ? changedEpoch : matchingEpoch)
           && completedWithExitCode
           && typeof nested.status === "string" && PROVIDER_STATUSES.has(nested.status)) {
