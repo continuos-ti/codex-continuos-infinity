@@ -598,3 +598,8 @@ A correcao do contrato de inventario e preventiva e **nao comprova a causa nem a
 - Testes de regressao cobrem quatro schemas que excluem zero. Os cinco arquivos de teste focalizados (`broker-operation-identity`, `broker-call-journal`, `authenticated-broker-result-evidence`, `turn-broker-lifecycle` e `mcp-request-fence`) terminaram com **90 aprovados, quatro ignorados e zero falhas**. `bun run typecheck` passou.
 - A verificacao integral `bun run verify` terminou com codigo **0**, incluindo auditoria de dependencias sem vulnerabilidades reportadas, testes de runtime e launcher, typechecks, build Vite e `RELOCATABLE_RUNTIME_SMOKE_OK`. O Vite continua emitindo o aviso de chunk de 505,32 kB.
 - O Brave permaneceu fechado nesta etapa. Nenhuma nova autorizacao DEV foi solicitada. A retomada automatica pos-crash ainda depende da reconciliacao independente de efeitos externos, do rebind nativo e de homologacao E2E. O Windows Local real segue sem a aplicacao do ledger em producao.
+
+### Integridade do manifesto Windows Local no CI - 15/11/2026
+
+- O primeiro CI do commit `aa53265` falhou no teste do ledger Windows Local porque dois hashes SHA-256 em `integrations/windows-local/manifest.json` ainda correspondiam a versoes anteriores de `broker-operation-identity.ts` e `broker-operation-identity.test.ts`.
+- Os hashes do manifesto foram atualizados para os arquivos modificados. A reproducao local do passo do CI com `python -m unittest discover -s integrations/windows-local/tests -v` concluiu com **29 aprovados e zero falhas**, incluindo a integridade dos hashes.
