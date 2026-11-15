@@ -9,6 +9,8 @@ import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "../sr
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
+import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest } from "../src/types";
 
 const threadId = "01a06c66-4232-7ae1-9108-69b5f70e0671";
@@ -134,6 +136,89 @@ test("thread environment store observes an authenticated recovery snapshot witho
   const unbound = store.readBrokerRecoverySnapshot(directory,
     parsedNativeTurn({ ...metadata, request_kind: "untrusted" }));
   expect(unbound.status).toBe("unavailable");
+});
+
+test("same native turn rebinds once after every previous read-only call has a sealed result and native output", async () => {
+  const rollout = nativeRollout();
+  appendFileSync(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { type: "response_item", payload: { type: "function_call", call_id: callId, name: "read_tool" } },
+    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "observed" } },
+  ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
+  const nativeIdentity = { threadId, turnId };
+  const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity)!;
+  for (const event of ["queued", "delivery_possible", "result_received"] as const) {
+    recordBrokerCallEvent({ directory, traceId, callId, event, wireName: "read_tool",
+      nativeOwnerDigest: ownerDigest, readOnly: true });
+  }
+  new BrokerResultVault(vaultDirectoryForJournal(directory)).seal({
+    traceId, callId, tool: "read_tool", nativeOwnerDigest: ownerDigest,
+  }, result);
+
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "recovered-readonly")));
+  try {
+    broker.enableCallJournal(directory);
+    const recovered = snapshot();
+    expect(recovered.status).toBe("verified_native_recovery_snapshot");
+    if (recovered.status !== "verified_native_recovery_snapshot") return;
+    expect(recovered.calls[0]?.nativeOutputEvidence).toBe("recorded_in_native_rollout");
+    const environment = { cwd, roots: [cwd], writableRoots: [],
+      sandboxPolicy: { type: "readOnly" as const, networkAccess: false }, tools: [] };
+    await expect(broker.register(environment, 30_000, traceId, nativeIdentity))
+      .rejects.toThrow("require reconciliation");
+    expect(broker.authorizeAuthenticatedReadOnlyRecovery(
+      { threadId, turnId: staleTurnId }, recovered)).toBeUndefined();
+    expect(broker.authorizeAuthenticatedReadOnlyRecovery(nativeIdentity, {
+      ...recovered, calls: recovered.calls.map(entry => ({ ...entry,
+        nativeOutputEvidence: "unavailable" as const })),
+    })).toBeUndefined();
+    const stalePermit = broker.authorizeAuthenticatedReadOnlyRecovery(nativeIdentity, recovered);
+    expect(typeof stalePermit).toBe("symbol");
+    await expect(broker.register(environment, 30_000, traceId, nativeIdentity))
+      .rejects.toThrow("require reconciliation");
+    const permit = broker.authorizeAuthenticatedReadOnlyRecovery(nativeIdentity, recovered);
+    expect(typeof permit).toBe("symbol");
+    await expect(broker.registerAuthenticatedReadOnlyRecovery(
+      environment, stalePermit!, 30_000, traceId, nativeIdentity,
+    )).rejects.toThrow("require reconciliation");
+    await expect(broker.registerAuthenticatedReadOnlyRecovery(
+      environment, Symbol("untrusted"), 30_000, traceId, nativeIdentity,
+    )).rejects.toThrow("require reconciliation");
+    const token = await broker.registerAuthenticatedReadOnlyRecovery(
+      environment, permit!, 30_000, traceId, nativeIdentity,
+    );
+    expect(token).toMatch(/^turn_[A-Za-z0-9_-]{32}$/);
+    await expect(broker.register(environment, 30_000, traceId, nativeIdentity))
+      .rejects.toThrow("require reconciliation");
+    broker.revoke(token);
+    await expect(broker.register(environment, 30_000, traceId, nativeIdentity))
+      .rejects.toThrow("require reconciliation");
+  } finally {
+    await broker.close();
+  }
+});
+
+test("a previous mutable call keeps the native owner fenced even when the rollout recorded its output", async () => {
+  const rollout = nativeRollout();
+  appendFileSync(rollout, [
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { type: "response_item", payload: { type: "function_call", call_id: callId, name: "mutating_tool" } },
+    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "observed" } },
+  ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
+  journal();
+  seal();
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "recovered-mutable")));
+  try {
+    broker.enableCallJournal(directory);
+    const recovered = snapshot();
+    expect(recovered.status).toBe("verified_native_recovery_snapshot");
+    expect(broker.authorizeAuthenticatedReadOnlyRecovery({ threadId, turnId }, recovered)).toBeUndefined();
+    await expect(broker.register({ cwd, roots: [cwd], writableRoots: [],
+      sandboxPolicy: { type: "readOnly" as const, networkAccess: false }, tools: [],
+    }, 30_000, traceId, { threadId, turnId })).rejects.toThrow("require reconciliation");
+  } finally {
+    await broker.close();
+  }
 });
 
 const unavailable: AuthenticatedBrokerResultEvidence = {

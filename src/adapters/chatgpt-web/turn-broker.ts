@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isWindowsPipeEndpoint } from "../../config";
 import {
   CompactionTransactionStore,
@@ -13,7 +14,7 @@ import { subagentModelObservation } from "./mcp-observation";
 import { recordBrokerCallEvent, type BrokerCallEvent, type BrokerOperationStatusContract } from "./broker-call-journal";
 import { brokerOperationStatusForTool, brokerProviderEpochForTool, brokerToolIsReadOnly } from "./broker-operation-identity";
 import { acquireBrokerJournalOwnership } from "./broker-journal-ownership";
-import { inspectSettledBrokerCallJournal, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
+import { inspectSettledBrokerCallJournal, type AuthenticatedBrokerRecoverySnapshot, type BrokerRecoveryCall, type BrokerRecoveryState } from "./broker-call-reconciliation";
 import { BrokerResultVault, vaultDirectoryForJournal } from "./sealed-broker-results";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
 import { cwdWithinRealRoots } from "./trusted-cwd-path";
@@ -360,6 +361,7 @@ export class TurnBroker implements TurnBrokerOwner {
   private startupCallEvidence: BrokerRecoveryCall[] = [];
   private startupJournalUnreadable = false;
   private nativeOwnersWithCalls = new Set<string>();
+  private readonly authenticatedReadOnlyRecoveries = new Map<string, symbol>();
   private recordedCallsInProcess = false;
 
   private constructor(readonly socketPath: string) {}
@@ -438,6 +440,44 @@ export class TurnBroker implements TurnBrokerOwner {
       .map(call => call.state);
   }
 
+  /** Admit one new owner for a native turn whose *entire* previous tool history was read-only,
+   * with results sealed by the old broker and delivered in the authenticated native rollout.
+   * Only the trusted adapter supplies the authenticated snapshot. No prior calls are replayed.
+   */
+  authorizeAuthenticatedReadOnlyRecovery(
+    identity: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
+    snapshot: AuthenticatedBrokerRecoverySnapshot,
+  ): symbol | undefined {
+    const ownerDigest = nativeBrokerOwnerDigest(identity);
+    if (!ownerDigest || this.closed || !this.callJournalDirectory || this.startupJournalUnreadable
+      || snapshot.status !== "verified_native_recovery_snapshot"
+      || this.nativeOwnersWithCalls.has(ownerDigest)
+      || [...this.channels.values()].some(channel => channel.nativeOwnerDigest === ownerDigest)
+      || this.startupCallEvidence.some(call => !call.nativeOwnerDigest)) return undefined;
+    const owned = this.startupCallEvidence.filter(call => call.nativeOwnerDigest === ownerDigest);
+    if (owned.length === 0 || owned.length !== snapshot.calls.length
+      || !isDeepStrictEqual(owned, snapshot.calls.map(entry => entry.call))
+      || snapshot.calls.some(entry => entry.call.readOnly !== true
+        || entry.call.state !== "result_unavailable"
+        || entry.resultEvidence.status !== "verified_result_evidence"
+        || entry.nativeOutputEvidence !== "recorded_in_native_rollout")) return undefined;
+    // Re-authentication replaces an unused grant after a failed browser preparation.
+    // A direct IPC registration cannot present this in-process-only capability.
+    const permit = Symbol("authenticated-read-only-native-turn");
+    this.authenticatedReadOnlyRecoveries.set(ownerDigest, permit);
+    return permit;
+  }
+
+  registerAuthenticatedReadOnlyRecovery(
+    environment: ChatGptTurnEnvironment,
+    permit: symbol,
+    ttlMs?: number,
+    traceId = "unknown",
+    identity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
+  ): Promise<string> {
+    return this.register(environment, ttlMs, traceId, identity, false, "turn", permit);
+  }
+
   private recordCall(channel: TurnChannel, request: BrokerToolRequest, event: BrokerCallEvent): void {
     if (!this.callJournalDirectory) return;
     // Preserve the native 12-hex trace when available. External owners may provide an
@@ -475,6 +515,7 @@ export class TurnBroker implements TurnBrokerOwner {
     nativeIdentity?: Pick<ChatGptTurnIdentity, "threadId" | "turnId">,
     externalOwner = false,
     handlePrefix = "turn",
+    readOnlyRecoveryPermit?: symbol,
   ): Promise<string> {
     await this.start();
     if (this.closed) throw new Error("ChatGPT turn broker has closed");
@@ -488,10 +529,12 @@ export class TurnBroker implements TurnBrokerOwner {
     // Every owner entry point (including remote IPC and Zero Risk) must respect the
     // startup fence. The adapter's preflight alone cannot protect direct registrations.
     const priorStates = this.priorNativeCallStates(traceId, nativeIdentity);
-    if (priorStates.length > 0) {
+    const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity);
+    if (priorStates.length > 0 && (!ownerDigest
+      || this.authenticatedReadOnlyRecoveries.get(ownerDigest) !== readOnlyRecoveryPermit
+      || readOnlyRecoveryPermit === undefined)) {
       throw new Error("Previous native broker calls require reconciliation before registering a new turn owner");
     }
-    const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity);
     if (ownerDigest && (this.nativeOwnersWithCalls.has(ownerDigest)
       || [...this.channels.values()].some(channel => channel.nativeOwnerDigest === ownerDigest))) {
       throw new Error("Native Codex turn already owns or previously queued broker calls; reconciliation is required");
@@ -499,6 +542,7 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!ownerDigest && this.recordedCallsInProcess) {
       throw new Error("Previous broker call ownership cannot be authenticated for this native turn");
     }
+    if (ownerDigest && priorStates.length > 0) this.authenticatedReadOnlyRecoveries.delete(ownerDigest);
     const token = opaqueId(handlePrefix);
     const channel: TurnChannel = {
       traceId,
