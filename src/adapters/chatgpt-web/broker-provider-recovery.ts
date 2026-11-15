@@ -136,11 +136,19 @@ export function observeBrokerProviderRecoveryChecks(
           ? value as Record<string, unknown> : undefined;
         const nested = record?.result && typeof record.result === "object" && !Array.isArray(record.result)
           ? record.result as Record<string, unknown> : record;
+        const providerChanged = nested?.status === "provider_changed";
+        const matchingEpoch = nested?.provider_epoch === check.providerEpoch;
+        const changedEpoch = typeof nested?.provider_epoch === "string"
+          && /^[0-9a-f]{32}$/.test(nested.provider_epoch)
+          && nested.provider_epoch !== check.providerEpoch;
+        const completedWithExitCode = nested?.status !== "completed"
+          || Number.isSafeInteger(nested.exit_code);
         if (nested && (nested.job_id === check.originalCallId || nested.operation_id === check.originalCallId)
-          && (nested.provider_epoch === check.providerEpoch || nested.status === "provider_changed")
+          && (providerChanged ? changedEpoch : matchingEpoch)
+          && completedWithExitCode
           && typeof nested.status === "string" && PROVIDER_STATUSES.has(nested.status)) {
           observation.providerStatus = nested.status;
-          if (nested.status === "completed" && Number.isSafeInteger(nested.exit_code)) {
+          if (nested.status === "completed") {
             observation.exitCode = nested.exit_code as number;
           }
         }

@@ -138,6 +138,35 @@ test("treats stale identity, errors, duplicate outputs and ambiguous provider to
   }, duplicatedTool), /ambiguous provider declarations/);
 });
 
+test("rejects contradictory provider epochs and incomplete completed statuses", () => {
+  const check = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  const checkId = check.request.callId;
+  const observe = (data: unknown) => observeBrokerProviderRecoveryChecks([check], [
+    issued(check), result(checkId, data),
+  ]).observations[0]!;
+
+  for (const data of [
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "provider_changed" },
+    { job_id: originalCallId, status: "provider_changed" },
+    { job_id: originalCallId, provider_epoch: "invalid", status: "provider_changed" },
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "completed" },
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: null },
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: 0.5 },
+  ]) {
+    assert.equal(observe(data).providerStatus, "unverified");
+  }
+
+  assert.equal(observe({
+    operation_id: originalCallId, provider_epoch: "c".repeat(32), status: "provider_changed",
+  }).providerStatus, "provider_changed");
+  assert.deepEqual(observe({
+    operation_id: originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: 1,
+  }), {
+    callId: originalCallId, state: "delivery_unknown", effectScope: "tracked_process",
+    providerStatus: "completed", exitCode: 1,
+  });
+});
+
 test("requires the exact native status call before accepting a provider result", () => {
   const check = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
   const reply = result(check.request.callId, {
