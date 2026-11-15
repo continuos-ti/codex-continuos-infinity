@@ -2,9 +2,9 @@
 
 ### Atualização e rollback NSIS com versões semânticas distintas — 15/11/2026
 
-O workflow Windows recebeu um teste de instalação real em runner descartável com versões de pacote diferentes. O script cria a versão candidata apenas durante CI e executa instalação, atualização, rollback, nova atualização e desinstalação, preservando perfis sintéticos e conferindo os manifests dos dois runtimes. A aprovação desse cenário depende do resultado do novo job no GitHub Actions. A homologação com sessões reais, operações MCP e rollback autenticado continua pendente.
+O workflow Windows recebeu um teste de instalação real em runner descartável com versões de pacote diferentes. O script cria a versão candidata apenas durante CI e executa instalação, atualização, rollback, nova atualização e desinstalação, preservando perfis sintéticos e conferindo os manifests dos dois runtimes. O run GitHub Actions `43774641276` do commit `1f6af8f494b366f68bbbeab502f20e6474a8fc43` concluiu com **5/5 jobs aprovados** (Windows, Ubuntu, macOS, `secret-scan` e `actionlint`). A homologação com sessões reais, operações MCP e rollback autenticado continua pendente.
 
-Na primeira execução de push (`43773223734`), o job Windows falhou na compilação do candidato por divergência entre `package.json` e `src/version.ts`. A preparação passou a sincronizar também o valor embutido no runtime, o instalador shell e os README usados pelo contrato de versão. Um teste isolado executa a preparação e valida todos os arquivos. O workflow também verifica `bun run check-version` após a mudança. A confirmação do pacote NSIS permanece pendente em nova CI.
+Na primeira execução de push (`43773223734`), o job Windows falhou na compilação do candidato por divergência entre `package.json` e `src/version.ts`. A preparação passou a sincronizar também o valor embutido no runtime, o instalador shell e os README usados pelo contrato de versão. Um teste isolado executa a preparação e valida todos os arquivos. O workflow também verifica `bun run check-version` após a mudança. No run aprovado `43774641276`, o log confirmou `6.1.18-continuos.1` → `6.1.18-continuos.2`, as quatro etapas `ROLLBACK_STAGE_OK`, `NSIS_VERSION_ROLLBACK_UNINSTALL_OK` e `PACKAGED_LAUNCHER_ROLLBACK_SMOKE_OK`.
 
 ### Retomada autenticada de chamadas somente leitura — 15/11/2026
 

@@ -32,7 +32,7 @@ O teste realizado em 15/11/2026 usou pacotes distintos construídos dos commits 
 
 O job Windows de `.github/workflows/ci.yml` agora prepara uma segunda versão semântica em um runner descartável, gera o instalador candidato e executa `smoke-package-rollback.cjs` com `--nsis`. O teste instala de fato os dois pacotes em quatro passagens (versão inicial, atualização, rollback e nova atualização), verifica cada executável instalado, os manifests e a integridade dos perfis sintéticos. Ao final, desinstala o programa e verifica que as duas versões do runtime isolado permaneceram válidas.
 
-A execução `--nsis` só é habilitada no runner Windows do GitHub Actions. Essa prova permanece **pendente** até o job concluir com sucesso. Ela abrange a atualização e reversão do instalador com perfis sintéticos. A migração de sessões autenticadas, tarefas em andamento e efeitos externos MCP requer homologação separada.
+A execução `--nsis` só é habilitada no runner Windows do GitHub Actions. O run `43774641276`, commit `1f6af8f494b366f68bbbeab502f20e6474a8fc43`, aprovou a atualização, reversão e desinstalação reais de pacotes `6.1.18-continuos.1` e `6.1.18-continuos.2` com perfis sintéticos preservados, além dos outros quatro jobs do workflow. O log registrou `NSIS_VERSION_ROLLBACK_UNINSTALL_OK` e `PACKAGED_LAUNCHER_ROLLBACK_SMOKE_OK`. A migração de sessões autenticadas, tarefas em andamento e efeitos externos MCP requer homologação separada.
 
 ## Integração opcional do Windows Local
 
