@@ -102,7 +102,7 @@
                       "path":  "../../tests/broker-call-journal.test.ts",
                       "role":  "bridge-journal-tests",
                       "packaged":  false,
-                      "sha256":  "c0772c0180fbfe7712bb7509bd7e3a4c21b93de8e172943914e6031800ee2903"
+                      "sha256":  "476e722578de8fc9455ccedc5bd39f1a6df5749211cf52f7a285721172a469ad"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/index.ts",
