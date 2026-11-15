@@ -10,6 +10,8 @@ Essa evidencia cobre a autorizacao e o registro no broker com identidade nativa 
 
 ### CI e recuperação do pacote Windows — 15/11/2026
 
+O workflow de push `43756201832` no commit `9cc9c41` concluiu com falha somente em `verify (windows-latest)`: o teste de preparacao de contrato JSON superdimensionado (`prompt preparation preserves its error instead of exposing a revoked MCP token`) excedeu o timeout generico de 5 segundos sob carga do runner. O workflow PR `43756206780` do mesmo commit concluiu com sucesso. O teste agora recebe um limite individual de **20 segundos** para preservar a verificacao do erro `context_length_exceeded` em execucoes carregadas. A regressao direcionada passou localmente com **1 aprovado, zero falhas** e typecheck com exit 0. A confirmacao de estabilidade em CI depende dos workflows do commit que incluir a alteracao.
+
 Os cinco jobs do run GitHub Actions `43710390106`, referente ao commit `5032365d7d50dff21ba994e02acab81829165453`, terminaram em `completed/success`, incluindo os três sistemas Windows, Ubuntu e macOS, `secret-scan` e `actionlint`. O smoke Windows foi estendido para provar reparo transacional do runtime do pacote e preservação de arquivos sintéticos do perfil e de uma versão anterior durante a desinstalação em runner descartável. Antes dessa execução CI ampliada, o novo comando portátil `smoke:package:portable-repair` passou localmente com restauração do conteúdo original de `app/cli.js`, validação de manifesto e marcador de prontidão. O novo teste de desinstalação permanece dependente do próximo run CI; não equivale a rollback funcional de sessão autenticada.
 
 ### CI multiplataforma do commit `3685c374` — 15/11/2026

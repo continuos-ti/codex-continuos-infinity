@@ -1681,7 +1681,7 @@ describe("ChatGPT outer-native harness v4", () => {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
     }
-  });
+  }, 20_000);
 
   test.each([
     { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded" },
