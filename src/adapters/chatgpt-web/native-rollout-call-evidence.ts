@@ -1,4 +1,7 @@
+import { createHash } from "node:crypto";
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
+import type { BrokerToolResult } from "./turn-broker";
 
 const MAX_ROLLOUT_BYTES = 128 * 1024 * 1024;
 const MAX_RECORD_BYTES = 16 * 1024 * 1024;
@@ -10,9 +13,51 @@ export interface NativeCallIdentity {
   tool: string;
 }
 
+export interface NativeCallOutputEvidence {
+  /** Fingerprint of the complete stable rollout, including unrequested records. */
+  fingerprint: string;
+  recorded: ReadonlySet<string>;
+  /** Outputs whose visible payload agrees with a sealed broker result. */
+  matching: ReadonlySet<string>;
+}
+
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : undefined;
+}
+
+/** Compare only representations that can be checked without guessing at MCP serialization. */
+function matchesSealedResult(output: unknown, result: BrokerToolResult): boolean {
+  if (!Array.isArray(result.content) || result.isError === true || result._meta !== undefined) return false;
+  const expected = result.content;
+  if (expected.some(part => record(part)?.type !== "text" || typeof record(part)?.text !== "string"
+    || Object.keys(record(part)!).some(key => key !== "type" && key !== "text"))) {
+    // Native image, resource and error representations need separate, proven mappings.
+    return false;
+  }
+  if (result.structuredContent !== undefined) {
+    if (expected.length !== 1) return false;
+    try {
+      if (!isDeepStrictEqual(JSON.parse(record(expected[0])!.text as string), result.structuredContent)) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  if (typeof output === "string") {
+    return expected.length === 1 && output === record(expected[0])?.text;
+  }
+  if (!Array.isArray(output) || output.length !== expected.length) return false;
+  const normalized: Array<{ type: "text"; text: string }> = [];
+  for (const part of output) {
+    const item = record(part);
+    if (!item || !["text", "output_text", "input_text"].includes(String(item.type))
+      || typeof item.text !== "string"
+      || Object.keys(item).some(key => key !== "type" && key !== "text")) return false;
+    normalized.push({ type: "text", text: item.text });
+  }
+  return isDeepStrictEqual(normalized, expected);
 }
 
 /** Read the same bounded file descriptor twice to reject concurrent appends and rewrites. */
@@ -48,12 +93,13 @@ function stableRolloutBytes(path: string): Buffer | undefined {
  * No output bodies leave this reader. A recorded output cannot prove external side effects,
  * authorize a replay, or create a new tool capability after a broker crash.
  */
-export function observeNativeCallOutputs(
+export function readNativeCallOutputEvidence(
   rolloutPath: string,
   turnId: string,
   identities: readonly NativeCallIdentity[],
-): ReadonlySet<string> {
-  const unavailable = (): ReadonlySet<string> => new Set();
+  sealedResults?: ReadonlyMap<string, BrokerToolResult>,
+): NativeCallOutputEvidence | undefined {
+  const unavailable = (): undefined => undefined;
   if (new Set(identities.map(identity => identity.callId)).size !== identities.length
     || identities.some(identity => !CALL_ID.test(identity.callId) || !TOOL_NAME.test(identity.tool))) {
     return unavailable();
@@ -65,7 +111,7 @@ export function observeNativeCallOutputs(
     if (!bytes || bytes[bytes.length - 1] !== 0x0a) return unavailable();
 
     const requested = new Map(identities.map(identity => [identity.callId, identity.tool]));
-    const calls = new Map<string, { expectedOutput: string; outputSeen: boolean }>();
+    const calls = new Map<string, { expectedOutput: string; outputSeen: boolean; matched: boolean }>();
     let active = false;
     let started = false;
     const otherActiveTurns = new Set<string>();
@@ -133,18 +179,33 @@ export function observeNativeCallOutputs(
         // The broker's journal binds this ID to a wire tool. An unrelated native call
         // with a reused ID cannot authenticate an output for the journal's tool.
         if (calls.has(id) || payload.name !== requested.get(id)) return unavailable();
-        calls.set(id, { expectedOutput: `${payload.type}_output`, outputSeen: false });
+        calls.set(id, { expectedOutput: `${payload.type}_output`, outputSeen: false, matched: false });
       } else if (payload.type === "function_call_output" || payload.type === "custom_tool_call_output") {
         const call = calls.get(id);
         if (!call || call.expectedOutput !== payload.type || call.outputSeen) return unavailable();
         call.outputSeen = true;
+        const sealed = sealedResults?.get(id);
+        call.matched = sealed !== undefined && matchesSealedResult(payload.output, sealed);
       }
     }
 
     if (!started) return unavailable();
-    return new Set([...calls].filter(([, call]) => call.outputSeen).map(([id]) => id));
+    return {
+      fingerprint: createHash("sha256").update(bytes).digest("hex"),
+      recorded: new Set([...calls].filter(([, call]) => call.outputSeen).map(([id]) => id)),
+      matching: new Set([...calls].filter(([, call]) => call.outputSeen && call.matched).map(([id]) => id)),
+    };
   } catch {
     // Locked, truncated or malformed evidence is unavailable, never permission to replay.
     return unavailable();
   }
+}
+
+/** Diagnostic presence-only reader. Never use this alone to authorize read-only rebind. */
+export function observeNativeCallOutputs(
+  rolloutPath: string,
+  turnId: string,
+  identities: readonly NativeCallIdentity[],
+): ReadonlySet<string> {
+  return readNativeCallOutputEvidence(rolloutPath, turnId, identities)?.recorded ?? new Set();
 }

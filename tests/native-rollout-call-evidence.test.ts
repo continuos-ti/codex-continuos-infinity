@@ -2,7 +2,8 @@ import { afterAll, afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { observeNativeCallOutputs } from "../src/adapters/chatgpt-web/native-rollout-call-evidence";
+import { observeNativeCallOutputs, readNativeCallOutputEvidence } from "../src/adapters/chatgpt-web/native-rollout-call-evidence";
+import type { BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 
 const turn = "01a06c66-4380-75c6-a0df-318f890ef6de";
 const otherTurn = "01a06c66-4310-75c6-a0df-318f890ef6de";
@@ -32,6 +33,40 @@ function observed(...ids: string[]) {
   return [...observeNativeCallOutputs(path, turn,
     ids.map(callId => ({ callId, tool: toolName(callId) })))].sort();
 }
+
+test("sealed output matching accepts exact text and native text arrays, rejecting unknown representations", () => {
+  const identity = [{ callId: ordinaryCall, tool: "ordinary_tool" }];
+  const textResult = { content: [{ type: "text", text: "private tool output" }] };
+  const matching = (output: unknown, expected: BrokerToolResult = textResult) => {
+    write([taskStarted(turn), tool("function_call", ordinaryCall),
+      { type: "response_item", payload: { type: "function_call_output", call_id: ordinaryCall, output } },
+      taskComplete]);
+    return readNativeCallOutputEvidence(path, turn, identity,
+      new Map([[ordinaryCall, expected]]));
+  };
+  for (const output of ["private tool output", [{ type: "text", text: "private tool output" }],
+    [{ type: "output_text", text: "private tool output" }],
+    [{ type: "input_text", text: "private tool output" }]]) {
+    const evidence = matching(output);
+    expect([...evidence!.recorded]).toEqual([ordinaryCall]);
+    expect([...evidence!.matching]).toEqual([ordinaryCall]);
+  }
+  const originalFingerprint = matching("private tool output")!.fingerprint;
+  for (const output of ["modified tool output", [{ type: "text", text: "modified tool output" }],
+    [{ type: "text", text: "private tool output", additional: "unverified" }],
+    [{ type: "input_image", image_url: "data:image/png;base64,eA==" }], null]) {
+    const evidence = matching(output);
+    expect([...evidence!.recorded]).toEqual([ordinaryCall]);
+    expect([...evidence!.matching]).toEqual([]);
+  }
+  expect(matching("modified tool output")!.fingerprint).not.toBe(originalFingerprint);
+  expect([...matching("private tool output", { ...textResult, isError: true })!.matching]).toEqual([]);
+  expect([...matching("private tool output", { ...textResult, _meta: { private: true } })!.matching]).toEqual([]);
+  expect([...matching('{"ok":true}', { content: [{ type: "text", text: '{"ok":true}' }],
+    structuredContent: { ok: true } })!.matching]).toEqual([ordinaryCall]);
+  expect([...matching('{"ok":true}', { content: [{ type: "text", text: '{"ok":true}' }],
+    structuredContent: { ok: false } })!.matching]).toEqual([]);
+});
 
 test("native output evidence requires the journal's exact tool name", () => {
   write([taskStarted(turn), tool("function_call", ordinaryCall, undefined, "different_tool"),

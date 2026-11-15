@@ -7,7 +7,7 @@ import { isBrokerOperationStatusContract, type BrokerCallEvent, type BrokerCallE
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import type { ChatGptRootThreadMetadata, ChatGptThreadSpawnLineage } from "./environment";
 import { nativeBrokerOwnerDigest } from "./native-broker-owner";
-import { observeNativeCallOutputs } from "./native-rollout-call-evidence";
+import { readNativeCallOutputEvidence } from "./native-rollout-call-evidence";
 import { BrokerResultVault, captureBrokerResultFileEvidence, vaultDirectoryForJournal,
   type ResultIdentity } from "./sealed-broker-results";
 import type { BrokerToolResult } from "./turn-broker";
@@ -338,7 +338,7 @@ export type AuthenticatedBrokerRecoverySnapshot = {
 } | {
   status: "verified_native_recovery_snapshot";
   /** Complete bounded inventory for the current native owner, with individually sealed results. */
-  /** Native output presence is diagnostic only and cannot reconcile provider-side effects. */
+  /** Read-only output evidence requires payload equivalence with its sealed result. */
   calls: Array<{ call: BrokerRecoveryCall; resultEvidence: AuthenticatedBrokerResultEvidence;
     nativeOutputEvidence: "recorded_in_native_rollout" | "unavailable" }>;
   replayAuthorized: false;
@@ -393,8 +393,10 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
     traceId: call.traceId, callId: call.callId, tool: call.tool, nativeOwnerDigest: ownerDigest,
   }));
   const beforeVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
-  const nativeOutputs = observeNativeCallOutputs(initialOwner.rolloutPath, input.turnId,
-    owned.map(call => ({ callId: call.callId, tool: call.tool })));
+  const nativeIdentities = owned.map(call => ({ callId: call.callId, tool: call.tool }));
+  const nativeBefore = readNativeCallOutputEvidence(initialOwner.rolloutPath, input.turnId,
+    nativeIdentities);
+  const sealedReadOnlyResults = new Map<string, BrokerToolResult>();
   let totalResultBytes = 0;
   const calls = owned.map(call => {
     let resultEvidence: AuthenticatedBrokerResultEvidence = {
@@ -413,10 +415,11 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
           status: "verified_result_evidence", result,
           replayAuthorized: false, externalEffectsReconciled: false,
         };
+        if (call.readOnly === true) sealedReadOnlyResults.set(call.callId, result);
       }
     }
     return { call, resultEvidence,
-      nativeOutputEvidence: nativeOutputs.has(call.callId) ? "recorded_in_native_rollout" as const : "unavailable" as const };
+      nativeOutputEvidence: "unavailable" as "recorded_in_native_rollout" | "unavailable" };
   });
 
   // Fingerprint covers every record's bytes and every pending filename, so modifications
@@ -429,10 +432,18 @@ export function readAuthenticatedBrokerRecoverySnapshot(input: {
   const afterVault = captureBrokerResultFileEvidence(vaultDirectory, resultIdentities);
   if (beforeVault.pendingPublication || afterVault.pendingPublication
     || beforeVault.fingerprint !== afterVault.fingerprint) return unavailable();
-  // A native tool output may arrive while sealed results are being decrypted.
-  const currentNativeOutputs = observeNativeCallOutputs(initialOwner.rolloutPath, input.turnId,
-    owned.map(call => ({ callId: call.callId, tool: call.tool })));
-  if (!isDeepStrictEqual(currentNativeOutputs, nativeOutputs)) return unavailable();
+  // Reject native appends and in-place rewrites across sealed-result decryption, even
+  // when the same call IDs remain present. Never expose output bodies in the snapshot.
+  const nativeAfter = readNativeCallOutputEvidence(initialOwner.rolloutPath, input.turnId,
+    nativeIdentities, sealedReadOnlyResults);
+  if (nativeBefore?.fingerprint !== nativeAfter?.fingerprint
+    || !isDeepStrictEqual(nativeBefore?.recorded, nativeAfter?.recorded)) return unavailable();
+  for (const entry of calls) {
+    const confirmed = entry.call.readOnly === true
+      ? nativeAfter?.matching.has(entry.call.callId)
+      : nativeAfter?.recorded.has(entry.call.callId);
+    entry.nativeOutputEvidence = confirmed ? "recorded_in_native_rollout" : "unavailable";
+  }
   try {
     const currentOwner = resolveCurrentCodexRolloutEnvironment(ownerOptions);
     if (!currentOwner || !isDeepStrictEqual(currentOwner, initialOwner)) return unavailable();

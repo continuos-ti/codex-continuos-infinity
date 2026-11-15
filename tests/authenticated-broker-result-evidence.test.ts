@@ -143,7 +143,7 @@ test("same native turn rebinds once after every previous read-only call has a se
   appendFileSync(rollout, [
     { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
     { type: "response_item", payload: { type: "function_call", call_id: callId, name: "read_tool" } },
-    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "observed" } },
+    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "sensitive result body" } },
   ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
   const nativeIdentity = { threadId, turnId };
   const ownerDigest = nativeBrokerOwnerDigest(nativeIdentity)!;
@@ -193,6 +193,46 @@ test("same native turn rebinds once after every previous read-only call has a se
     broker.revoke(token);
     await expect(broker.register(environment, 30_000, traceId, nativeIdentity))
       .rejects.toThrow("require reconciliation");
+  } finally {
+    await broker.close();
+  }
+});
+
+test("read-only recovery refuses native outputs that disagree with the sealed result", async () => {
+  const rollout = nativeRollout();
+  const prefix = readFileSync(rollout, "utf8");
+  const ownerDigest = nativeBrokerOwnerDigest({ threadId, turnId })!;
+  for (const event of ["queued", "delivery_possible", "result_received"] as const) {
+    recordBrokerCallEvent({ directory, traceId, callId, event, wireName: "read_tool",
+      nativeOwnerDigest: ownerDigest, readOnly: true });
+  }
+  new BrokerResultVault(vaultDirectoryForJournal(directory)).seal({
+    traceId, callId, tool: "read_tool", nativeOwnerDigest: ownerDigest,
+  }, result);
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "mismatched-readonly")));
+  try {
+    broker.enableCallJournal(directory);
+    for (const output of [
+      "different result body",
+      JSON.stringify({ content: result.content }),
+      [{ type: "text", text: "different result body" }],
+      [{ type: "text", text: "sensitive result body", unverified: true }],
+      [{ type: "input_image", image_url: "data:image/png;base64,eA==" }],
+      null,
+    ]) {
+      writeFileSync(rollout, prefix + [
+        { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+        { type: "response_item", payload: { type: "function_call", call_id: callId, name: "read_tool" } },
+        { type: "response_item", payload: { type: "function_call_output", call_id: callId, output } },
+      ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
+      const recovered = snapshot();
+      expect(recovered.status).toBe("verified_native_recovery_snapshot");
+      if (recovered.status !== "verified_native_recovery_snapshot") continue;
+      expect(recovered.calls[0]?.resultEvidence.status).toBe("verified_result_evidence");
+      expect(recovered.calls[0]?.nativeOutputEvidence).toBe("unavailable");
+      expect(broker.authorizeAuthenticatedReadOnlyRecovery({ threadId, turnId }, recovered))
+        .toBeUndefined();
+    }
   } finally {
     await broker.close();
   }
@@ -430,6 +470,36 @@ test("recovery snapshot rejects native output evidence added during vault decryp
       { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "returned" } },
     ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
     return value;
+  };
+  try {
+    expect(snapshot()).toEqual({
+      status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+    });
+  } finally {
+    BrokerResultVault.prototype.read = originalRead;
+  }
+  const stable = snapshot();
+  expect(stable.status).toBe("verified_native_recovery_snapshot");
+  if (stable.status !== "verified_native_recovery_snapshot") throw new Error("Expected stable snapshot");
+  expect(stable.calls[0]?.nativeOutputEvidence).toBe("recorded_in_native_rollout");
+});
+
+test("recovery snapshot rejects an in-place native output rewrite while decrypting the vault", () => {
+  const rollout = nativeRollout();
+  const prefix = readFileSync(rollout, "utf8");
+  journal();
+  seal();
+  const writeOutput = (output: string) => writeFileSync(rollout, prefix + [
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { type: "response_item", payload: { type: "function_call", call_id: callId, name: "mutating_tool" } },
+    { type: "response_item", payload: { type: "function_call_output", call_id: callId, output } },
+  ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
+  writeOutput("initial output");
+  const originalRead = BrokerResultVault.prototype.read;
+  BrokerResultVault.prototype.read = function (identity) {
+    const sealed = originalRead.call(this, identity);
+    writeOutput("rewritten output");
+    return sealed;
   };
   try {
     expect(snapshot()).toEqual({

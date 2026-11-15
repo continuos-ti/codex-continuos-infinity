@@ -239,7 +239,7 @@ test("a crashed read-only broker rebinds its native turn only after the original
         sandbox_policy: { type: "danger-full-access" }, permission_profile: { type: "disabled" } } },
       { type: "event_msg", payload: { type: "task_started", turn_id: identity.turnId } },
       { type: "response_item", payload: { type: "function_call", call_id: callId, name: "read_tool" } },
-      { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "observed" } },
+      { type: "response_item", payload: { type: "function_call_output", call_id: callId, output: "private-result-not-in-journal" } },
     ].map(entry => JSON.stringify(entry)).join("\n") + "\n");
 
     const previousKey = process.env.CODEX_INFINITY_RESULT_VAULT_KEY;
