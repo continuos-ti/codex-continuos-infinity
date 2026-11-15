@@ -14,9 +14,9 @@ import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CodexMessage, CodexTool } from "../src/types";
-import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { inspectSettledBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { attachBrokerOperationId, brokerOperationStatusForTool } from "../src/adapters/chatgpt-web/broker-operation-identity";
+import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { extendBrokerProviderRecoveryChecks, observeBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
 import { callTurnBroker, TurnBroker, type BrokerToolRequest, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
@@ -364,17 +364,16 @@ async function main(): Promise<void> {
       throw new Error("The provider epoch changed across the staging restart.");
     }
 
-    const recoveryCall: BrokerRecoveryCall = {
-      traceId: "staging-provider-restart",
-      callId: operationId,
-      tool: commandWireName,
-      state: "delivery_unknown",
-      readOnly: false,
-      providerEpoch,
-      operationStatus: statusContract,
-      resultRecoverable: false,
-      replayAuthorized: false,
-    };
+    // Recover using the exact durable record written by the crashed broker.
+    // Synthesizing a similar record here could hide lost metadata or a
+    // mismatched provider contract in the actual journal.
+    const recoveryCall = orphanedCalls[0]!;
+    if (recoveryCall.traceId !== originalTrace
+      || recoveryCall.operationStatus?.effectScope !== "tracked_process"
+      || recoveryCall.operationStatus?.statusTool !== statusContract.statusTool
+      || recoveryCall.nativeOwnerDigest !== nativeBrokerOwnerDigest(originalOwner)) {
+      throw new Error("The original broker journal lacks authenticatable operation recovery metadata.");
+    }
     const recoveryChecks = prepareBrokerProviderRecoveryChecks([recoveryCall], asCodexTools(secondTools));
     if (recoveryChecks.length !== 1) {
       throw new Error("Infinity could not build a read-only recovery query from the restarted provider schema.");

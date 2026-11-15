@@ -2,8 +2,9 @@ import { writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../../src/adapters/chatgpt-web/turn-broker";
 
-const [socketPath, directory, readyPath] = process.argv.slice(2);
+const [socketPath, directory, readyPath, mode = "pending"] = process.argv.slice(2);
 if (!socketPath || !directory || !readyPath) throw new Error("Missing broker test fixture paths");
+if (mode !== "pending" && mode !== "completed") throw new Error("Unknown broker crash fixture mode");
 
 const broker = TurnBroker.forSocket(socketPath);
 broker.enableCallJournal(directory);
@@ -25,11 +26,23 @@ const { bindingId } = await callTurnBroker<{ bindingId: string }>(broker.socketP
 // The parent kills this process after the broker has delivered the call.
 // Do not send a result or a retirement event: a real process crash leaves
 // delivery_possible as the last durable record.
-void callTurnBroker<BrokerToolResult>(broker.socketPath, {
+const invocation = callTurnBroker<BrokerToolResult>(broker.socketPath, {
   method: "invoke", bindingId, wireName: "mutating_tool", arguments: { privateText: "never-journal" },
-}, null, AbortSignal.timeout(60_000)).catch(() => {});
+}, null, AbortSignal.timeout(60_000));
+// A pending call is purposefully abandoned by the parent. Attach a rejection
+// handler for the crash boundary without removing the live invocation.
+void invocation.catch(() => {});
 const delivered = await broker.nextToolBatch(token);
 if (delivered.length !== 1 || delivered[0]?.wireName !== "mutating_tool") {
   throw new Error("Expected one delivered native broker invocation");
+}
+if (mode === "completed") {
+  const result: BrokerToolResult = {
+    content: [{ type: "text", text: "private-result-not-in-journal" }],
+  };
+  broker.completeTool(token, delivered[0].callId, result);
+  if (JSON.stringify(await invocation) !== JSON.stringify(result)) {
+    throw new Error("Broker did not return the exact sealed result");
+  }
 }
 writeFileSync(readyPath, delivered[0].callId);

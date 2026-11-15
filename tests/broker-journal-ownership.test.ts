@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { defaultBrokerEndpoint } from "../src/config";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { inspectSettledBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
+import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/chatgpt-web/sealed-broker-results";
 import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 test("brokers with different sockets cannot share one call journal, including after listening", async () => {
@@ -120,6 +122,57 @@ test("a crashed broker releases its cross-process journal lock and preserves the
     if (child.exitCode === null) child.kill();
     await child.exited;
     await parent.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a crash after result delivery retains the sealed result across processes without granting replay", async () => {
+  const root = socketFixtureRoot("infinity-result-crash-");
+  const directory = join(root, "diagnostics", "broker-calls");
+  const readyPath = join(root, "child-completed");
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures", "broker-journal-owner.ts"),
+    defaultBrokerEndpoint(join(root, "child")), directory, readyPath, "completed"], {
+    stdout: "ignore", stderr: "pipe",
+  });
+  const successor = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "successor")));
+  const identity = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+  };
+  try {
+    for (let attempt = 0; attempt < 400 && !existsSync(readyPath); attempt++) {
+      if (child.exitCode !== null) throw new Error(`Completed broker fixture terminated: ${child.exitCode}`);
+      await Bun.sleep(25);
+    }
+    expect(existsSync(readyPath)).toBe(true);
+    const deliveredId = readFileSync(readyPath, "utf8");
+    expect(deliveredId).toMatch(/^call_[A-Za-z0-9_-]{32}$/);
+    child.kill();
+    await child.exited;
+
+    successor.enableCallJournal(directory);
+    const records = inspectSettledBrokerCallJournal(directory);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      traceId: "123456abcdef", callId: deliveredId, tool: "mutating_tool",
+      state: "result_unavailable", replayAuthorized: false,
+    });
+    expect(JSON.stringify(records)).not.toContain("private-result-not-in-journal");
+    const digest = nativeBrokerOwnerDigest(identity);
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    const saved = new BrokerResultVault(vaultDirectoryForJournal(directory)).read({
+      traceId: "123456abcdef", callId: deliveredId, tool: "mutating_tool",
+      nativeOwnerDigest: digest!,
+    });
+    expect(saved).toEqual({ content: [{ type: "text", text: "private-result-not-in-journal" }] });
+    await expect(successor.register({
+      cwd: root, roots: [root], writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+    }, 20_000, "123456abcdef", identity)).rejects.toThrow("reconciliation");
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await child.exited;
+    await successor.close();
     rmSync(root, { recursive: true, force: true });
   }
 });
