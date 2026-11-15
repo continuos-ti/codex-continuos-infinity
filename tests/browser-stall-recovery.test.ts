@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   CHATGPT_COMPLETION_ACTION_GRACE_MS,
   CHATGPT_SILENT_TURN_RECOVERY_PROBE_MS,
+  ChatGptCompletionTracker,
   ChatGptTurnDomHealthTracker,
   shouldProbeChatGptSilentTurnRecovery,
   shouldRecheckChatGptSilentTurnFinalAnswer,
@@ -81,4 +82,28 @@ test("missing final-action health error triggers a fresh DOM probe before termin
   expect(shouldRecheckChatGptSilentTurnFinalAnswer(
     "ChatGPT response DOM disappeared while the browser turn was active")).toBe(false);
   expect(shouldRecheckChatGptSilentTurnFinalAnswer(undefined)).toBe(false);
+});
+
+test("a rendered partial answer and settled MCP calls cannot replace the final-turn action", () => {
+  // Regression for an accepted turn with rendered Markdown and completed MCP calls,
+  // but without evidence that ChatGPT finalized the bound assistant response.
+  // Copy/actions inside intermediate cards are not the final-turn action.
+  const tracker = new ChatGptCompletionTracker(500, 1_000);
+  const response = {
+    responsePresent: true,
+    running: false,
+    currentText: "A partial answer after several tool calls",
+    currentHtml: "<p>A partial answer after several tool calls</p>",
+    completionActionVisible: false,
+    externalToolCallsInFlight: false,
+  };
+  expect(tracker.update(response, 0)).toBe(false);
+  expect(tracker.update(response, 600_000)).toBe(false);
+  expect(shouldProbeChatGptSilentTurnRecovery({
+    ...idle,
+    currentText: response.currentText,
+  }, 90_000, false)).toBe(true);
+  // A final action has to become visible and remain stable before completion.
+  expect(tracker.update({ ...response, completionActionVisible: true }, 600_001)).toBe(false);
+  expect(tracker.update({ ...response, completionActionVisible: true }, 600_502)).toBe(true);
 });
