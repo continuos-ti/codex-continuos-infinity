@@ -27,6 +27,7 @@ test("runtime bundling leaves its output intact when Bun runs from that output",
     expect(readFileSync(marker, "utf8")).toBe("retained");
     expect(existsSync(bun)).toBe(true);
   } finally {
-    rmSync(output, { recursive: true, force: true });
+    // Windows can retain a short-lived executable handle after spawnSync exits.
+    rmSync(output, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
   }
 });
