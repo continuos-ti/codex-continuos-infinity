@@ -145,7 +145,11 @@ export function observeBrokerProviderRecoveryChecks(
       && namespacedToolName(message.toolNamespace, message.toolName) === check.request.wireName) {
       try {
         const text = typeof message.content === "string" ? message.content
-          : message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
+          : message.content.length === 1 && message.content[0]?.type === "text"
+            ? message.content[0].text : undefined;
+        // A mixed or fragmented native result can conceal conflicting provider evidence.
+        // Treat only one complete text body as an attributable status response.
+        if (text === undefined) throw new Error("Provider status result must be a single text body");
         const value: unknown = JSON.parse(text);
         const record = value && typeof value === "object" && !Array.isArray(value)
           ? value as Record<string, unknown> : undefined;

@@ -127,6 +127,27 @@ test("observes provider status without revealing command output or authorizing r
   assert.equal(JSON.stringify(completed).includes("sensitive"), false);
 });
 
+test("accepts a single native text status but rejects mixed or fragmented result content", () => {
+  const check = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  const reply = result(check.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: 0,
+  });
+  const image = { type: "image" as const, imageUrl: "data:image/png;base64,AA==" };
+  const text = { type: "text" as const, text: reply.content as string };
+  const status = (content: CodexToolResultMessage["content"]) => observeBrokerProviderRecoveryChecks(
+    [check], [issued(check), { ...reply, content }],
+  ).observations[0]!.providerStatus;
+
+  assert.equal(status([text]), "completed");
+  for (const content of [
+    [text, image], [image, text], [text, { type: "text" as const, text: "" }],
+    [{ type: "text" as const, text: text.text.slice(0, 12) },
+      { type: "text" as const, text: text.text.slice(12) }],
+  ]) {
+    assert.equal(status(content), "unverified");
+  }
+});
+
 test("treats stale identity, errors, duplicate outputs and ambiguous provider tools as unverified", () => {
   const checks = prepareBrokerProviderRecoveryChecks([recoveryCall], tools);
   const checkId = checks[0]!.request.callId;
