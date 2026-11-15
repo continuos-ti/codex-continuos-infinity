@@ -120,6 +120,8 @@ async function main(): Promise<void> {
 
   let first: ServerSession | undefined;
   let second: ServerSession | undefined;
+  let originalBroker: TurnBroker | undefined;
+  let originalSuccessor: TurnBroker | undefined;
   let broker: TurnBroker | undefined;
   let successor: TurnBroker | undefined;
   let commandStarted = false;
@@ -196,7 +198,6 @@ async function main(): Promise<void> {
       throw new Error("windows_command_result is not declared read-only.");
     }
 
-    const operationId = `call_${randomBytes(24).toString("base64url")}`;
     const markerLiteral = markerPath.replace(/'/g, "''");
     const command = [
       `Start-Sleep -Seconds ${commandDurationSeconds}`,
@@ -204,18 +205,52 @@ async function main(): Promise<void> {
       "Write-Output 'completed'",
       "exit 0",
     ].join("; ");
+    // Dispatch the mutating command through the real broker IPC. The broker owns
+    // the operation ID; a fake client-chosen ID would not prove the crash fence.
+    const originalJournal = join(root, "original-broker-journal");
+    mkdirSync(originalJournal, { recursive: true });
+    const originalOwner = { threadId: randomUUID(), turnId: randomUUID() };
+    const originalEnvironment = {
+      cwd: stagingRoot, roots: [stagingRoot], writableRoots: [stagingRoot],
+      sandboxPolicy: { type: "dangerFullAccess" as const }, tools: codexTools,
+    };
+    const originalTrace = randomBytes(6).toString("hex");
+    originalBroker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "original-broker")));
+    originalBroker.enableCallJournal(originalJournal);
+    const originalToken = await originalBroker.register(originalEnvironment, 60_000, originalTrace, originalOwner);
+    const originalClaim = await callTurnBroker<{ bindingId: string }>(originalBroker.socketPath, {
+      method: "claim", token: originalToken,
+    });
+    const originalInvocation = callTurnBroker<BrokerToolResult>(originalBroker.socketPath, {
+      method: "invoke", bindingId: originalClaim.bindingId, wireName: commandWireName,
+      arguments: { command, cwd: stagingRoot, wait_seconds: 0 },
+    }, 30_000);
+    // Handle the pending rejection before it can become an unhandled promise.
+    // Require an explicit owner-revocation error, not an unrelated timeout.
+    const originalOutcome = originalInvocation.then(() => "unexpected_success", error =>
+      error instanceof Error ? error.message : String(error));
+    const originalBatch = await originalBroker.nextToolBatch(originalToken);
+    const originalCall = originalBatch[0];
+    if (originalBatch.length !== 1 || !originalCall || originalCall.readOnly !== false
+      || originalCall.wireName !== commandWireName) {
+      throw new Error("The original mutating command did not cross the Infinity broker.");
+    }
+    const operationId = originalCall.callId;
+    const brokerArguments = originalCall.arguments ?? {};
+    if (originalCall.providerEpoch !== providerEpoch
+      || JSON.stringify(brokerArguments) !== JSON.stringify({ command, cwd: stagingRoot, wait_seconds: 0 })) {
+      throw new Error("The broker changed the queued command before the adapter received it.");
+    }
+    // Match the real adapter boundary: it attaches the durable identity only
+    // after receiving the broker's original operation ID and tool metadata.
     const preparedCommand = attachBrokerOperationId({
-      callId: operationId,
-      wireName: commandWireName,
-      freeform: false,
-      readOnly: false,
-      providerEpoch,
-      operationStatus: statusContract,
+      callId: operationId, wireName: commandWireName, freeform: false,
+      readOnly: false, providerEpoch, operationStatus: statusContract,
       arguments: { command, cwd: stagingRoot, wait_seconds: 0 },
     }, codexTools);
     const commandArguments = preparedCommand.arguments ?? {};
     if (commandArguments.operation_id !== operationId || commandArguments.provider_epoch !== providerEpoch) {
-      throw new Error("Infinity did not inject the original broker operation ID and provider epoch.");
+      throw new Error("Infinity did not preserve the broker-owned operation ID and provider epoch.");
     }
 
     const started = parseToolResult(await first.client.callTool({
@@ -229,6 +264,39 @@ async function main(): Promise<void> {
     if (started.provider_epoch !== providerEpoch) {
       throw new Error("windows_command returned a different provider epoch.");
     }
+
+    // Simulate losing the broker after provider acceptance but before recording
+    // its result. The durable journal must retain uncertainty and fence the
+    // original native turn, while the provider continues the command exactly once.
+    await originalBroker.close();
+    if (!/Codex turn binding was revoked/.test(await originalOutcome)) {
+      throw new Error("The interrupted broker did not explicitly revoke its pending invocation.");
+    }
+    originalBroker = undefined;
+    const orphanedCalls = inspectSettledBrokerCallJournal(originalJournal);
+    if (orphanedCalls.length !== 1 || orphanedCalls[0]?.callId !== operationId
+      || orphanedCalls[0]?.state !== "retired_uncertain" || orphanedCalls[0]?.readOnly !== false
+      || orphanedCalls[0]?.providerEpoch !== providerEpoch) {
+      throw new Error("The original broker lost its uncertain mutating call evidence.");
+    }
+    if (JSON.stringify(orphanedCalls).includes(command)
+      || JSON.stringify(orphanedCalls).includes(markerPath)) {
+      throw new Error("The broker journal leaked private command arguments.");
+    }
+    originalSuccessor = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "original-broker-successor")));
+    originalSuccessor.enableCallJournal(originalJournal);
+    let originalTurnFenced = false;
+    try {
+      await originalSuccessor.register(originalEnvironment, 60_000, originalTrace, originalOwner);
+    } catch (error) {
+      originalTurnFenced = error instanceof Error && /reconciliation/.test(error.message);
+      if (!originalTurnFenced) throw error;
+    }
+    if (!originalTurnFenced) {
+      throw new Error("The replacement broker accepted an unreconciled mutating native turn.");
+    }
+    await originalSuccessor.close();
+    originalSuccessor = undefined;
 
     const beforeRestart = parseToolResult(await first.client.callTool({
       name: "windows_command_result",
@@ -500,6 +568,9 @@ async function main(): Promise<void> {
       catalogStableAcrossRestart: true,
       providerEpochStable: true,
       brokerOperationIdentityVerified: true,
+      originalMutatingBrokerDispatchVerified: true,
+      originalBrokerJournalState: "retired_uncertain",
+      originalBrokerRecoveryFenceVerified: true,
       brokerReadOnlyRecoveryQueryVerified: true,
       brokerStatusObservationVerified: true,
       followupStatusVerified,
@@ -516,6 +587,8 @@ async function main(): Promise<void> {
       sourceUnchanged,
     }, null, 2));
   } finally {
+    await originalSuccessor?.close();
+    await originalBroker?.close();
     await successor?.close();
     await broker?.close();
     await closeServer(second);
