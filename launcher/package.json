@@ -20,6 +20,7 @@
     "smoke:package": "bun run scripts/smoke-package.cjs --portable",
     "smoke:package:installed": "bun run scripts/smoke-package.cjs",
     "smoke:package:uninstall": "bun run scripts/smoke-package.cjs --verify-uninstall",
+    "smoke:package:portable-repair": "bun run scripts/smoke-package.cjs --portable --verify-repair",
     "test": "node --test tests/*.test.cjs",
     "start": "electron ."
   },

@@ -1,5 +1,11 @@
 # Instalação e build
 
+### Recuperação do runtime empacotado e preservação do perfil — 15/11/2026
+
+O smoke Windows agora aceita `bun run --cwd launcher smoke:package:portable-repair`. Ele extrai o pacote NSIS em um diretório temporário, inicia o launcher, corrompe intencionalmente apenas a cópia temporária de `app/cli.js`, inicia novamente o mesmo launcher e exige restauração do SHA-256 original, integridade do manifesto e novo marcador de prontidão. A execução portátil local concluiu com `PACKAGED_LAUNCHER_RUNTIME_REPAIR_SMOKE_OK win32/x64` e `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`, código zero.
+
+O `smoke:package:uninstall`, reservado ao runner Windows descartável do GitHub Actions, também executa essa recuperação antes de desinstalar. Após a desinstalação ele exige a preservação de um marcador de preferências sintéticas, de um diretório de versão anterior simulado e do runtime versionado validado. O teste usa um perfil isolado sob a pasta temporária do runner. Esse cenário verifica preservação de arquivos e autorreparo do pacote. A migração de sessões autenticadas e o rollback funcional para uma versão anterior ainda exigem homologação DEV independente.
+
 ## Configuração de transporte MCP (12/11/2026)
 
 O launcher do Infinity permite configurar o modo `full` Automatic com gateway Cloudflare externo (`external-cloudflare`). Na tela de MCP, selecione **External Cloudflare gateway (OAuth)**, ajuste os endpoints HTTPS e a identidade esperada do serviço e execute a configuração. O CLI do setup e o DEV isolado também aceitam `--mcp-transport external-cloudflare` com `--external-mcp-url`, `--external-health-url` e `--external-service` opcionais. A ausência dos três campos opcionais utiliza os endpoints públicos de referência documentados em `INTEGRATIONS.md`.

@@ -13,10 +13,14 @@ const launcherManifest = JSON.parse(
 const expectedVersion = launcherManifest.version;
 const portable = process.argv.includes("--portable");
 const verifyUninstall = process.argv.includes("--verify-uninstall");
+const verifyRepair = process.argv.includes("--verify-repair") || verifyUninstall;
 if (verifyUninstall && (portable || process.platform !== "win32"
   || process.env.CI !== "true" || process.env.GITHUB_ACTIONS !== "true"
   || process.env.RUNNER_OS !== "Windows")) {
   throw new Error("NSIS uninstall smoke requires an explicit disposable Windows GitHub Actions runner");
+}
+if (verifyRepair && (process.platform !== "win32" || (!portable && !verifyUninstall))) {
+  throw new Error("Packaged runtime repair smoke requires portable Windows mode or an approved disposable CI runner");
 }
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-package-smoke-"));
 const markerPath = path.join(scratch, "ready.json");
@@ -123,6 +127,29 @@ function verifyWindowsUninstall(installLocation, executable) {
   throw new Error("NSIS uninstall did not remove the registered install and executable within 45 seconds");
 }
 
+function verifyPackagedRuntimeRepair(command, args, env, installedRuntime) {
+  const entrypoint = path.join(installedRuntime, "app", "cli.js");
+  const originalDigest = sha256File(entrypoint);
+  fs.appendFileSync(entrypoint, "\n// interrupted upgrade fixture\n");
+  if (sha256File(entrypoint) === originalDigest) {
+    throw new Error("Runtime repair fixture did not change the installed payload");
+  }
+  fs.rmSync(markerPath, { force: true });
+  run(command, args, { env, timeout: 90_000 });
+  if (!fs.existsSync(markerPath)) {
+    throw new Error("Packaged launcher did not recover its runtime readiness marker");
+  }
+  const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+  if (marker.ok !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion
+    || sha256File(entrypoint) !== originalDigest) {
+    throw new Error("Packaged launcher did not restore its original runtime after corruption");
+  }
+  validateRuntimeBundle(installedRuntime, {
+    version: expectedVersion, platform: process.platform, arch: process.arch,
+  });
+  process.stdout.write(`PACKAGED_LAUNCHER_RUNTIME_REPAIR_SMOKE_OK ${process.platform}/${process.arch}\n`);
+}
+
 function artifact(pattern, label) {
   const matches = fs.readdirSync(artifactsDirectory)
     .filter((name) => pattern.test(name))
@@ -168,6 +195,13 @@ try {
   let command;
   let args;
   const env = smokeEnvironment();
+  const previousState = path.join(coreHome, "previous-profile-state.fixture");
+  const previousRuntime = path.join(coreHome, "versions", "previous-release.fixture");
+  if (verifyUninstall) {
+    fs.mkdirSync(previousRuntime, { recursive: true });
+    fs.writeFileSync(previousState, "independent-user-settings\n");
+    fs.writeFileSync(path.join(previousRuntime, "checkpoint.txt"), "previous-runtime-checkpoint\n");
+  }
 
   if (process.platform === "darwin") {
     const archive = artifact(/-mac-(?:arm64|x64)\.zip$/, "macOS launcher archive");
@@ -241,9 +275,22 @@ try {
     || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
     throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
   }
+  if (verifyRepair) verifyPackagedRuntimeRepair(command, args, env, installedRuntime);
   process.stdout.write(`${portable && process.platform === "win32"
     ? "PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK" : "PACKAGED_LAUNCHER_SMOKE_OK"} ${process.platform}/${process.arch}\n`);
-  if (verifyUninstall) verifyWindowsUninstall(installedLocation, executable);
+  if (verifyUninstall) {
+    verifyWindowsUninstall(installedLocation, executable);
+    if (fs.readFileSync(previousState, "utf8") !== "independent-user-settings\n"
+      || fs.readFileSync(path.join(previousRuntime, "checkpoint.txt"), "utf8")
+        !== "previous-runtime-checkpoint\n"
+      || !fs.existsSync(installedRuntime)) {
+      throw new Error("NSIS uninstall changed the isolated user profile or durable runtime");
+    }
+    validateRuntimeBundle(installedRuntime, {
+      version: expectedVersion, platform: process.platform, arch: process.arch,
+    });
+    process.stdout.write(`PACKAGED_LAUNCHER_PROFILE_PRESERVATION_OK ${process.platform}/${process.arch}\n`);
+  }
 } finally {
   try {
     if (macAppBundle) {

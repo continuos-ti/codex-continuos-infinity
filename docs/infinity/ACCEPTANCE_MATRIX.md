@@ -1,5 +1,9 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### CI e recuperação do pacote Windows — 15/11/2026
+
+Os cinco jobs do run GitHub Actions `43710390106`, referente ao commit `5032365d7d50dff21ba994e02acab81829165453`, terminaram em `completed/success`, incluindo os três sistemas Windows, Ubuntu e macOS, `secret-scan` e `actionlint`. O smoke Windows foi estendido para provar reparo transacional do runtime do pacote e preservação de arquivos sintéticos do perfil e de uma versão anterior durante a desinstalação em runner descartável. Antes dessa execução CI ampliada, o novo comando portátil `smoke:package:portable-repair` passou localmente com restauração do conteúdo original de `app/cli.js`, validação de manifesto e marcador de prontidão. O novo teste de desinstalação permanece dependente do próximo run CI; não equivale a rollback funcional de sessão autenticada.
+
 ### CI multiplataforma do commit `3685c374` — 15/11/2026
 
 O GitHub Actions run `43696646405` foi consultado diretamente na API do GitHub. Os cinco jobs terminaram com `completed/success`: `verify (macos-15-intel)` às 09:10:27 UTC, `verify (windows-latest)` às 09:05:59 UTC, `verify (ubuntu-24.04)` às 09:01:37 UTC, `secret-scan` às 08:54:16 UTC e `actionlint` às 08:54:28 UTC. Esta evidência refere-se ao commit `3685c374647e169c372763e895bb002d70f32271`, que valida transições de `provider epoch` na recuperação do broker.
