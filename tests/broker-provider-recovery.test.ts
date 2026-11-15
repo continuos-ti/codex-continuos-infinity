@@ -177,6 +177,26 @@ test("rejects contradictory provider epochs and incomplete completed statuses", 
   });
 });
 
+test("rejects conflicting identities or execution claims in provider status envelopes", () => {
+  const check = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  const observe = (data: unknown) => observeBrokerProviderRecoveryChecks([check], [
+    issued(check), result(check.request.callId, data),
+  ]).observations[0]!.providerStatus;
+  const completed = { job_id: originalCallId, provider_epoch: providerEpoch,
+    status: "completed", exit_code: 0 };
+  assert.equal(observe({ ...completed, operation_id: `call_${"d".repeat(32)}` }), "unverified");
+  assert.equal(observe({ ...completed, job_id: `call_${"d".repeat(32)}`,
+    operation_id: originalCallId }), "unverified");
+  assert.equal(observe({ job_id: `call_${"d".repeat(32)}`,
+    result: completed }), "unverified");
+  assert.equal(observe({ operation_id: originalCallId, provider_epoch: "c".repeat(32),
+    result: completed }), "unverified");
+  assert.equal(observe({ status: "running", result: completed }), "unverified");
+  assert.equal(observe({ exit_code: 1, result: completed }), "unverified");
+  assert.equal(observe({ ...completed, operation_id: originalCallId }), "completed");
+  assert.equal(observe({ job_id: originalCallId, result: completed }), "completed");
+});
+
 test("requires the exact native status call before accepting a provider result", () => {
   const check = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
   const reply = result(check.request.callId, {

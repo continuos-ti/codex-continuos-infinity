@@ -154,7 +154,23 @@ export function observeBrokerProviderRecoveryChecks(
           && nested.provider_epoch !== check.providerEpoch;
         const completedWithExitCode = nested?.status !== "completed"
           || Number.isSafeInteger(nested.exit_code);
-        if (nested && (nested.job_id === check.originalCallId || nested.operation_id === check.originalCallId)
+        // A provider may use either name, but conflicting echoed IDs cannot identify
+        // the original operation. Do not accept a matching job_id alongside an unrelated
+        // operation_id (or the reverse), including when the tool wraps its result.
+        const echoedIds = nested ? [nested.job_id, nested.operation_id]
+          .filter(value => value !== undefined) : [];
+        const outer = nested !== record ? record : undefined;
+        const outerIds = outer ? [outer.job_id, outer.operation_id]
+          .filter(value => value !== undefined) : [];
+        const idsConsistent = echoedIds.length > 0
+          && [...echoedIds, ...outerIds].every(value => value === check.originalCallId);
+        const outerEpochConsistent = outer?.provider_epoch === undefined
+          || outer.provider_epoch === nested?.provider_epoch;
+        const outerStatusConsistent = typeof outer?.status !== "string"
+          || !PROVIDER_STATUSES.has(outer.status) || outer.status === nested?.status;
+        const outerExitConsistent = outer?.exit_code === undefined
+          || outer.exit_code === nested?.exit_code;
+        if (nested && idsConsistent && outerEpochConsistent && outerStatusConsistent && outerExitConsistent
           && (providerChanged ? changedEpoch : matchingEpoch)
           && completedWithExitCode
           && typeof nested.status === "string" && PROVIDER_STATUSES.has(nested.status)) {
