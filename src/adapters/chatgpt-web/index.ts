@@ -31,7 +31,8 @@ import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
-import { attachBrokerOperationId, brokerOperationStatusQueryForCall } from "./broker-operation-identity";
+import { attachBrokerOperationId } from "./broker-operation-identity";
+import { observeBrokerProviderRecoveryChecks, pendingBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "./broker-provider-recovery";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnRoundKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
 import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -275,6 +276,12 @@ function emitToolBatch(
     emit({ type: "tool_call_end" });
   }
   emit({ type: "done", stopReason: "tool_use", endTurn: false, usage });
+}
+
+class BrokerProviderStatusBatch extends Error {
+  constructor(readonly requests: BrokerToolRequest[]) {
+    super("The native Codex turn must verify the previous provider operations before opening a browser session");
+  }
 }
 
 function emitBrowserCompletion(outcome: ChatGptBrowserOutcome, usage: CodexUsage, emit: (event: AdapterEvent) => void): void {
@@ -1356,7 +1363,9 @@ export function createChatGptWebAdapter(
           chatGptTurnSessions.retireAbortedOwnerTurns(ownerKey, abortedTurnIds, executionKey);
         }
         const traceId = chatGptWebTraceId(provider, parsed);
-        const session = await chatGptTurnSessions.getOrCreateAfterOwnerRetirement(
+        let session: ChatGptTurnSession;
+        try {
+          session = await chatGptTurnSessions.getOrCreateAfterOwnerRetirement(
           executionKey,
           ownerKey,
           () => {
@@ -1372,8 +1381,8 @@ export function createChatGptWebAdapter(
                 );
               }
               if (priorStates.length > 0) {
-                // This is an authenticated observation of the stopped process, never a
-                // continuation decision. Keep the startup fence closed for every outcome.
+                // Provider status checks are read-only native calls. Even a completed command
+                // does not prove the operation's external effects or authorize replay.
                 let providerStatusQueries: Array<{
                   callId: string;
                   state: string;
@@ -1381,6 +1390,7 @@ export function createChatGptWebAdapter(
                   arguments: Record<string, unknown>;
                   effectScope: string;
                 }> = [];
+                let nativeStatusObservations = "";
                 try {
                   const snapshot = environmentStore.readBrokerRecoverySnapshot(
                     join(getConfigDir(), "diagnostics", "broker-calls"), parsed,
@@ -1390,22 +1400,36 @@ export function createChatGptWebAdapter(
                       entry.resultEvidence.status === "verified_result_evidence").length;
                     const nativeOutputs = snapshot.calls.filter(entry =>
                       entry.nativeOutputEvidence === "recorded_in_native_rollout").length;
-                    providerStatusQueries = snapshot.calls.flatMap(entry => {
-                      const query = brokerOperationStatusQueryForCall(entry.call, environment?.tools ?? []);
-                      return query ? [{ callId: entry.call.callId, state: entry.call.state, ...query }] : [];
-                    }).slice(0, 16);
+                    const checks = prepareBrokerProviderRecoveryChecks(
+                      snapshot.calls.map(entry => entry.call), environment?.tools ?? [], 64,
+                    );
+                    providerStatusQueries = checks.map(check => ({
+                      callId: check.originalCallId, state: check.state,
+                      wireName: check.request.wireName,
+                      arguments: check.request.arguments ?? {}, effectScope: check.effectScope,
+                    }));
                     console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} calls=${snapshot.calls.length} sealed_results=${sealed} native_outputs=${nativeOutputs} provider_status_queries=${providerStatusQueries.length} replay_authorized=false external_effects_reconciled=false`);
+                    if (checks.length > 0) {
+                      const status = observeBrokerProviderRecoveryChecks(checks, parsed.context.messages);
+                      const pending = pendingBrokerProviderRecoveryChecks(checks, parsed.context.messages);
+                      if (pending.length > 0) {
+                        validateBatchTools(parsed, pending.map(check => check.request));
+                        throw new BrokerProviderStatusBatch(pending.map(check => check.request));
+                      }
+                      nativeStatusObservations = ` Native provider observations (diagnostic only, ${status.observations.length}/${checks.length} replies): ${JSON.stringify(status.observations)}.`;
+                    }
                   } else {
                     console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=unavailable`);
                   }
                 } catch (error) {
+                  if (error instanceof BrokerProviderStatusBatch) throw error;
                   console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=invalid type=${error instanceof Error ? error.name : "unknown"}`);
                 }
                 const reconciliationHint = providerStatusQueries.length > 0
                   ? ` Validated read-only provider status checks are available. Invoke only these tools and arguments, then verify the reported effect scope before resuming: ${JSON.stringify(providerStatusQueries)}`
                   : " No current provider status query passed validation for these calls.";
                 throw new ChatGptWebAdapterError(
-                  `The original native Codex turn has ${priorStates.length} persisted MCP call(s) from an earlier broker process. Reconcile canonical tool results and external effects before resuming the browser turn.${reconciliationHint}`,
+                  `The original native Codex turn has ${priorStates.length} persisted MCP call(s) from an earlier broker process. Reconcile canonical tool results and external effects before resuming the browser turn.${nativeStatusObservations}${reconciliationHint}`,
                   { status: 409, errorType: "invalid_request_error", code: "broker_reconciliation_required",
                     retryable: false },
                 );
@@ -1419,6 +1443,16 @@ export function createChatGptWebAdapter(
           nativeIdentity.threadId,
           chatGptInstructionLineage(parsed),
         );
+        } catch (error) {
+          if (!(error instanceof BrokerProviderStatusBatch)) throw error;
+          emitToolBatch(
+            error.requests, parsed.context.tools ?? [],
+            estimateChatGptWebUsage(parsed, { reasoning: [], toolRequests: error.requests },
+              turnCapabilities, experimentalBiggerContext, experimentalSkillAttachments, provider.chatgptWeb?.appName),
+            emit,
+          );
+          return;
+        }
         const roundKey = chatGptTurnRoundKey(parsed);
         const emitRoundEvents = (events: readonly AdapterEvent[]): void => {
           // Journal the complete synchronous event batch before touching the HTTP observer. If the

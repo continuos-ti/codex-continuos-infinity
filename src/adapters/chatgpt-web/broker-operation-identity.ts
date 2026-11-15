@@ -22,10 +22,15 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function uniqueTool(wireName: string, tools: CodexTool[]): CodexTool | undefined {
+  const matches = tools.filter(candidate => namespacedToolName(candidate.namespace, candidate.name) === wireName);
+  if (matches.length > 1) throw new Error(`Codex tool ${wireName} has ambiguous provider declarations`);
+  return matches[0];
+}
+
 /** Only an explicit structured provider declaration can classify a tool as read-only. */
 export function brokerToolIsReadOnly(wireName: string, tools: CodexTool[]): boolean {
-  const tool = tools.find(candidate =>
-    namespacedToolName(candidate.namespace, candidate.name) === wireName);
+  const tool = uniqueTool(wireName, tools);
   if (!tool || tool.freeform || tool.toolSearch) return false;
   const parameters = asRecord(tool.parameters);
   return parameters?.type === "object"
@@ -34,8 +39,7 @@ export function brokerToolIsReadOnly(wireName: string, tools: CodexTool[]): bool
 }
 
 export function brokerProviderEpochForTool(wireName: string, tools: CodexTool[]): string | undefined {
-  const tool = tools.find(candidate =>
-    namespacedToolName(candidate.namespace, candidate.name) === wireName);
+  const tool = uniqueTool(wireName, tools);
   const parameters = asRecord(tool?.parameters);
   const providerEpoch = parameters?.[PROVIDER_EPOCH_EXTENSION];
   if (providerEpoch === undefined) return undefined;
@@ -54,8 +58,7 @@ export function brokerOperationStatusForTool(
   wireName: string,
   tools: CodexTool[],
 ): BrokerOperationStatusContract | undefined {
-  const tool = tools.find(candidate =>
-    namespacedToolName(candidate.namespace, candidate.name) === wireName);
+  const tool = uniqueTool(wireName, tools);
   const parameters = asRecord(tool?.parameters);
   const declarationValue = parameters?.[OPERATION_STATUS_EXTENSION];
   if (declarationValue === undefined) return undefined;
@@ -177,8 +180,7 @@ export function attachBrokerOperationId(
 ): BrokerToolRequest {
   if (request.freeform) return request;
 
-  const tool = tools.find(candidate =>
-    namespacedToolName(candidate.namespace, candidate.name) === request.wireName);
+  const tool = uniqueTool(request.wireName, tools);
   const parameters = asRecord(tool?.parameters);
   const properties = asRecord(parameters?.properties);
   const hasOperationId = parameters?.[OPERATION_ID_EXTENSION] === true;

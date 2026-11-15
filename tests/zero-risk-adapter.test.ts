@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { spyOn } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -12,6 +13,9 @@ import {
 } from "../src/adapters/chatgpt-web/index";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
+import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
+import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
@@ -142,6 +146,160 @@ test("Zero Risk blocks a previous native MCP dispatch before opening another bro
     const nextTrace = chatGptWebTraceId(config, next);
     expect(broker.priorNativeCallStates(nextTrace, nextIdentity)).toEqual([]);
   } finally {
+    chatGptTurnSessions.clear();
+    await broker.close();
+  }
+}, 20_000);
+
+test("Zero Risk emits bounded native provider status batches and retains the reconciliation fence", async () => {
+  const config = provider("prior-provider-status");
+  const turnId = "44444444-4444-4444-8444-444444444444";
+  const threadId = "55555555-5555-4555-8555-555555555555";
+  const input = request(turnId);
+  const rawBody = input._rawBody as { prompt_cache_key: string; client_metadata: Record<string, string> };
+  rawBody.prompt_cache_key = threadId;
+  rawBody.client_metadata["x-codex-turn-metadata"] = JSON.stringify({ thread_id: threadId, turn_id: turnId });
+
+  const providerEpoch = "a".repeat(32);
+  const statusTool = "mcp__windows_local___windows_command_result";
+  const originalTool = "mcp__windows_local__windows_command";
+  input.context.tools = [
+    {
+      name: "windows_command", namespace: "mcp__windows_local", description: "Execute PowerShell",
+      parameters: {
+        type: "object",
+        properties: { operation_id: { type: "string" }, provider_epoch: { type: "string" } },
+        required: ["operation_id", "provider_epoch"],
+        "x-codex-operation-id": true, "x-codex-provider-epoch": providerEpoch,
+        "x-codex-operation-status": {
+          status_tool: "windows_command_result", operation_id_argument: "job_id",
+          provider_epoch_argument: "provider_epoch", wait_seconds_argument: "wait_seconds",
+          effect_scope: "tracked_process",
+        },
+      },
+    },
+    {
+      name: "_windows_command_result", namespace: "mcp__windows_local", description: "Read durable status",
+      parameters: {
+        type: "object",
+        properties: {
+          job_id: { type: "string" }, provider_epoch: { type: "string" },
+          wait_seconds: { type: "integer", minimum: 0, maximum: 30 },
+        },
+        required: ["job_id", "provider_epoch"], "x-codex-read-only": true,
+      },
+    },
+  ];
+
+  const traceId = chatGptWebTraceId(config, input);
+  const journal = join(root, "prior-provider-status-journal");
+  const calls: BrokerRecoveryCall[] = Array.from({ length: 18 }, (_, index) => ({
+    traceId,
+    callId: `call_${index.toString(16).padStart(32, "0")}`,
+    tool: originalTool,
+    state: "delivery_unknown" as const,
+    readOnly: false,
+    providerEpoch,
+    operationStatus: {
+      statusTool, operationIdArgument: "job_id", providerEpochArgument: "provider_epoch",
+      waitSecondsArgument: "wait_seconds", effectScope: "tracked_process",
+    },
+    resultRecoverable: false,
+    replayAuthorized: false,
+  }));
+  const owner = nativeBrokerOwnerDigest({ threadId, turnId });
+  for (const call of calls) {
+    recordBrokerCallEvent({
+      directory: journal, traceId, callId: call.callId, wireName: originalTool,
+      event: "queued", nativeOwnerDigest: owner,
+    });
+    recordBrokerCallEvent({
+      directory: journal, traceId, callId: call.callId, wireName: originalTool,
+      event: "delivery_possible", nativeOwnerDigest: owner,
+    });
+  }
+  const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
+  broker.enableCallJournal(journal);
+  const snapshot = spyOn(ChatGptThreadEnvironmentStore.prototype, "readBrokerRecoverySnapshot")
+    .mockImplementation(() => ({
+      status: "verified_native_recovery_snapshot",
+      calls: calls.map(call => ({
+        call,
+        resultEvidence: {
+          status: "unavailable", replayAuthorized: false, externalEffectsReconciled: false,
+        },
+        nativeOutputEvidence: "unavailable",
+      })),
+      replayAuthorized: false, externalEffectsReconciled: false,
+    }));
+  let browserStarts = 0;
+  const control: ChatGptZeroRiskManualControl = {
+    async start() { browserStarts++; },
+    async waitSent() {},
+    waitTerminal: noManualTerminal,
+    async markStarted() {},
+    async end() {},
+    async cancel() {},
+  };
+  const adapter = createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control });
+  const checks = prepareBrokerProviderRecoveryChecks(calls, input.context.tools, 64);
+  try {
+    const firstEvents: AdapterEvent[] = [];
+    await adapter.runTurn!(input, { headers: new Headers() }, event => firstEvents.push(event));
+    const firstIds = firstEvents.filter(event => event.type === "tool_call_start").map(event => event.id);
+    expect(firstIds).toEqual(checks.slice(0, 16).map(check => check.request.callId));
+    expect(firstEvents.at(-1)).toMatchObject({ type: "done", stopReason: "tool_use", endTurn: false });
+    expect(browserStarts).toBe(0);
+
+    const continuation = structuredClone(input);
+    for (const check of checks.slice(0, 16)) {
+      continuation.context.messages.push({
+        role: "assistant", timestamp: 3,
+        content: [{
+          type: "toolCall", id: check.request.callId, name: "_windows_command_result",
+          namespace: "mcp__windows_local", arguments: check.request.arguments ?? {},
+        }],
+      });
+    }
+    continuation.context.messages.push({
+      role: "toolResult", timestamp: 4, toolCallId: checks[0]!.request.callId,
+      toolName: "_windows_command_result", toolNamespace: "mcp__windows_local",
+      content: JSON.stringify({
+        job_id: calls[0]!.callId, provider_epoch: providerEpoch, status: "running",
+      }),
+      isError: false,
+    });
+    const secondEvents: AdapterEvent[] = [];
+    await adapter.runTurn!(continuation, { headers: new Headers() }, event => secondEvents.push(event));
+    expect(secondEvents.filter(event => event.type === "tool_call_start").map(event => event.id))
+      .toEqual(checks.slice(16).map(check => check.request.callId));
+    expect(browserStarts).toBe(0);
+
+    const completed = structuredClone(continuation);
+    for (const check of checks.slice(16)) {
+      completed.context.messages.push({
+        role: "assistant", timestamp: 5,
+        content: [{
+          type: "toolCall", id: check.request.callId, name: "_windows_command_result",
+          namespace: "mcp__windows_local", arguments: check.request.arguments ?? {},
+        }],
+      });
+    }
+    for (const check of checks.slice(1)) {
+      completed.context.messages.push({
+        role: "toolResult", timestamp: 6, toolCallId: check.request.callId,
+        toolName: "_windows_command_result", toolNamespace: "mcp__windows_local",
+        content: JSON.stringify({
+          job_id: check.originalCallId, provider_epoch: providerEpoch, status: "completed",
+        }),
+        isError: false,
+      });
+    }
+    await expect(adapter.runTurn!(completed, { headers: new Headers() }, () => {}))
+      .rejects.toMatchObject({ code: "broker_reconciliation_required", retryable: false });
+    expect(browserStarts).toBe(0);
+  } finally {
+    snapshot.mockRestore();
     chatGptTurnSessions.clear();
     await broker.close();
   }
