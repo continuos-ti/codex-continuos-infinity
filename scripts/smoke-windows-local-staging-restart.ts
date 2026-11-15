@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,7 +18,7 @@ import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call
 import { inspectSettledBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { attachBrokerOperationId, brokerOperationStatusForTool } from "../src/adapters/chatgpt-web/broker-operation-identity";
 import { extendBrokerProviderRecoveryChecks, observeBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
-import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker, type BrokerToolRequest, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 
 type JsonObject = Record<string, unknown>;
@@ -93,6 +94,7 @@ async function main(): Promise<void> {
   const sourceRoot = process.env.WINDOWS_LOCAL_SOURCE_ROOT ?? "H:\\Projetos\\windows-local";
   const pythonPath = process.env.WINDOWS_LOCAL_PYTHON ?? join(sourceRoot, ".venv", "Scripts", "python.exe");
   const commandDurationSeconds = Number(process.env.WINDOWS_LOCAL_STAGING_COMMAND_SECONDS ?? "20");
+  const abruptBrokerCrash = process.env.WINDOWS_LOCAL_STAGING_BROKER_CRASH === "1";
   if (!Number.isInteger(commandDurationSeconds) || commandDurationSeconds < 5 || commandDurationSeconds > 180) {
     throw new Error("WINDOWS_LOCAL_STAGING_COMMAND_SECONDS must be an integer from 5 to 180.");
   }
@@ -121,6 +123,7 @@ async function main(): Promise<void> {
   let first: ServerSession | undefined;
   let second: ServerSession | undefined;
   let originalBroker: TurnBroker | undefined;
+  let originalBrokerChild: ReturnType<typeof Bun.spawn> | undefined;
   let originalSuccessor: TurnBroker | undefined;
   let broker: TurnBroker | undefined;
   let successor: TurnBroker | undefined;
@@ -215,23 +218,49 @@ async function main(): Promise<void> {
       sandboxPolicy: { type: "dangerFullAccess" as const }, tools: codexTools,
     };
     const originalTrace = randomBytes(6).toString("hex");
-    originalBroker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "original-broker")));
-    originalBroker.enableCallJournal(originalJournal);
-    const originalToken = await originalBroker.register(originalEnvironment, 60_000, originalTrace, originalOwner);
-    const originalClaim = await callTurnBroker<{ bindingId: string }>(originalBroker.socketPath, {
-      method: "claim", token: originalToken,
-    });
-    const originalInvocation = callTurnBroker<BrokerToolResult>(originalBroker.socketPath, {
-      method: "invoke", bindingId: originalClaim.bindingId, wireName: commandWireName,
-      arguments: { command, cwd: stagingRoot, wait_seconds: 0 },
-    }, 30_000);
-    // Handle the pending rejection before it can become an unhandled promise.
-    // Require an explicit owner-revocation error, not an unrelated timeout.
-    const originalOutcome = originalInvocation.then(() => "unexpected_success", error =>
-      error instanceof Error ? error.message : String(error));
-    const originalBatch = await originalBroker.nextToolBatch(originalToken);
-    const originalCall = originalBatch[0];
-    if (originalBatch.length !== 1 || !originalCall || originalCall.readOnly !== false
+    let originalOutcome: Promise<string> | undefined;
+    let originalCall: BrokerToolRequest | undefined;
+    if (abruptBrokerCrash) {
+      const readyPath = join(root, "original-broker-delivered.json");
+      const configPath = join(root, "original-broker-config.json");
+      const socketPath = defaultBrokerEndpoint(join(root, "original-broker"));
+      writeFileSync(configPath, JSON.stringify({
+        socketPath, journalDirectory: originalJournal, readyPath, traceId: originalTrace,
+        nativeOwner: originalOwner, cwd: stagingRoot, tools: codexTools,
+        wireName: commandWireName, arguments: { command, cwd: stagingRoot, wait_seconds: 0 },
+      }));
+      originalBrokerChild = Bun.spawn([
+        process.execPath, join(repoRoot, "scripts", "fixtures", "broker-staging-crash-owner.ts"), configPath,
+      ], { stdout: "ignore", stderr: "pipe" });
+      for (let attempt = 0; attempt < 400 && !existsSync(readyPath); attempt++) {
+        if (originalBrokerChild.exitCode !== null) {
+          const details = originalBrokerChild.stderr instanceof ReadableStream
+            ? await new Response(originalBrokerChild.stderr).text() : "";
+          throw new Error(`Staging broker fixture exited ${originalBrokerChild.exitCode}: ${details}`);
+        }
+        await Bun.sleep(25);
+      }
+      if (!existsSync(readyPath)) throw new Error("Staging broker did not deliver its pending call");
+      originalCall = JSON.parse(readFileSync(readyPath, "utf8")) as BrokerToolRequest;
+    } else {
+      originalBroker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "original-broker")));
+      originalBroker.enableCallJournal(originalJournal);
+      const originalToken = await originalBroker.register(originalEnvironment, 60_000, originalTrace, originalOwner);
+      const originalClaim = await callTurnBroker<{ bindingId: string }>(originalBroker.socketPath, {
+        method: "claim", token: originalToken,
+      });
+      const originalInvocation = callTurnBroker<BrokerToolResult>(originalBroker.socketPath, {
+        method: "invoke", bindingId: originalClaim.bindingId, wireName: commandWireName,
+        arguments: { command, cwd: stagingRoot, wait_seconds: 0 },
+      }, 30_000);
+      // Handle the pending rejection before it can become an unhandled promise.
+      originalOutcome = originalInvocation.then(() => "unexpected_success", error =>
+        error instanceof Error ? error.message : String(error));
+      const originalBatch = await originalBroker.nextToolBatch(originalToken);
+      if (originalBatch.length !== 1) throw new Error("Expected one original broker call");
+      originalCall = originalBatch[0];
+    }
+    if (!originalCall || originalCall.readOnly !== false
       || originalCall.wireName !== commandWireName) {
       throw new Error("The original mutating command did not cross the Infinity broker.");
     }
@@ -265,17 +294,24 @@ async function main(): Promise<void> {
       throw new Error("windows_command returned a different provider epoch.");
     }
 
-    // Simulate losing the broker after provider acceptance but before recording
-    // its result. The durable journal must retain uncertainty and fence the
-    // original native turn, while the provider continues the command exactly once.
-    await originalBroker.close();
-    if (!/Codex turn binding was revoked/.test(await originalOutcome)) {
-      throw new Error("The interrupted broker did not explicitly revoke its pending invocation.");
+    // Lose the broker after the provider accepted the command, before recording
+    // its result. Both graceful shutdown and forced child death must fence the
+    // original native turn while the provider runs the command exactly once.
+    if (abruptBrokerCrash) {
+      originalBrokerChild!.kill();
+      await originalBrokerChild!.exited;
+      originalBrokerChild = undefined;
+    } else {
+      await originalBroker!.close();
+      if (!/Codex turn binding was revoked/.test(await originalOutcome!)) {
+        throw new Error("The interrupted broker did not explicitly revoke its pending invocation.");
+      }
+      originalBroker = undefined;
     }
-    originalBroker = undefined;
+    const originalJournalState = abruptBrokerCrash ? "delivery_unknown" : "retired_uncertain";
     const orphanedCalls = inspectSettledBrokerCallJournal(originalJournal);
     if (orphanedCalls.length !== 1 || orphanedCalls[0]?.callId !== operationId
-      || orphanedCalls[0]?.state !== "retired_uncertain" || orphanedCalls[0]?.readOnly !== false
+      || orphanedCalls[0]?.state !== originalJournalState || orphanedCalls[0]?.readOnly !== false
       || orphanedCalls[0]?.providerEpoch !== providerEpoch) {
       throw new Error("The original broker lost its uncertain mutating call evidence.");
     }
@@ -569,7 +605,8 @@ async function main(): Promise<void> {
       providerEpochStable: true,
       brokerOperationIdentityVerified: true,
       originalMutatingBrokerDispatchVerified: true,
-      originalBrokerJournalState: "retired_uncertain",
+      originalBrokerJournalState: originalJournalState,
+      abruptBrokerCrash,
       originalBrokerRecoveryFenceVerified: true,
       brokerReadOnlyRecoveryQueryVerified: true,
       brokerStatusObservationVerified: true,
@@ -587,6 +624,10 @@ async function main(): Promise<void> {
       sourceUnchanged,
     }, null, 2));
   } finally {
+    if (originalBrokerChild && originalBrokerChild.exitCode === null) {
+      originalBrokerChild.kill();
+      await originalBrokerChild.exited;
+    }
     await originalSuccessor?.close();
     await originalBroker?.close();
     await successor?.close();
