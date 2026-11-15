@@ -1,5 +1,9 @@
 # Instalação e build
 
+### Smoke de rollback do pacote Windows (15/11/2026)
+
+`node launcher/scripts/smoke-package-rollback.cjs <baseline.exe> <candidate.exe>` exercita quatro inicializacoes de dois instaladores NSIS extraidos em perfis temporarios, incluindo rollback do runtime antigo e nova atualizacao. A execucao de 15/11/2026 entre builds `8c67664` e `bba95a0` passou com `PACKAGED_LAUNCHER_ROLLBACK_SMOKE_OK win32/x64`; a assinatura do candidato permanece `NotSigned`. Procedimento, garantias e limites estao em `MIGRATION_ROLLBACK.md`.
+
 ### Recuperação do runtime empacotado e preservação do perfil — 15/11/2026
 
 O smoke Windows agora aceita `bun run --cwd launcher smoke:package:portable-repair`. Ele extrai o pacote NSIS em um diretório temporário, inicia o launcher, corrompe intencionalmente apenas a cópia temporária de `app/cli.js`, inicia novamente o mesmo launcher e exige restauração do SHA-256 original, integridade do manifesto e novo marcador de prontidão. A execução portátil local concluiu com `PACKAGED_LAUNCHER_RUNTIME_REPAIR_SMOKE_OK win32/x64` e `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`, código zero.

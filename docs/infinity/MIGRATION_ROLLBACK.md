@@ -18,6 +18,16 @@ Encerre somente o Infinity após verificar que ele não possui tarefas ativas, r
 
 O smoke unitário do instalador não prova migração nem rollback de sessões reais. Essa validação depende do ambiente autenticado e de uma janela sem trabalho ativo.
 
+### Verificação portátil entre dois pacotes reais (15/11/2026)
+
+Para validar a troca de pacotes sem executar os instaladores nem afetar a instalação ativa, use dois arquivos NSIS Windows x64 já construídos e obtidos de fontes verificadas:
+
+`node launcher/scripts/smoke-package-rollback.cjs <instalador-anterior.exe> <instalador-candidato.exe>`
+
+O smoke extrai ambos em uma pasta temporária, valida o manifesto e os hashes dos arquivos de runtime, cria marcadores sintéticos de preferências, sessão e workspace em perfis isolados e inicia o executável empacotado com `--launcher-smoke-test` em quatro etapas: anterior → candidato → anterior (rollback) → candidato (nova atualização). A cada etapa, exige a identidade exata do bundle, readiness, preservação dos marcadores e ausência de diretórios transitórios de instalação. Os perfis de teste são removidos ao final. A execução não abre sessão ChatGPT nem acessa credenciais produtivas.
+
+O teste realizado em 15/11/2026 usou pacotes distintos construídos dos commits `8c67664` e `bba95a0`, ambos com versão `6.1.18-continuos.1` e bundle IDs diferentes. As quatro etapas passaram em Windows 11 x64 com `PACKAGED_LAUNCHER_ROLLBACK_SMOKE_OK`. Isso comprova restauração do runtime empacotado entre builds e preservação dos marcadores sintéticos. O rollback de versões semanticamente distintas, sessões autenticadas, processos em andamento, ferramentas MCP e integrações externas continua sujeito à homologação em staging real e à drenagem de tarefas.
+
 ## Integração opcional do Windows Local
 
 O contrato de identidade durável de `windows_command` e a persistência dos metadados de `screenshot_id` são instalados separadamente do Infinity. Execute `integrations/windows-local/apply-durable-command-jobs.ps1` para validar uma cópia temporária do código-fonte. O script usa dry-run por padrão. `-Apply` cria um backup com timestamp, instala o módulo Python e atualiza `windows_control.py`. Ele não reinicia o servidor.
