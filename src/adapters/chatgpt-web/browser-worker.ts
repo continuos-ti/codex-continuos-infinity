@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { observeChatGptAttachmentUploads } from "./attachment-upload";
@@ -2046,6 +2046,26 @@ export interface ChatGptVisibleTraceBlock {
   key?: string;
   complete?: boolean;
   uiControl?: boolean;
+}
+
+/**
+ * Only a response whose *entire* observed answer and trace are unchanged can be called idle.
+ * Comparing lengths and trailing text misses in-place rewrites of earlier paragraphs or code,
+ * especially after a long reply. Keep the digest ephemeral: never log or persist message text.
+ */
+export function chatGptSilentTurnActivityFingerprint(
+  visibleText: string,
+  traceBlocks: readonly ChatGptVisibleTraceBlock[],
+): string {
+  const hash = createHash("sha256");
+  hash.update(JSON.stringify([visibleText.length, traceBlocks.length])).update("\0");
+  hash.update(visibleText).update("\0");
+  for (const block of traceBlocks) {
+    hash.update(JSON.stringify([block.kind, block.key ?? null, block.complete ?? null,
+      block.uiControl ?? null, block.text.length])).update("\0");
+    hash.update(block.text).update("\0");
+  }
+  return hash.digest("hex");
 }
 
 export interface ChatGptVisibleTraceEvent {
@@ -6650,10 +6670,9 @@ export class ChatGptBrowserWorker {
          // Independent signals: visible answer or reasoning mutations, transport
          // response activity and the exact MCP broker's progress. A wall-clock
          // timeout alone cannot prove that this accepted turn was abandoned.
-         const recoveryActivityKey = JSON.stringify([
-           snapshot.visibleText.length, snapshot.visibleText.slice(-256),
-           snapshot.traceBlocks.map(block => [block.kind, block.text.length, block.text.slice(-128), block.complete]),
-         ]);
+         const recoveryActivityKey = chatGptSilentTurnActivityFingerprint(
+           snapshot.visibleText, snapshot.traceBlocks,
+         );
          if (recoveryActivityKey !== lastSilentRecoveryActivityKey || running
            || responseStreamActive || externalProgressLive || externalToolCallsInFlight) {
            lastSilentRecoveryActivityKey = recoveryActivityKey;

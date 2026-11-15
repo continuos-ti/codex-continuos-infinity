@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
 import type { Locator } from "playwright-core";
-import { ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptVisibleTraceTracker, CHATGPT_COMPLETION_SETTLE_MS } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptVisibleTraceTracker, CHATGPT_COMPLETION_SETTLE_MS, chatGptSilentTurnActivityFingerprint } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptHtmlToMarkdown, ChatGptMarkdownBuffer, ChatGptMarkdownConsistencyError, type ChatGptMarkdownSegment } from "../src/adapters/chatgpt-web/markdown";
 
 const smokeHtml = readFileSync(new URL("./fixtures/chatgpt-dil-smoke.html", import.meta.url), "utf8");
@@ -89,6 +89,25 @@ const followupFixture = (root = 'data-markdown-text-style="assistant-message"') 
 </div><div aria-hidden="true" class="pointer-events-none start-0 top-0 w-max">
 <div><span>Clarify the result</span><span>Shorten the report</span></div>
 </div></div></div></div><button data-testid="copy-turn-action-button" aria-label="Copy"></button></section>`;
+
+test("the response DOM detects an early in-place edit while final-turn action is absent", async () => {
+  const longAnswer = "A".repeat(420) + " shared ending";
+  const html = followupFixture()
+    .replace("<p>The report is complete.</p>", `<p>${longAnswer}</p>`)
+    .replace('<button data-testid="copy-turn-action-button" aria-label="Copy"></button>', "");
+  const [before, after] = await snapshots(html, [document => {
+    const paragraph = document.querySelector('[data-markdown-text-style="assistant-message"] p')!;
+    paragraph.textContent = "B" + paragraph.textContent!.slice(1);
+  }]);
+  expect(before!.completionActionVisible).toBeFalse();
+  expect(after!.completionActionVisible).toBeFalse();
+  expect(before!.visibleText).toBe(longAnswer);
+  expect(after!.visibleText.length).toBe(before!.visibleText.length);
+  expect(after!.visibleText.slice(-256)).toBe(before!.visibleText.slice(-256));
+  expect(chatGptSilentTurnActivityFingerprint(after!.visibleText, after!.traceBlocks)).not.toBe(
+    chatGptSilentTurnActivityFingerprint(before!.visibleText, before!.traceBlocks),
+  );
+});
 
 test("suggested follow-up sizing copies stay out of the answer", async () => {
   for (const root of ['class="markdown"', 'data-markdown-text-style="assistant-message"']) {

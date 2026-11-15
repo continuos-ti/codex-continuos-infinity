@@ -5,6 +5,7 @@ import {
   CHATGPT_SILENT_TURN_RECOVERY_PROBE_MS,
   ChatGptCompletionTracker,
   ChatGptTurnDomHealthTracker,
+  chatGptSilentTurnActivityFingerprint,
   shouldProbeChatGptSilentTurnRecovery,
   shouldRecheckChatGptSilentTurnFinalAnswer,
 } from "../src/adapters/chatgpt-web/browser-worker";
@@ -106,4 +107,37 @@ test("a rendered partial answer and settled MCP calls cannot replace the final-t
   // A final action has to become visible and remain stable before completion.
   expect(tracker.update({ ...response, completionActionVisible: true }, 600_001)).toBe(false);
   expect(tracker.update({ ...response, completionActionVisible: true }, 600_502)).toBe(true);
+});
+
+test("silent-turn monitoring sees same-length edits outside the response tail", () => {
+  const baseline = "A".repeat(600) + " common ending";
+  const changedPrefix = "B" + baseline.slice(1);
+  const changedMiddle = baseline.slice(0, 190) + "B" + baseline.slice(191);
+  expect(changedPrefix.length).toBe(baseline.length);
+  expect(changedMiddle.length).toBe(baseline.length);
+  expect(changedPrefix.slice(-256)).toBe(baseline.slice(-256));
+  expect(changedMiddle.slice(-256)).toBe(baseline.slice(-256));
+  const fingerprint = chatGptSilentTurnActivityFingerprint(baseline, []);
+  expect(chatGptSilentTurnActivityFingerprint(baseline, [])).toBe(fingerprint);
+  expect(chatGptSilentTurnActivityFingerprint(changedPrefix, [])).not.toBe(fingerprint);
+  expect(chatGptSilentTurnActivityFingerprint(changedMiddle, [])).not.toBe(fingerprint);
+
+  const trace = { kind: "commentary" as const, text: "X".repeat(350) + " tail", complete: false };
+  const newTrace = { ...trace, text: "Y" + trace.text.slice(1) };
+  expect(trace.text.slice(-128)).toBe(newTrace.text.slice(-128));
+  expect(chatGptSilentTurnActivityFingerprint(baseline, [newTrace])).not.toBe(
+    chatGptSilentTurnActivityFingerprint(baseline, [trace]),
+  );
+  expect(chatGptSilentTurnActivityFingerprint(baseline, [{ ...trace, complete: true }])).not.toBe(
+    chatGptSilentTurnActivityFingerprint(baseline, [trace]),
+  );
+});
+
+test("accepted browser turn uses full activity fingerprint, not a trailing slice", () => {
+  const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const start = source.indexOf("const recoveryActivityKey =");
+  const end = source.indexOf("if (recoveryActivityKey !==", start);
+  expect(source.slice(start, end)).toContain("chatGptSilentTurnActivityFingerprint(");
+  expect(source.slice(start, end)).not.toContain("slice(-256)");
+  expect(source.slice(start, end)).not.toContain("slice(-128)");
 });
