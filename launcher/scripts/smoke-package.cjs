@@ -197,10 +197,16 @@ try {
   const env = smokeEnvironment();
   const previousState = path.join(coreHome, "previous-profile-state.fixture");
   const previousRuntime = path.join(coreHome, "versions", "previous-release.fixture");
+  const launcherProfile = path.join(env.CODEX_CONTINUOS_INFINITY_DATA_DIR, "session-preservation.fixture");
+  const codexProfile = path.join(env.CODEX_HOME, "codex-workspace.fixture");
   if (verifyUninstall) {
     fs.mkdirSync(previousRuntime, { recursive: true });
+    fs.mkdirSync(path.dirname(launcherProfile), { recursive: true });
+    fs.mkdirSync(path.dirname(codexProfile), { recursive: true });
     fs.writeFileSync(previousState, "independent-user-settings\n");
     fs.writeFileSync(path.join(previousRuntime, "checkpoint.txt"), "previous-runtime-checkpoint\n");
+    fs.writeFileSync(launcherProfile, "launcher-session-marker\n");
+    fs.writeFileSync(codexProfile, "codex-workspace-marker\n");
   }
 
   if (process.platform === "darwin") {
@@ -283,6 +289,8 @@ try {
     if (fs.readFileSync(previousState, "utf8") !== "independent-user-settings\n"
       || fs.readFileSync(path.join(previousRuntime, "checkpoint.txt"), "utf8")
         !== "previous-runtime-checkpoint\n"
+      || fs.readFileSync(launcherProfile, "utf8") !== "launcher-session-marker\n"
+      || fs.readFileSync(codexProfile, "utf8") !== "codex-workspace-marker\n"
       || !fs.existsSync(installedRuntime)) {
       throw new Error("NSIS uninstall changed the isolated user profile or durable runtime");
     }

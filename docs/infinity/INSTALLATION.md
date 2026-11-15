@@ -4,7 +4,7 @@
 
 O smoke Windows agora aceita `bun run --cwd launcher smoke:package:portable-repair`. Ele extrai o pacote NSIS em um diretório temporário, inicia o launcher, corrompe intencionalmente apenas a cópia temporária de `app/cli.js`, inicia novamente o mesmo launcher e exige restauração do SHA-256 original, integridade do manifesto e novo marcador de prontidão. A execução portátil local concluiu com `PACKAGED_LAUNCHER_RUNTIME_REPAIR_SMOKE_OK win32/x64` e `PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK win32/x64`, código zero.
 
-O `smoke:package:uninstall`, reservado ao runner Windows descartável do GitHub Actions, também executa essa recuperação antes de desinstalar. Após a desinstalação ele exige a preservação de um marcador de preferências sintéticas, de um diretório de versão anterior simulado e do runtime versionado validado. O teste usa um perfil isolado sob a pasta temporária do runner. Esse cenário verifica preservação de arquivos e autorreparo do pacote. A migração de sessões autenticadas e o rollback funcional para uma versão anterior ainda exigem homologação DEV independente.
+O `smoke:package:uninstall`, reservado ao runner Windows descartável do GitHub Actions, também executa essa recuperação antes de desinstalar. Após a desinstalação ele exige a preservação de marcadores sintéticos de preferências, sessão do launcher e workspace Codex, além de um diretório de versão anterior simulado e do runtime versionado validado. O teste usa perfis isolados sob a pasta temporária do runner. Esse cenário verifica preservação de arquivos e autorreparo do pacote. A migração de sessões autenticadas e o rollback funcional para uma versão anterior ainda exigem homologação DEV independente.
 
 ## Configuração de transporte MCP (12/11/2026)
 
