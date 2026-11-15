@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { defaultBrokerEndpoint } from "../src/config";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { inspectSettledBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 test("brokers with different sockets cannot share one call journal, including after listening", async () => {
@@ -86,11 +87,19 @@ test("a crashed broker releases its cross-process journal lock and preserves the
       await Bun.sleep(25);
     }
     expect(existsSync(readyPath)).toBe(true);
+    const deliveredId = readFileSync(readyPath, "utf8");
+    expect(deliveredId).toMatch(/^call_[A-Za-z0-9_-]{32}$/);
     expect(() => parent.enableCallJournal(directory)).toThrow("already owned by another process");
 
     child.kill();
     await child.exited;
     parent.enableCallJournal(directory);
+    const records = inspectSettledBrokerCallJournal(directory);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      callId: deliveredId, tool: "mutating_tool", state: "delivery_unknown", replayAuthorized: false,
+    });
+    expect(JSON.stringify(records)).not.toContain("never-journal");
     expect(parent.priorNativeCallStates("123456abcdef", {
       threadId: "11111111-1111-4111-8111-111111111111",
       turnId: "22222222-2222-4222-8222-222222222222",
@@ -100,6 +109,13 @@ test("a crashed broker releases its cross-process journal lock and preserves the
       turnId: "33333333-3333-4333-8333-333333333333",
     })).toThrow("ownership cannot be authenticated");
     await parent.listen();
+    await expect(parent.register({
+      cwd: root, roots: [root], writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+    }, 20_000, "123456abcdef", {
+      threadId: "11111111-1111-4111-8111-111111111111",
+      turnId: "22222222-2222-4222-8222-222222222222",
+    })).rejects.toThrow("reconciliation");
   } finally {
     if (child.exitCode === null) child.kill();
     await child.exited;
