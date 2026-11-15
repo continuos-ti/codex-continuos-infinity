@@ -108,7 +108,7 @@
                       "path":  "../../src/adapters/chatgpt-web/index.ts",
                       "role":  "bridge-recovery-query-handoff",
                       "packaged":  false,
-                      "sha256":  "a9df4fc6351340ad31284e953444f2578bc89b69a136f84a52f4a9fb6b225651"
+                      "sha256":  "ad9cb84f425646881d4d99ee0d1f8c249370ef1b0c94a918103b9cf3c8d676fe"
                   }
               ]
 }
