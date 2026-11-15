@@ -1,5 +1,11 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### CI multiplataforma do commit `3685c374` — 15/11/2026
+
+O GitHub Actions run `43696646405` foi consultado diretamente na API do GitHub. Os cinco jobs terminaram com `completed/success`: `verify (macos-15-intel)` às 09:10:27 UTC, `verify (windows-latest)` às 09:05:59 UTC, `verify (ubuntu-24.04)` às 09:01:37 UTC, `secret-scan` às 08:54:16 UTC e `actionlint` às 08:54:28 UTC. Esta evidência refere-se ao commit `3685c374647e169c372763e895bb002d70f32271`, que valida transições de `provider epoch` na recuperação do broker.
+
+A conclusão da matriz CI não substitui os testes reais pendentes de rebind nativo pós-crash com reconciliação independente dos efeitos externos, concorrência de chats com anexos físicos e instalação/rollback em staging. O consentimento DEV já existente foi preservado, sem novo pareamento ou abertura do Brave.
+
 ### Classificação de CWD removido e revalidação — 13/11/2026
 
 `MissingTrustedCodexEnvironmentError("existing cwd")` agora é classificado como `removed_or_invalid_cwd`. Uma pasta ausente ou inacessível bloqueia o preflight imediatamente. As duas releituras limitadas continuam reservadas à ausência temporária de autoridade de CWD, permissão ou rollout com identificadores nativos comprovados. Dois testes de regressão verificam a classificação e a ausência de retry para esse erro.
