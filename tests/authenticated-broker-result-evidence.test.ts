@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { recordBrokerCallEvent, type BrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import { readAuthenticatedBrokerCallInventory, readAuthenticatedBrokerRecoverySnapshot, readAuthenticatedBrokerResultEvidence, type AuthenticatedBrokerResultEvidence } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
@@ -12,6 +11,7 @@ import { BrokerResultVault, vaultDirectoryForJournal } from "../src/adapters/cha
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest } from "../src/types";
+import { socketFixtureRoot } from "./support/socket-fixture-root";
 
 const threadId = "01a06c66-4232-7ae1-9108-69b5f70e0671";
 const turnId = "01a06c66-4380-75c6-a0df-318f890ef6de";
@@ -28,7 +28,7 @@ let cwd: string;
 let oldKey: string | undefined;
 
 beforeEach(() => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "infinity-authenticated-result-")));
+  root = realpathSync(socketFixtureRoot("infinity-auth-"));
   home = join(root, "native-home");
   directory = join(root, "diagnostics", "broker-calls");
   cwd = join(root, "project");
