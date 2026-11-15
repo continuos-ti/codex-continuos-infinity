@@ -14,7 +14,7 @@ import {
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { recordBrokerCallEvent } from "../src/adapters/chatgpt-web/broker-call-journal";
 import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
-import { prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
+import { extendBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { nativeBrokerOwnerDigest } from "../src/adapters/chatgpt-web/native-broker-owner";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
@@ -319,7 +319,30 @@ test("Zero Risk emits bounded native provider status batches and retains the rec
         isError: false,
       });
     }
-    await expect(adapter.runTurn!(completed, { headers: new Headers() }, () => {}))
+    const followups = extendBrokerProviderRecoveryChecks(
+      checks, completed.context.messages, input.context.tools,
+    ).slice(checks.length);
+    expect(followups.map(check => check.originalCallId)).toEqual(calls.slice(0, 2).map(call => call.callId));
+    const followupEvents: AdapterEvent[] = [];
+    await adapter.runTurn!(completed, { headers: new Headers() }, event => followupEvents.push(event));
+    expect(followupEvents.filter(event => event.type === "tool_call_start").map(event => event.id))
+      .toEqual(followups.map(check => check.request.callId));
+    const settled = structuredClone(completed);
+    for (const check of followups) {
+      settled.context.messages.push({
+        role: "assistant", timestamp: 7,
+        content: [{ type: "toolCall", id: check.request.callId, name: "_windows_command_result",
+          namespace: "mcp__windows_local", arguments: check.request.arguments ?? {} }],
+      });
+      settled.context.messages.push({
+        role: "toolResult", timestamp: 8, toolCallId: check.request.callId,
+        toolName: "_windows_command_result", toolNamespace: "mcp__windows_local",
+        content: JSON.stringify({
+          job_id: check.originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: 0,
+        }), isError: false,
+      });
+    }
+    await expect(adapter.runTurn!(settled, { headers: new Headers() }, () => {}))
       .rejects.toMatchObject({ code: "broker_reconciliation_required", retryable: false });
     expect(browserStarts).toBe(0);
   } finally {

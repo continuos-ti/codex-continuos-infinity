@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { CodexMessage, CodexTool, CodexToolResultMessage } from "../src/types";
 import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
-import { observeBrokerProviderRecoveryChecks, pendingBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
+import { extendBrokerProviderRecoveryChecks, observeBrokerProviderRecoveryChecks, pendingBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
 import { attachBrokerOperationId, brokerOperationStatusQueryForCall } from "../src/adapters/chatgpt-web/broker-operation-identity";
 
 const providerEpoch = "a".repeat(32);
@@ -234,4 +234,94 @@ test("batches read-only status checks and resumes after partial native results",
     ...secondBatch.map(issued), ...thirdBatch.map(issued), ...allReplies]), []);
   assert.equal(observeBrokerProviderRecoveryChecks(checks, [...firstBatch.map(issued),
     ...secondBatch.map(issued), ...thirdBatch.map(issued), ...allReplies]).observations.length, 18);
+});
+
+test("extends verified running status checks using new bounded native read-only IDs", () => {
+  const first = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  const history: CodexMessage[] = [issued(first), result(first.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "running",
+  })];
+  const extended = extendBrokerProviderRecoveryChecks([first], history, tools);
+  assert.equal(extended.length, 2);
+  assert.notEqual(extended[1]!.request.callId, first.request.callId);
+  assert.deepEqual(extended[1]!.request.arguments, {
+    job_id: originalCallId, provider_epoch: providerEpoch, wait_seconds: 10,
+  });
+  assert.equal(extended[1]!.request.readOnly, true);
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], history, tools), extended);
+  assert.deepEqual(pendingBrokerProviderRecoveryChecks(extended, history), [extended[1]]);
+
+  history.push(issued(extended[1]!), result(extended[1]!.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "starting",
+  }));
+  const third = extendBrokerProviderRecoveryChecks([first], history, tools);
+  assert.equal(third.length, 3);
+  assert.notEqual(third[2]!.request.callId, third[1]!.request.callId);
+  assert.equal(third[2]!.request.arguments?.wait_seconds, 10);
+
+  history.push(issued(third[2]!), result(third[2]!.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: 0,
+  }));
+  const terminal = extendBrokerProviderRecoveryChecks([first], history, tools);
+  assert.equal(terminal.length, 3);
+  assert.deepEqual(pendingBrokerProviderRecoveryChecks(terminal, history), []);
+});
+
+test("read-only status polls stop on unverified results, epoch changes and unsafe wait schemas", () => {
+  const first = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  for (const reply of [
+    { job_id: originalCallId, provider_epoch: "c".repeat(32), status: "running" },
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "provider_changed" },
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "unknown" },
+    { job_id: originalCallId, provider_epoch: providerEpoch, status: "completed", exit_code: 0 },
+  ]) {
+    assert.deepEqual(extendBrokerProviderRecoveryChecks([first], [issued(first),
+      result(first.request.callId, reply)], tools), [first]);
+  }
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], [result(first.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "running",
+  })], tools), [first]);
+
+  const running = [issued(first), result(first.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "running",
+  })];
+  const changed = structuredClone(tools);
+  (changed[1]!.parameters.properties as Record<string, unknown>).wait_seconds = {
+    type: "integer", minimum: 0, maximum: 5,
+  };
+  const fallback = extendBrokerProviderRecoveryChecks([first], running, changed);
+  assert.equal(fallback[1]!.request.arguments?.wait_seconds, 0);
+  assert.equal(extendBrokerProviderRecoveryChecks([first], running, tools, 1).length, 1);
+  assert.equal(extendBrokerProviderRecoveryChecks([first], running, tools, 0).length, 1);
+
+  const withOperationIdentity = structuredClone(tools);
+  withOperationIdentity[1]!.parameters["x-codex-operation-id"] = true;
+  (withOperationIdentity[1]!.parameters.properties as Record<string, unknown>).operation_id = { type: "string" };
+  const statusWithIdentity = prepareBrokerProviderRecoveryChecks([recoveryCall], withOperationIdentity)[0]!;
+  const historyWithIdentity = [issued(statusWithIdentity), result(statusWithIdentity.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "running",
+  })];
+  const followup = extendBrokerProviderRecoveryChecks([statusWithIdentity], historyWithIdentity, withOperationIdentity)[1]!;
+  assert.equal(followup.request.arguments?.operation_id, followup.request.callId);
+  assert.notEqual(followup.request.arguments?.operation_id, statusWithIdentity.request.callId);
+});
+
+test("long-running recovery status remains bounded after twelve unique checks", () => {
+  const first = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  const history: CodexMessage[] = [];
+  const ids = new Set<string>();
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const candidates = extendBrokerProviderRecoveryChecks([first], history, tools);
+    assert.equal(candidates.length, attempt + 1);
+    const next = candidates.at(-1)!;
+    assert.equal(ids.has(next.request.callId), false);
+    ids.add(next.request.callId);
+    history.push(issued(next), result(next.request.callId, {
+      job_id: originalCallId, provider_epoch: providerEpoch, status: "running",
+    }));
+  }
+  const exhausted = extendBrokerProviderRecoveryChecks([first], history, tools);
+  assert.equal(exhausted.length, 12);
+  assert.deepEqual(pendingBrokerProviderRecoveryChecks(exhausted, history), []);
+  assert.equal(ids.size, 12);
 });

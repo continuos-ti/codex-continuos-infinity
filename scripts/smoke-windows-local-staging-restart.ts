@@ -16,7 +16,7 @@ import type { CodexMessage, CodexTool } from "../src/types";
 import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { inspectSettledBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { attachBrokerOperationId, brokerOperationStatusForTool } from "../src/adapters/chatgpt-web/broker-operation-identity";
-import { observeBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
+import { extendBrokerProviderRecoveryChecks, observeBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 
@@ -283,6 +283,52 @@ async function main(): Promise<void> {
       throw new Error("Infinity's recovery query lost the original job identity or its zero-wait contract.");
     }
 
+    // Verify the new event-driven follow-up against the actual restarted staging provider.
+    // This is a second read-only call to the *status* tool, never another command dispatch.
+    const firstStatus = parseToolResult(await second.client.callTool({
+      name: "windows_command_result", arguments: recoveryCheck.request.arguments,
+    }));
+    let followupStatusVerified = false;
+    if (firstStatus.status === "running" || firstStatus.status === "starting") {
+      const history: CodexMessage[] = [
+        { role: "assistant", timestamp: 1, content: [{ type: "toolCall",
+          id: recoveryCheck.request.callId, namespace: "mcp__windows_local",
+          name: "windows_command_result", arguments: recoveryCheck.request.arguments ?? {},
+        }] },
+        { role: "toolResult", timestamp: 2, toolCallId: recoveryCheck.request.callId,
+          toolNamespace: "mcp__windows_local", toolName: "windows_command_result",
+          content: JSON.stringify(firstStatus), isError: false },
+      ];
+      const extended = extendBrokerProviderRecoveryChecks(recoveryChecks, history, asCodexTools(secondTools));
+      const nextCheck = extended[1];
+      if (extended.length !== 2 || !nextCheck || nextCheck.request.callId === recoveryCheck.request.callId
+        || nextCheck.request.arguments?.job_id !== operationId
+        || nextCheck.request.arguments?.provider_epoch !== providerEpoch
+        || nextCheck.request.arguments?.wait_seconds !== 10) {
+        throw new Error("Infinity did not prepare a distinct, provider-declared ten-second status follow-up.");
+      }
+      const followupResult = parseToolResult(await second.client.callTool({
+        name: "windows_command_result", arguments: nextCheck.request.arguments,
+      }));
+      history.push(
+        { role: "assistant", timestamp: 3, content: [{ type: "toolCall",
+          id: nextCheck.request.callId, namespace: "mcp__windows_local",
+          name: "windows_command_result", arguments: nextCheck.request.arguments ?? {},
+        }] },
+        { role: "toolResult", timestamp: 4, toolCallId: nextCheck.request.callId,
+          toolNamespace: "mcp__windows_local", toolName: "windows_command_result",
+          content: JSON.stringify(followupResult), isError: false },
+      );
+      const followupObservation = observeBrokerProviderRecoveryChecks([nextCheck], history).observations[0];
+      if (followupObservation?.providerStatus !== followupResult.status
+        || !["running", "starting", "completed"].includes(String(followupResult.status))) {
+        throw new Error("Infinity did not authenticate its read-only follow-up status response.");
+      }
+      followupStatusVerified = true;
+    } else if (firstStatus.status !== "completed") {
+      throw new Error(`Unexpected initial recovery state: ${String(firstStatus.status)}`);
+    }
+
     const deadline = Date.now() + Math.max(25_000, (commandDurationSeconds + 10) * 1000);
     let recovered: JsonObject | undefined;
     while (Date.now() < deadline) {
@@ -456,6 +502,7 @@ async function main(): Promise<void> {
       brokerOperationIdentityVerified: true,
       brokerReadOnlyRecoveryQueryVerified: true,
       brokerStatusObservationVerified: true,
+      followupStatusVerified,
       brokerMcpDispatchVerified: true,
       brokerJournalVerified: true,
       brokerCompletionFenceVerified: true,

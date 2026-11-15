@@ -10,6 +10,8 @@ export interface BrokerProviderRecoveryCheck {
   state: BrokerRecoveryCall["state"];
   effectScope: string;
   providerEpoch: string;
+  /** The original provider explicitly offered an optional read-only wait parameter. */
+  waitSecondsArgument?: string;
   request: BrokerToolRequest;
 }
 
@@ -46,7 +48,9 @@ export function prepareBrokerProviderRecoveryChecks(
         arguments: query.arguments,
       }, tools);
       checks.push({ originalCallId: call.callId, state: call.state,
-        effectScope: query.effectScope, providerEpoch: call.providerEpoch, request });
+        effectScope: query.effectScope, providerEpoch: call.providerEpoch,
+        ...(call.operationStatus?.waitSecondsArgument
+          ? { waitSecondsArgument: call.operationStatus.waitSecondsArgument } : {}), request });
     } catch {
       // A changed or ambiguous provider declaration cannot authorize a status tool call.
       continue;
@@ -166,4 +170,62 @@ export function observeBrokerProviderRecoveryChecks(
     observations.push(observation);
   }
   return { received, observations };
+}
+
+/** Only an unambiguous, advertised integer range authorizes a blocking status poll. */
+function providerPollWaitSeconds(check: BrokerProviderRecoveryCheck, tools: readonly CodexTool[]): number {
+  const argument = check.waitSecondsArgument;
+  if (!argument || ![0, 10].includes(check.request.arguments?.[argument] as number)) return 0;
+  const matches = tools.filter(tool => namespacedToolName(tool.namespace, tool.name) === check.request.wireName);
+  if (matches.length !== 1) return 0;
+  const parameters = matches[0]!.parameters;
+  const properties = parameters.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return 0;
+  const declaration = (properties as Record<string, unknown>)[argument];
+  if (!declaration || typeof declaration !== "object" || Array.isArray(declaration)) return 0;
+  const schema = declaration as Record<string, unknown>;
+  // An unfamiliar constraint might exclude 10. Fall back to the validated zero-wait query.
+  if (Object.keys(schema).some(key => !["type", "minimum", "maximum", "default", "title", "description"].includes(key))) return 0;
+  return schema.type === "integer"
+    && typeof schema.minimum === "number" && schema.minimum <= 10
+    && typeof schema.maximum === "number" && schema.maximum >= 10 ? 10 : 0;
+}
+
+/**
+ * Schedule bounded new *read-only status checks* after verified running/starting replies.
+ * Their IDs are stable across native round retries. Never reissue an original command or a
+ * check whose native result is outstanding, stale, ambiguous or from another provider epoch.
+ */
+export function extendBrokerProviderRecoveryChecks(
+  initialChecks: readonly BrokerProviderRecoveryCheck[],
+  messages: readonly CodexMessage[],
+  tools: readonly CodexTool[],
+  maxAttempts = 12,
+): BrokerProviderRecoveryCheck[] {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 12) return [...initialChecks];
+  const allChecks = [...initialChecks];
+  const latest = [...initialChecks];
+  for (let attempt = 1; attempt < maxAttempts; attempt++) {
+    let added = 0;
+    for (let index = 0; index < latest.length; index++) {
+      const previous = latest[index]!;
+      const observed = observeBrokerProviderRecoveryChecks([previous], messages).observations[0];
+      if (observed?.providerStatus !== "running" && observed?.providerStatus !== "starting") continue;
+      const newId = `call_${createHash("sha256").update("broker-provider-status-followup-v1\0")
+        .update(initialChecks[index]!.request.callId).update("\0")
+        .update(String(attempt)).digest("hex").slice(0, 32)}`;
+      const args = { ...(previous.request.arguments ?? {}) };
+      // A status provider may itself declare x-codex-operation-id.
+      if (args.operation_id === previous.request.callId) args.operation_id = newId;
+      if (previous.waitSecondsArgument && [0, 10].includes(args[previous.waitSecondsArgument] as number)) {
+        args[previous.waitSecondsArgument] = providerPollWaitSeconds(previous, tools);
+      }
+      const next = { ...previous, request: { ...previous.request, callId: newId, arguments: args } };
+      latest[index] = next;
+      allChecks.push(next);
+      added++;
+    }
+    if (added === 0) break;
+  }
+  return allChecks;
 }

@@ -32,7 +32,7 @@ import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
 import { attachBrokerOperationId } from "./broker-operation-identity";
-import { observeBrokerProviderRecoveryChecks, pendingBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "./broker-provider-recovery";
+import { extendBrokerProviderRecoveryChecks, observeBrokerProviderRecoveryChecks, pendingBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "./broker-provider-recovery";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnRoundKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
 import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -1410,13 +1410,21 @@ export function createChatGptWebAdapter(
                     }));
                     console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} calls=${snapshot.calls.length} sealed_results=${sealed} native_outputs=${nativeOutputs} provider_status_queries=${providerStatusQueries.length} replay_authorized=false external_effects_reconciled=false`);
                     if (checks.length > 0) {
-                      const status = observeBrokerProviderRecoveryChecks(checks, parsed.context.messages);
-                      const pending = pendingBrokerProviderRecoveryChecks(checks, parsed.context.messages);
+                      const attemptedChecks = extendBrokerProviderRecoveryChecks(
+                        checks, parsed.context.messages, environment?.tools ?? [],
+                      );
+                      const status = observeBrokerProviderRecoveryChecks(attemptedChecks, parsed.context.messages);
+                      const pending = pendingBrokerProviderRecoveryChecks(attemptedChecks, parsed.context.messages);
                       if (pending.length > 0) {
                         validateBatchTools(parsed, pending.map(check => check.request));
                         throw new BrokerProviderStatusBatch(pending.map(check => check.request));
                       }
-                      nativeStatusObservations = ` Native provider observations (diagnostic only, ${status.observations.length}/${checks.length} replies): ${JSON.stringify(status.observations)}.`;
+                      // Multiple bounded status polls may observe the same operation. Keep only
+                      // its latest diagnostic state in the error; the native results are retained
+                      // by Codex and still cannot reconcile external effects or grant replay.
+                      const latestByOperation = new Map(status.observations.map(observation =>
+                        [observation.callId, observation]));
+                      nativeStatusObservations = ` Native provider observations (diagnostic only, ${status.received}/${attemptedChecks.length} replies, latest per original operation): ${JSON.stringify([...latestByOperation.values()])}.`;
                     }
                   } else {
                     console.warn(`[chatgpt-web] authenticated_broker_recovery_snapshot trace=${traceId} status=unavailable`);
