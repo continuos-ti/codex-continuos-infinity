@@ -111,6 +111,16 @@ export function brokerOperationStatusForTool(
   const providerEpochArgument = declaration.provider_epoch_argument;
   const waitSecondsArgument = declaration.wait_seconds_argument;
   const required = Array.isArray(statusParameters?.required) ? statusParameters.required : [];
+  const argumentNames = [operationIdArgument, providerEpochArgument, waitSecondsArgument]
+    .filter((name): name is string => typeof name === "string");
+  // A status query must preserve the original operation ID and epoch as separate
+  // fields. The status tool's own broker identity also occupies operation_id.
+  if (new Set(argumentNames).size !== argumentNames.length
+    || (statusParameters?.[OPERATION_ID_EXTENSION] === true && argumentNames.includes("operation_id"))
+    || (statusProviderEpoch !== undefined
+      && (operationIdArgument === "provider_epoch" || waitSecondsArgument === "provider_epoch"))) {
+    throw new Error("Codex tool " + wireName + " operation status arguments overlap provider identities");
+  }
   if (statusTool.freeform || statusTool.toolSearch || statusParameters?.type !== "object"
     || statusParameters?.[READ_ONLY_EXTENSION] !== true
     || typeof operationIdArgument !== "string" || typeof providerEpochArgument !== "string"

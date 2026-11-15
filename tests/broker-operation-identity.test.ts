@@ -298,6 +298,36 @@ test("resolves a provider-declared read-only status tool in the same MCP namespa
     assert.throws(() => brokerOperationStatusForTool(request().wireName, invalidWait),
       /wait argument is invalid/);
   }
+
+  const sameIdentifier = structuredClone(tools);
+  (sameIdentifier[0]!.parameters["x-codex-operation-status"] as Record<string, unknown>)
+    .provider_epoch_argument = "job_id";
+  sameIdentifier[1]!.parameters.required = ["job_id"];
+  assert.throws(() => brokerOperationStatusForTool(request().wireName, sameIdentifier),
+    /arguments overlap provider identities/);
+
+  const statusToolHasOwnOperationId = structuredClone(tools);
+  (statusToolHasOwnOperationId[0]!.parameters["x-codex-operation-status"] as Record<string, unknown>)
+    .operation_id_argument = "operation_id";
+  statusToolHasOwnOperationId[1]!.parameters["x-codex-operation-id"] = true;
+  (statusToolHasOwnOperationId[1]!.parameters.properties as Record<string, unknown>)
+    .operation_id = { type: "string" };
+  statusToolHasOwnOperationId[1]!.parameters.required = ["operation_id", "provider_epoch"];
+  assert.throws(() => brokerOperationStatusForTool(request().wireName, statusToolHasOwnOperationId),
+    /arguments overlap provider identities/);
+  assert.equal(brokerOperationStatusQueryForCall({
+    callId, tool: request().wireName, providerEpoch,
+    operationStatus: { ...contract!, operationIdArgument: "operation_id" },
+  }, statusToolHasOwnOperationId), undefined);
+
+  const statusToolHasOwnEpoch = structuredClone(tools);
+  (statusToolHasOwnEpoch[0]!.parameters["x-codex-operation-status"] as Record<string, unknown>)
+    .operation_id_argument = "provider_epoch";
+  (statusToolHasOwnEpoch[0]!.parameters["x-codex-operation-status"] as Record<string, unknown>)
+    .provider_epoch_argument = "job_id";
+  statusToolHasOwnEpoch[1]!.parameters["x-codex-provider-epoch"] = providerEpoch;
+  assert.throws(() => brokerOperationStatusForTool(request().wireName, statusToolHasOwnEpoch),
+    /arguments overlap provider identities/);
 });
 
 test("rejects operation status tools without an explicit read-only declaration", () => {

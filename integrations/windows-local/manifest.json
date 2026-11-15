@@ -36,7 +36,7 @@
     "installState":  "staged-not-applied-to-real-provider",
     "validation":  {
                        "pythonTests":  29,
-                       "adapterTests":  17,
+                       "adapterTests":  18,
                        "journalContractTests":  2,
                        "dryRunAgainstRealProviderSource":  "passed",
                        "fixtureApplyAndRollback":  "passed",
@@ -72,13 +72,13 @@
                       "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
                       "role":  "bridge-identity-adapter",
                       "packaged":  false,
-                      "sha256":  "951c9d7f054141136efd92f0bbce0395f5a1123992632f43f8b3bb40bda79641"
+                      "sha256":  "22a6bec6e8882b26fa82bc48c6bb4c7cd371c16687b09e6171b81ad66a7a5b2d"
                   },
                   {
                       "path":  "../../tests/broker-operation-identity.test.ts",
                       "role":  "bridge-identity-tests",
                       "packaged":  false,
-                      "sha256":  "2ec68d3b7257151ccdf661d7f291acbe5ffbd2b7da1eb2539dba47a611171e82"
+                      "sha256":  "eced263da3245c16713ccdae41ece990108ce99f6687e1946bb552afa7891641"
                   },
                   {
                       "path":  "../../src/adapters/chatgpt-web/broker-call-journal.ts",
