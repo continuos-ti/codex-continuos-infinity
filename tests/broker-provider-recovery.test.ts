@@ -207,13 +207,23 @@ test("batches read-only status checks and resumes after partial native results",
   });
   const firstHistory = [...firstBatch.map(issued), firstReply];
   const secondBatch = pendingBrokerProviderRecoveryChecks(checks, firstHistory);
-  assert.equal(secondBatch.length, 2);
-  assert.deepEqual(secondBatch.map(check => check.originalCallId), calls.slice(16).map(call => call.callId));
-  const allIssued = [...firstHistory, ...secondBatch.map(issued)];
+  assert.equal(secondBatch.length, 1);
+  assert.deepEqual(secondBatch.map(check => check.originalCallId), [calls[16]!.callId]);
+  const secondHistory = [...firstHistory, ...secondBatch.map(issued)];
+  assert.deepEqual(pendingBrokerProviderRecoveryChecks(checks, secondHistory), []);
+  const delayedReply = result(firstBatch[1]!.request.callId, {
+    job_id: calls[1]!.callId, provider_epoch: providerEpoch, status: "running",
+  });
+  const thirdBatch = pendingBrokerProviderRecoveryChecks(checks, [...secondHistory, delayedReply]);
+  assert.deepEqual(thirdBatch.map(check => check.originalCallId), [calls[17]!.callId]);
+  const allIssued = [...secondHistory, delayedReply, ...thirdBatch.map(issued)];
   assert.deepEqual(pendingBrokerProviderRecoveryChecks(checks, allIssued), []);
   assert.deepEqual(observeBrokerProviderRecoveryChecks(checks, allIssued), {
-    received: 1, observations: [{
+    received: 2, observations: [{
       callId: calls[0]!.callId, state: "delivery_unknown", effectScope: "tracked_process",
+      providerStatus: "running",
+    }, {
+      callId: calls[1]!.callId, state: "delivery_unknown", effectScope: "tracked_process",
       providerStatus: "running",
     }],
   });
@@ -221,7 +231,7 @@ test("batches read-only status checks and resumes after partial native results",
     job_id: check.originalCallId, provider_epoch: providerEpoch, status: "completed",
   }));
   assert.deepEqual(pendingBrokerProviderRecoveryChecks(checks, [...firstBatch.map(issued),
-    ...secondBatch.map(issued), ...allReplies]), []);
+    ...secondBatch.map(issued), ...thirdBatch.map(issued), ...allReplies]), []);
   assert.equal(observeBrokerProviderRecoveryChecks(checks, [...firstBatch.map(issued),
-    ...secondBatch.map(issued), ...allReplies]).observations.length, 18);
+    ...secondBatch.map(issued), ...thirdBatch.map(issued), ...allReplies]).observations.length, 18);
 });

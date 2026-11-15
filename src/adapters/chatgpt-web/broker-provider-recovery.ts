@@ -64,24 +64,31 @@ export interface BrokerProviderRecoveryObservation {
   exitCode?: number;
 }
 
-/** Continue bounded read-only queries after partial native replies. */
+/** Continue read-only queries without exceeding the outstanding native call budget. */
 export function pendingBrokerProviderRecoveryChecks(
   checks: readonly BrokerProviderRecoveryCheck[],
   messages: readonly CodexMessage[],
   limit = 16,
 ): BrokerProviderRecoveryCheck[] {
   if (!Number.isSafeInteger(limit) || limit < 1) return [];
-  const dispatched = new Set<string>();
+  const issued = new Set<string>();
+  const received = new Set<string>();
   for (const message of messages) {
-    if (message.role === "toolResult") dispatched.add(message.toolCallId);
+    if (message.role === "toolResult") received.add(message.toolCallId);
     if (message.role === "assistant") {
       for (const part of message.content) {
-        if (part.type === "toolCall") dispatched.add(part.id);
+        if (part.type === "toolCall") issued.add(part.id);
       }
     }
   }
-  // A native call without a result is still in flight. Never emit its ID again.
-  return checks.filter(check => !dispatched.has(check.request.callId)).slice(0, limit);
+  // Only this recovery set consumes its limit. Issued calls without native results
+  // occupy slots until their replies arrive; neither result-less calls nor replies
+  // without a matching issue may cause an operation ID to be emitted again.
+  const outstanding = checks.reduce((count, check) => count + (
+    issued.has(check.request.callId) && !received.has(check.request.callId) ? 1 : 0
+  ), 0);
+  return checks.filter(check => !issued.has(check.request.callId)
+    && !received.has(check.request.callId)).slice(0, Math.max(0, limit - outstanding));
 }
 
 const PROVIDER_STATUSES = new Set([

@@ -272,11 +272,35 @@ test("Zero Risk emits bounded native provider status batches and retains the rec
     const secondEvents: AdapterEvent[] = [];
     await adapter.runTurn!(continuation, { headers: new Headers() }, event => secondEvents.push(event));
     expect(secondEvents.filter(event => event.type === "tool_call_start").map(event => event.id))
-      .toEqual(checks.slice(16).map(check => check.request.callId));
+      .toEqual(checks.slice(16, 17).map(check => check.request.callId));
     expect(browserStarts).toBe(0);
 
-    const completed = structuredClone(continuation);
-    for (const check of checks.slice(16)) {
+    const delayed = structuredClone(continuation);
+    for (const check of checks.slice(16, 17)) {
+      delayed.context.messages.push({
+        role: "assistant", timestamp: 5,
+        content: [{
+          type: "toolCall", id: check.request.callId, name: "_windows_command_result",
+          namespace: "mcp__windows_local", arguments: check.request.arguments ?? {},
+        }],
+      });
+    }
+    delayed.context.messages.push({
+      role: "toolResult", timestamp: 6, toolCallId: checks[1]!.request.callId,
+      toolName: "_windows_command_result", toolNamespace: "mcp__windows_local",
+      content: JSON.stringify({
+        job_id: calls[1]!.callId, provider_epoch: providerEpoch, status: "running",
+      }),
+      isError: false,
+    });
+    const thirdEvents: AdapterEvent[] = [];
+    await adapter.runTurn!(delayed, { headers: new Headers() }, event => thirdEvents.push(event));
+    expect(thirdEvents.filter(event => event.type === "tool_call_start").map(event => event.id))
+      .toEqual(checks.slice(17).map(check => check.request.callId));
+    expect(browserStarts).toBe(0);
+
+    const completed = structuredClone(delayed);
+    for (const check of checks.slice(17)) {
       completed.context.messages.push({
         role: "assistant", timestamp: 5,
         content: [{
@@ -285,7 +309,7 @@ test("Zero Risk emits bounded native provider status batches and retains the rec
         }],
       });
     }
-    for (const check of checks.slice(1)) {
+    for (const check of checks.slice(2)) {
       completed.context.messages.push({
         role: "toolResult", timestamp: 6, toolCallId: check.request.callId,
         toolName: "_windows_command_result", toolNamespace: "mcp__windows_local",
