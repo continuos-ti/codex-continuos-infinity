@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
@@ -14,8 +14,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CodexMessage, CodexTool } from "../src/types";
 import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { inspectSettledBrokerCallJournal } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
 import { attachBrokerOperationId, brokerOperationStatusForTool } from "../src/adapters/chatgpt-web/broker-operation-identity";
 import { observeBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
+import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { defaultBrokerEndpoint } from "../src/config";
 
 type JsonObject = Record<string, unknown>;
 type ToolResult = {
@@ -117,6 +120,8 @@ async function main(): Promise<void> {
 
   let first: ServerSession | undefined;
   let second: ServerSession | undefined;
+  let broker: TurnBroker | undefined;
+  let successor: TurnBroker | undefined;
   let commandStarted = false;
   let commandCompleted = false;
 
@@ -315,6 +320,93 @@ async function main(): Promise<void> {
       throw new Error("Infinity failed to validate the real provider's recovered status response.");
     }
 
+    // Exercise the actual broker IPC and journal with the restarted MCP provider. The
+    // dispatched operation is a provider-declared read-only status query.
+    const brokerJournal = join(root, "broker-journal");
+    mkdirSync(brokerJournal, { recursive: true });
+    const nativeIdentity = { threadId: randomUUID(), turnId: randomUUID() };
+    const brokerEnvironment = {
+      cwd: stagingRoot,
+      roots: [stagingRoot],
+      writableRoots: [],
+      sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+      tools: asCodexTools(secondTools),
+    };
+    const brokerTrace = randomBytes(6).toString("hex");
+    broker = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "broker")));
+    broker.enableCallJournal(brokerJournal);
+    await broker.listen();
+    const token = await broker.register(brokerEnvironment, 60_000, brokerTrace, nativeIdentity);
+    const activityId = `activity_${randomBytes(24).toString("base64url")}`;
+    const claim = await callTurnBroker<{ bindingId: string }>(broker.socketPath, {
+      method: "claim", token, activityId,
+    });
+    const invocation = callTurnBroker<BrokerToolResult>(broker.socketPath, {
+      method: "invoke", bindingId: claim.bindingId,
+      wireName: "mcp__windows_local__windows_command_result",
+      arguments: recoveryCheck.request.arguments,
+    }, 30_000);
+    const brokerBatch = await broker.nextToolBatch(token);
+    const brokerCall = brokerBatch[0];
+    if (brokerBatch.length !== 1 || !brokerCall || brokerCall.readOnly !== true
+      || brokerCall.wireName !== "mcp__windows_local__windows_command_result"
+      || JSON.stringify(brokerCall.arguments) !== JSON.stringify(recoveryCheck.request.arguments)) {
+      throw new Error("The broker changed the read-only provider recovery query.");
+    }
+    const brokerProviderResult = await second.client.callTool({
+      name: "windows_command_result", arguments: brokerCall.arguments,
+    });
+    const replyContent = brokerProviderResult.content;
+    if (!Array.isArray(replyContent)) {
+      throw new Error("The staging MCP provider returned an invalid tool result body.");
+    }
+    const replyIsError = brokerProviderResult.isError;
+    if (replyIsError !== undefined && typeof replyIsError !== "boolean") {
+      throw new Error("The staging MCP provider returned an invalid tool error flag.");
+    }
+    const acknowledgedResult: BrokerToolResult = {
+      content: replyContent,
+      ...(brokerProviderResult.structuredContent === undefined ? {}
+        : { structuredContent: brokerProviderResult.structuredContent }),
+      ...(replyIsError === undefined ? {} : { isError: replyIsError }),
+    };
+    broker.completeTool(token, brokerCall.callId, acknowledgedResult);
+    const deliveredResult = await invocation;
+    if (JSON.stringify(deliveredResult) !== JSON.stringify(acknowledgedResult)) {
+      throw new Error("The broker did not return the original MCP tool result.");
+    }
+    const throughBroker = parseToolResult(deliveredResult);
+    if (throughBroker.job_id !== operationId || throughBroker.provider_epoch !== providerEpoch
+      || throughBroker.status !== "completed" || throughBroker.exit_code !== 0) {
+      throw new Error("The broker's read-only status query returned an unexpected operation.");
+    }
+    const brokerCalls = inspectSettledBrokerCallJournal(brokerJournal);
+    if (brokerCalls.length !== 1 || brokerCalls[0]?.callId !== brokerCall.callId
+      || brokerCalls[0]?.traceId !== brokerTrace || brokerCalls[0]?.readOnly !== true
+      || brokerCalls[0]?.state !== "result_unavailable") {
+      throw new Error("The broker did not durably record the completed MCP invocation.");
+    }
+    const activity = await callTurnBroker<{ completed: boolean }>(broker.socketPath, {
+      method: "activity_complete", token, activityId,
+    });
+    const revision = broker.beginCompletionFence(token);
+    if (!activity.completed || revision === undefined || !broker.commitCompletionFence(token, revision)) {
+      throw new Error("The broker did not commit completion after the MCP reply.");
+    }
+    broker.revoke(token);
+    await broker.close();
+    successor = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "broker-successor")));
+    successor.enableCallJournal(brokerJournal);
+    await successor.listen();
+    let fenced = false;
+    try {
+      await successor.register(brokerEnvironment, 60_000, brokerTrace, nativeIdentity);
+    } catch (error) {
+      fenced = error instanceof Error && /reconciliation/.test(error.message);
+      if (!fenced) throw error;
+    }
+    if (!fenced) throw new Error("A successor broker accepted a previously used native turn.");
+
     const markerLines = readFileSync(markerPath, "utf8").trim().split(/\r?\n/);
     if (markerLines.length !== 1 || markerLines[0] !== "completed") {
       throw new Error(`Expected one provider execution marker, found ${markerLines.length}.`);
@@ -364,6 +456,10 @@ async function main(): Promise<void> {
       brokerOperationIdentityVerified: true,
       brokerReadOnlyRecoveryQueryVerified: true,
       brokerStatusObservationVerified: true,
+      brokerMcpDispatchVerified: true,
+      brokerJournalVerified: true,
+      brokerCompletionFenceVerified: true,
+      brokerRestartFenceVerified: true,
       recoveredStatus: recovered.status,
       exitCode: recovered.exit_code,
       duplicateOperationReused: true,
@@ -373,6 +469,8 @@ async function main(): Promise<void> {
       sourceUnchanged,
     }, null, 2));
   } finally {
+    await successor?.close();
+    await broker?.close();
     await closeServer(second);
     await closeServer(first);
     if (commandStarted && !commandCompleted) await Bun.sleep((commandDurationSeconds + 1) * 1000);

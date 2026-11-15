@@ -6,6 +6,14 @@ O GitHub Actions run `43696646405` foi consultado diretamente na API do GitHub. 
 
 A conclusão da matriz CI não substitui os testes reais pendentes de rebind nativo pós-crash com reconciliação independente dos efeitos externos, concorrência de chats com anexos físicos e instalação/rollback em staging. O consentimento DEV já existente foi preservado, sem novo pareamento ou abertura do Brave.
 
+### Despacho MCP real pelo broker no staging Windows Local — 15/11/2026
+
+O smoke `scripts/smoke-windows-local-staging-restart.ts` foi ampliado para despachar `windows_command_result`, declarada de leitura pelo provedor, através do socket IPC do `TurnBroker`. O broker recebeu o resultado real do MCP de staging, confirmou identidade da operação e época do provedor, registrou `queued`, `delivery_possible` e `result_received` no journal e concluiu o turno com `completionCommitted=true`, zero chamadas pendentes e zero atividades MCP ativas. Após o fechamento do broker, um sucessor com o mesmo journal recusou registrar novamente a identidade nativa já utilizada. O teste de staging terminou com `status=passed`, 21 ferramentas MCP, 11 ferramentas Windows, `providerExecutions=1`, `sourceUnchanged=true` e recuperação do comando de oito segundos após reinício do provedor. O TypeScript typecheck e os 11 testes dirigidos de recuperação/posse do journal passaram. O `bun run verify` integral encerrou com código zero, incluindo 456 testes aprovados e quatro ignorados no launcher, build Vite e `RELOCATABLE_RUNTIME_SMOKE_OK`. O Vite avisou sobre chunk acima de 500 KB e a consulta ao catálogo retornou um HTTP 502 isolado durante o smoke.
+
+Essa prova exercita o broker local e o provedor MCP de staging, com identidade nativa sintética. Continuam pendentes o despacho originado pelo navegador autenticado do Infinity, a conciliação autoritativa de efeitos externos após crash, o rebind nativo completo, a concorrência real com anexos e instalação/rollback funcional.
+
+O `dev status --json` consultado nesta data mostrou o launcher DEV Full encerrado e `mcpRuntime.ready=false`. O health local do gateway DEV estava indisponível e o hostname DEV respondeu HTTP 530. O endpoint produtivo `codex-native2.continuos.com.br/health` respondeu HTTP 200. A tentativa de iniciar apenas o gateway DEV foi recusada pela política de execução do ambiente antes do processo ser criado. Nenhuma autenticação ou pareamento foi repetido, e o navegador Brave permaneceu fechado.
+
 ### Classificação de CWD removido e revalidação — 13/11/2026
 
 `MissingTrustedCodexEnvironmentError("existing cwd")` agora é classificado como `removed_or_invalid_cwd`. Uma pasta ausente ou inacessível bloqueia o preflight imediatamente. As duas releituras limitadas continuam reservadas à ausência temporária de autoridade de CWD, permissão ou rollout com identificadores nativos comprovados. Dois testes de regressão verificam a classificação e a ausência de retry para esse erro.
