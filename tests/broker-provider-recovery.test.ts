@@ -91,6 +91,17 @@ test("prepares stable native read-only recovery calls with the original identity
   assert.equal(prepareBrokerProviderRecoveryChecks([recoveryCall], changedTools).length, 0);
 });
 
+test("does not issue status queries for duplicate provider operation IDs or invalid batch limits", () => {
+  const unique = { ...recoveryCall, callId: `call_${"d".repeat(32)}` };
+  const duplicate = { ...recoveryCall, traceId: "cccc1234cccc" };
+  const checks = prepareBrokerProviderRecoveryChecks([recoveryCall, unique, duplicate], tools);
+  assert.deepEqual(checks.map(check => check.originalCallId), [unique.callId]);
+  for (const invalidLimit of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.deepEqual(prepareBrokerProviderRecoveryChecks([recoveryCall], tools, invalidLimit), []);
+    assert.deepEqual(pendingBrokerProviderRecoveryChecks(checks, [], invalidLimit), []);
+  }
+});
+
 test("observes provider status without revealing command output or authorizing replay", () => {
   const checks = prepareBrokerProviderRecoveryChecks([recoveryCall], tools);
   const checkId = checks[0]!.request.callId;

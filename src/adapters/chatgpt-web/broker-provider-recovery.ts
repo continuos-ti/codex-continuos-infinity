@@ -19,8 +19,17 @@ export function prepareBrokerProviderRecoveryChecks(
   tools: CodexTool[],
   limit = 16,
 ): BrokerProviderRecoveryCheck[] {
+  if (!Number.isSafeInteger(limit) || limit < 1) return [];
+  const seenCallIds = new Set<string>();
+  const ambiguousCallIds = new Set<string>();
+  for (const call of calls) {
+    if (seenCallIds.has(call.callId)) ambiguousCallIds.add(call.callId);
+    seenCallIds.add(call.callId);
+  }
   const checks: BrokerProviderRecoveryCheck[] = [];
   for (const call of calls) {
+    // A call ID appearing in multiple traces cannot identify one provider operation.
+    if (ambiguousCallIds.has(call.callId)) continue;
     const query = brokerOperationStatusQueryForCall(call, tools);
     if (!query || !call.providerEpoch) continue;
     try {
@@ -61,6 +70,7 @@ export function pendingBrokerProviderRecoveryChecks(
   messages: readonly CodexMessage[],
   limit = 16,
 ): BrokerProviderRecoveryCheck[] {
+  if (!Number.isSafeInteger(limit) || limit < 1) return [];
   const dispatched = new Set<string>();
   for (const message of messages) {
     if (message.role === "toolResult") dispatched.add(message.toolCallId);
