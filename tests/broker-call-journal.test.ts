@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,6 +41,71 @@ function sealedPath(directory: string, trace: string, id: string) {
   return join(vaultDirectoryForJournal(directory), trace,
     `${createHash("sha256").update(`v1:${id}:sealed_result`).digest("hex")}.json`);
 }
+
+test("real MCP stdio records delivery and result, then fences the same owner after broker restart", async () => {
+  const { root, directory } = fixture();
+  const socketPath = defaultBrokerEndpoint(join(root, "stdio-journal"));
+  const identity = {
+    threadId: "11111111-1111-4111-8111-111111111111",
+    turnId: "22222222-2222-4222-8222-222222222222",
+  };
+  const environment = {
+    cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const },
+    tools: [{ name: "mutating_tool", description: "Fixture mutation", parameters: { type: "object" } }],
+  };
+  const broker = TurnBroker.forSocket(socketPath);
+  broker.enableCallJournal(directory);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+    cwd: process.cwd(), stderr: "pipe",
+  });
+  const client = new Client({ name: "journal-mcp-stdio-test", version: "1.0.0" });
+  try {
+    const token = await broker.register(environment, 30_000, traceId, identity);
+    await client.connect(transport);
+    const response = client.callTool({
+      name: "codex_tool_call",
+      arguments: {
+        turn_token: token, wire_name: "mutating_tool", arguments: { fixture: "private-input" },
+      },
+    });
+    const batch = await broker.nextToolBatch(token);
+    expect(batch).toHaveLength(1);
+    expect(batch[0]).toMatchObject({
+      wireName: "mutating_tool", arguments: { fixture: "private-input" },
+    });
+    const id = batch[0]!.callId;
+    expect(evidenceFiles(directory).map(entry => entry.event).sort())
+      .toEqual(["delivery_possible", "queued"]);
+    broker.completeTool(token, id, result);
+    const completed = await response;
+    expect(completed.content).toEqual(result.content);
+    expect(completed.isError).not.toBe(true);
+    expect(evidenceFiles(directory).map(entry => entry.event).sort())
+      .toEqual(["delivery_possible", "queued", "result_received"]);
+    expect(JSON.stringify(evidenceFiles(directory))).not.toContain("private-input");
+    expect(inspectBrokerCallJournal(directory)[0]).toMatchObject({
+      callId: id, state: "result_unavailable", replayAuthorized: false,
+    });
+  } finally {
+    await client.close().catch(() => {});
+    await broker.close();
+  }
+
+  const restarted = TurnBroker.forSocket(socketPath);
+  try {
+    restarted.enableCallJournal(directory);
+    expect(restarted.priorNativeCallStates(traceId, identity)).toEqual(["result_unavailable"]);
+    await expect(restarted.register(environment, 30_000, traceId, identity))
+      .rejects.toThrow("require reconciliation");
+    await expect(new RemoteTurnBroker(socketPath).register(environment, 30_000, traceId, identity))
+      .rejects.toThrow("require reconciliation");
+  } finally {
+    await restarted.close();
+  }
+});
 
 test("durable event records contain no arguments, results, paths, or unvalidated tool names", () => {
   const { directory } = fixture();
