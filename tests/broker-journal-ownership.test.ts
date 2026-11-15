@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { defaultBrokerEndpoint } from "../src/config";
@@ -130,9 +131,13 @@ test("a crash after result delivery retains the sealed result across processes w
   const root = socketFixtureRoot("infinity-result-crash-");
   const directory = join(root, "diagnostics", "broker-calls");
   const readyPath = join(root, "child-completed");
+  // Linux and macOS use an explicit vault key. Give the child a private test key
+  // without changing the environment of concurrent test files.
+  const vaultKey = process.env.CODEX_INFINITY_RESULT_VAULT_KEY ?? randomBytes(32).toString("hex");
   const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures", "broker-journal-owner.ts"),
     defaultBrokerEndpoint(join(root, "child")), directory, readyPath, "completed"], {
     stdout: "ignore", stderr: "pipe",
+    env: { ...process.env, CODEX_INFINITY_RESULT_VAULT_KEY: vaultKey },
   });
   const successor = TurnBroker.forSocket(defaultBrokerEndpoint(join(root, "successor")));
   const identity = {
@@ -160,10 +165,18 @@ test("a crash after result delivery retains the sealed result across processes w
     expect(JSON.stringify(records)).not.toContain("private-result-not-in-journal");
     const digest = nativeBrokerOwnerDigest(identity);
     expect(digest).toMatch(/^[0-9a-f]{64}$/);
-    const saved = new BrokerResultVault(vaultDirectoryForJournal(directory)).read({
-      traceId: "123456abcdef", callId: deliveredId, tool: "mutating_tool",
-      nativeOwnerDigest: digest!,
-    });
+    const priorKey = process.env.CODEX_INFINITY_RESULT_VAULT_KEY;
+    let saved;
+    try {
+      process.env.CODEX_INFINITY_RESULT_VAULT_KEY = vaultKey;
+      saved = new BrokerResultVault(vaultDirectoryForJournal(directory)).read({
+        traceId: "123456abcdef", callId: deliveredId, tool: "mutating_tool",
+        nativeOwnerDigest: digest!,
+      });
+    } finally {
+      if (priorKey === undefined) delete process.env.CODEX_INFINITY_RESULT_VAULT_KEY;
+      else process.env.CODEX_INFINITY_RESULT_VAULT_KEY = priorKey;
+    }
     expect(saved).toEqual({ content: [{ type: "text", text: "private-result-not-in-journal" }] });
     await expect(successor.register({
       cwd: root, roots: [root], writableRoots: [root],
