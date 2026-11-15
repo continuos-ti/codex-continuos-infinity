@@ -1,5 +1,9 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Atualização e rollback NSIS com versões semânticas distintas — 15/11/2026
+
+O workflow Windows recebeu um teste de instalação real em runner descartável com versões de pacote diferentes. O script cria a versão candidata apenas durante CI e executa instalação, atualização, rollback, nova atualização e desinstalação, preservando perfis sintéticos e conferindo os manifests dos dois runtimes. A aprovação desse cenário depende do resultado do novo job no GitHub Actions. A homologação com sessões reais, operações MCP e rollback autenticado continua pendente.
+
 ### Retomada autenticada de chamadas somente leitura — 15/11/2026
 
 O `TurnBroker` agora permite registrar novamente o mesmo turno nativo apos reinicio do broker quando **todas** as chamadas anteriores foram explicitamente declaradas read-only, seus resultados foram autenticados no cofre criptografado e suas saidas constam no rollout nativo autenticado. A autorizacao exige igualdade exata entre o inventario persistido e o snapshot autenticado, verifica o proprietario nativo e utiliza uma capacidade `symbol` restrita ao processo e consumida no registro. Registros IPC diretos, capacidades antigas ou forjadas, turnos alheios, resultados sem saida nativa e chamadas mutaveis continuam bloqueados pela reconciliacao. O mecanismo nao reexecuta chamadas historicas e nao declara conciliados os efeitos externos de operacoes mutaveis.

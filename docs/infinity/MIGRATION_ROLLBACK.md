@@ -28,6 +28,12 @@ O smoke extrai ambos em uma pasta temporária, valida o manifesto e os hashes do
 
 O teste realizado em 15/11/2026 usou pacotes distintos construídos dos commits `8c67664` e `bba95a0`, ambos com versão `6.1.18-continuos.1` e bundle IDs diferentes. As quatro etapas passaram em Windows 11 x64 com `PACKAGED_LAUNCHER_ROLLBACK_SMOKE_OK`. Isso comprova restauração do runtime empacotado entre builds e preservação dos marcadores sintéticos. O rollback de versões semanticamente distintas, sessões autenticadas, processos em andamento, ferramentas MCP e integrações externas continua sujeito à homologação em staging real e à drenagem de tarefas.
 
+### Teste de instalação NSIS entre versões distintas na CI
+
+O job Windows de `.github/workflows/ci.yml` agora prepara uma segunda versão semântica em um runner descartável, gera o instalador candidato e executa `smoke-package-rollback.cjs` com `--nsis`. O teste instala de fato os dois pacotes em quatro passagens (versão inicial, atualização, rollback e nova atualização), verifica cada executável instalado, os manifests e a integridade dos perfis sintéticos. Ao final, desinstala o programa e verifica que as duas versões do runtime isolado permaneceram válidas.
+
+A execução `--nsis` só é habilitada no runner Windows do GitHub Actions. Essa prova permanece **pendente** até o job concluir com sucesso. Ela abrange a atualização e reversão do instalador com perfis sintéticos. A migração de sessões autenticadas, tarefas em andamento e efeitos externos MCP requer homologação separada.
+
 ## Integração opcional do Windows Local
 
 O contrato de identidade durável de `windows_command` e a persistência dos metadados de `screenshot_id` são instalados separadamente do Infinity. Execute `integrations/windows-local/apply-durable-command-jobs.ps1` para validar uma cópia temporária do código-fonte. O script usa dry-run por padrão. `-Apply` cria um backup com timestamp, instala o módulo Python e atualiza `windows_control.py`. Ele não reinicia o servidor.

@@ -134,6 +134,23 @@ test("NSIS uninstall smoke refuses execution outside an explicit disposable CI r
   assert.match(result.stderr, /NSIS uninstall smoke requires an explicit disposable Windows GitHub Actions runner/);
 });
 
+test("semantic-version rollback fixtures cannot modify manifests outside disposable Windows CI", () => {
+  const fixtureScript = path.join(launcherRoot, "scripts", "prepare-rollback-candidate.cjs");
+  const result = spawnSync(process.execPath, [fixtureScript], {
+    encoding: "utf8",
+    env: { ...process.env, CI: "false", GITHUB_ACTIONS: "false", RUNNER_OS: "Windows" },
+    timeout: 10_000,
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Rollback candidate preparation requires a disposable Windows GitHub Actions runner/);
+  const rollback = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package-rollback.cjs"), "utf8");
+  assert.match(rollback, /NSIS rollback smoke requires an explicit disposable Windows GitHub Actions runner/);
+  assert.match(rollback, /NSIS rollback requires distinct semantic versions/);
+  const ci = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8");
+  assert.match(ci, /prepare-rollback-candidate\.cjs/);
+  assert.match(ci, /smoke-package-rollback\.cjs \$savedBaseline \$candidate\[0\]\.FullName --nsis/);
+});
+
 test("packaged launcher owns a detached checksummed updater for every release platform", () => {
   const updater = fs.readFileSync(path.join(launcherRoot, "electron", "update.cjs"), "utf8");
   const worker = fs.readFileSync(path.join(launcherRoot, "electron", "update-worker.cjs"), "utf8");

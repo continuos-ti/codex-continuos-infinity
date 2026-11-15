@@ -99,6 +99,24 @@ jobs:
       - name: Smoke-test NSIS installation and uninstall on disposable Windows runner
         if: runner.os == 'Windows'
         run: bun run --cwd launcher smoke:package:uninstall
+      - name: Smoke-test real NSIS upgrades and rollback between semantic versions
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $baseline = @(Get-ChildItem launcher/artifacts/codex-continuos-infinity-*-win-x64.exe)
+          if ($baseline.Count -ne 1) { throw "Expected one baseline NSIS installer" }
+          $baselineDir = Join-Path $env:RUNNER_TEMP 'infinity-nsis-baseline'
+          New-Item -ItemType Directory -Path $baselineDir -Force | Out-Null
+          Copy-Item -LiteralPath $baseline[0].FullName -Destination $baselineDir
+          node launcher/scripts/prepare-rollback-candidate.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          bun run app:package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $candidate = @(Get-ChildItem launcher/artifacts/codex-continuos-infinity-*-win-x64.exe)
+          if ($candidate.Count -ne 1) { throw "Expected one candidate NSIS installer" }
+          $savedBaseline = Join-Path $baselineDir $baseline[0].Name
+          node launcher/scripts/smoke-package-rollback.cjs $savedBaseline $candidate[0].FullName --nsis
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   actionlint:
     runs-on: ubuntu-latest
