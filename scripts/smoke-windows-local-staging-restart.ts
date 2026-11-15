@@ -12,6 +12,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import type { CodexMessage, CodexTool } from "../src/types";
+import type { BrokerRecoveryCall } from "../src/adapters/chatgpt-web/broker-call-reconciliation";
+import { attachBrokerOperationId, brokerOperationStatusForTool } from "../src/adapters/chatgpt-web/broker-operation-identity";
+import { observeBrokerProviderRecoveryChecks, prepareBrokerProviderRecoveryChecks } from "../src/adapters/chatgpt-web/broker-provider-recovery";
 
 type JsonObject = Record<string, unknown>;
 type ToolResult = {
@@ -25,6 +29,15 @@ type ServerSession = {
 
 function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function asCodexTools(tools: Array<{ name: string; description?: string; inputSchema: unknown }>): CodexTool[] {
+  return tools.map(tool => ({
+    namespace: "mcp__windows_local",
+    name: tool.name,
+    description: tool.description ?? "",
+    parameters: tool.inputSchema as Record<string, unknown>,
+  }));
 }
 
 function parseToolResult(result: unknown): JsonObject {
@@ -76,6 +89,10 @@ async function main(): Promise<void> {
   const repoRoot = resolve(import.meta.dir, "..");
   const sourceRoot = process.env.WINDOWS_LOCAL_SOURCE_ROOT ?? "H:\\Projetos\\windows-local";
   const pythonPath = process.env.WINDOWS_LOCAL_PYTHON ?? join(sourceRoot, ".venv", "Scripts", "python.exe");
+  const commandDurationSeconds = Number(process.env.WINDOWS_LOCAL_STAGING_COMMAND_SECONDS ?? "20");
+  if (!Number.isInteger(commandDurationSeconds) || commandDurationSeconds < 5 || commandDurationSeconds > 180) {
+    throw new Error("WINDOWS_LOCAL_STAGING_COMMAND_SECONDS must be an integer from 5 to 180.");
+  }
   const applyScript = join(repoRoot, "integrations", "windows-local", "apply-durable-command-jobs.ps1");
   const sourceServer = join(sourceRoot, "server.py");
   const sourceControl = join(sourceRoot, "windows_control.py");
@@ -148,6 +165,12 @@ async function main(): Promise<void> {
     );
     const firstTools = (await first.client.listTools()).tools;
     const firstNames = firstTools.map((tool) => tool.name).sort();
+    const codexTools = asCodexTools(firstTools);
+    const commandWireName = "mcp__windows_local__windows_command";
+    const statusContract = brokerOperationStatusForTool(commandWireName, codexTools);
+    if (!statusContract || statusContract.effectScope !== "tracked_process") {
+      throw new Error("The real staging tool schema cannot establish a broker status contract.");
+    }
     const commandTool = firstTools.find((tool) => tool.name === "windows_command");
     const resultTool = firstTools.find((tool) => tool.name === "windows_command_result");
     if (!commandTool || !resultTool) {
@@ -171,18 +194,24 @@ async function main(): Promise<void> {
     const operationId = `call_${randomBytes(24).toString("base64url")}`;
     const markerLiteral = markerPath.replace(/'/g, "''");
     const command = [
-      "Start-Sleep -Seconds 20",
+      `Start-Sleep -Seconds ${commandDurationSeconds}`,
       `[System.IO.File]::AppendAllText('${markerLiteral}', 'completed' + [Environment]::NewLine)`,
       "Write-Output 'completed'",
       "exit 0",
     ].join("; ");
-    const commandArguments = {
-      command,
-      cwd: stagingRoot,
-      wait_seconds: 0,
-      operation_id: operationId,
-      provider_epoch: providerEpoch,
-    };
+    const preparedCommand = attachBrokerOperationId({
+      callId: operationId,
+      wireName: commandWireName,
+      freeform: false,
+      readOnly: false,
+      providerEpoch,
+      operationStatus: statusContract,
+      arguments: { command, cwd: stagingRoot, wait_seconds: 0 },
+    }, codexTools);
+    const commandArguments = preparedCommand.arguments ?? {};
+    if (commandArguments.operation_id !== operationId || commandArguments.provider_epoch !== providerEpoch) {
+      throw new Error("Infinity did not inject the original broker operation ID and provider epoch.");
+    }
 
     const started = parseToolResult(await first.client.callTool({
       name: "windows_command",
@@ -226,12 +255,35 @@ async function main(): Promise<void> {
       throw new Error("The provider epoch changed across the staging restart.");
     }
 
-    const deadline = Date.now() + 25_000;
+    const recoveryCall: BrokerRecoveryCall = {
+      traceId: "staging-provider-restart",
+      callId: operationId,
+      tool: commandWireName,
+      state: "delivery_unknown",
+      readOnly: false,
+      providerEpoch,
+      operationStatus: statusContract,
+      resultRecoverable: false,
+      replayAuthorized: false,
+    };
+    const recoveryChecks = prepareBrokerProviderRecoveryChecks([recoveryCall], asCodexTools(secondTools));
+    if (recoveryChecks.length !== 1) {
+      throw new Error("Infinity could not build a read-only recovery query from the restarted provider schema.");
+    }
+    const recoveryCheck = recoveryChecks[0]!;
+    if (recoveryCheck.request.wireName !== "mcp__windows_local__windows_command_result"
+      || JSON.stringify(recoveryCheck.request.arguments) !== JSON.stringify({
+        job_id: operationId, provider_epoch: providerEpoch, wait_seconds: 0,
+      })) {
+      throw new Error("Infinity's recovery query lost the original job identity or its zero-wait contract.");
+    }
+
+    const deadline = Date.now() + Math.max(25_000, (commandDurationSeconds + 10) * 1000);
     let recovered: JsonObject | undefined;
     while (Date.now() < deadline) {
       recovered = parseToolResult(await second.client.callTool({
         name: "windows_command_result",
-        arguments: { job_id: operationId, provider_epoch: providerEpoch, wait_seconds: 0 },
+        arguments: recoveryCheck.request.arguments,
       }));
       if (recovered.status === "completed" || recovered.status === "launch_failed" || recovered.status === "unknown" || recovered.status === "provider_changed") {
         break;
@@ -242,6 +294,26 @@ async function main(): Promise<void> {
       throw new Error(`The restarted provider did not recover the command. result=${JSON.stringify(recovered)}`);
     }
     commandCompleted = true;
+
+    const observedMessages: CodexMessage[] = [
+      {
+        role: "assistant", timestamp: 1,
+        content: [{ type: "toolCall", id: recoveryCheck.request.callId,
+          namespace: "mcp__windows_local", name: "windows_command_result",
+          arguments: recoveryCheck.request.arguments ?? {} }],
+      },
+      {
+        role: "toolResult", timestamp: 2, toolCallId: recoveryCheck.request.callId,
+        toolNamespace: "mcp__windows_local", toolName: "windows_command_result",
+        content: JSON.stringify(recovered), isError: false,
+      },
+    ];
+    const observed = observeBrokerProviderRecoveryChecks(recoveryChecks, observedMessages);
+    if (observed.received !== 1 || observed.observations.length !== 1
+      || observed.observations[0]?.providerStatus !== "completed"
+      || observed.observations[0]?.exitCode !== 0) {
+      throw new Error("Infinity failed to validate the real provider's recovered status response.");
+    }
 
     const markerLines = readFileSync(markerPath, "utf8").trim().split(/\r?\n/);
     if (markerLines.length !== 1 || markerLines[0] !== "completed") {
@@ -284,10 +356,14 @@ async function main(): Promise<void> {
 
     console.log(JSON.stringify({
       status: "passed",
+      commandDurationSeconds,
       totalMcpTools: secondTools.length,
       windowsTools: secondNames.filter((name) => name.startsWith("windows_")).length,
       catalogStableAcrossRestart: true,
       providerEpochStable: true,
+      brokerOperationIdentityVerified: true,
+      brokerReadOnlyRecoveryQueryVerified: true,
+      brokerStatusObservationVerified: true,
       recoveredStatus: recovered.status,
       exitCode: recovered.exit_code,
       duplicateOperationReused: true,
@@ -299,7 +375,7 @@ async function main(): Promise<void> {
   } finally {
     await closeServer(second);
     await closeServer(first);
-    if (commandStarted && !commandCompleted) await Bun.sleep(21_000);
+    if (commandStarted && !commandCompleted) await Bun.sleep((commandDurationSeconds + 1) * 1000);
     rmSync(root, { recursive: true, force: true });
   }
 }
