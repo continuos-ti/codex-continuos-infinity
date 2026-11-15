@@ -198,6 +198,7 @@ test("DEV launcher child cannot inherit production home or browser-profile overr
   })).toEqual({
     KEEP_ME: "yes",
     CODEX_WEB_GPT_DEV_HOME: paths.home,
+    CODEX_CONTINUOS_INFINITY_DEV_HOME: paths.home,
   });
 });
 

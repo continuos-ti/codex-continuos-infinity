@@ -8,7 +8,6 @@ import {
   validateIsolatedDevExternalGateway,
 } from "../config";
 import {
-  inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
   readLauncherBrowserHostDescriptor,
 } from "../launcher-browser-host";
@@ -29,6 +28,7 @@ import {
   type DevChatState,
 } from "./session";
 import { startDevChatTransport } from "./transport";
+import { loadDevChatImages, type DevChatImage } from "./images";
 import {
   activateDevProfileEnvironment,
   launchDevProfile,
@@ -45,7 +45,7 @@ Usage:
   codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction]
   codex-chatgpt-web dev setup --full --mcp-transport external-cloudflare --external-mcp-url URL --external-health-url URL --external-service NAME
   codex-chatgpt-web dev setup --full --mcp-transport openai-tunnel --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
-  codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
+  codex-chatgpt-web dev chat NAME [--model MODEL] [--image PATH ...] [MESSAGE]
   codex-chatgpt-web dev list
 
 Repository shortcut:
@@ -81,6 +81,15 @@ function takeOption(args: string[], name: string): string | undefined {
   if (!value || value.startsWith("--")) throw new Error(`${name} requires a value`);
   args.splice(index, 2);
   return value;
+}
+
+function takeOptions(args: string[], name: string): string[] {
+  const values: string[] = [];
+  for (;;) {
+    const value = takeOption(args, name);
+    if (value === undefined) return values;
+    values.push(value);
+  }
 }
 
 function color(code: number, text: string): string {
@@ -176,21 +185,19 @@ async function assertLauncherReady(config: ReturnType<typeof loadConfig>): Promi
   if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath) {
     throw new Error("DEV chat requires the isolated desktop launcher; run bun run dev:launcher first");
   }
-  if (config.browserInteractionMode === "manual") {
-    await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath, {
-      expectedProfile: DEV_LAUNCHER_PROFILE,
-    });
-  } else {
-    await inspectLauncherBrowserHost(config.browserHostDescriptorPath, {
-      expectedProfile: DEV_LAUNCHER_PROFILE,
-    });
-  }
+  // The chat turn verifies authentication on its own browser tab. Inspecting
+  // the shared home session here would block every overlapping DEV turn.
+  await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath, {
+    expectedProfile: DEV_LAUNCHER_PROFILE,
+  });
 }
 
-async function executeMessage(driver: DevChatDriver, state: DevChatState, message: string): Promise<void> {
+async function executeMessage(
+  driver: DevChatDriver, state: DevChatState, message: string, images: readonly DevChatImage[] = [],
+): Promise<void> {
   const renderer = new EventRenderer();
   try {
-    const result = await driver.send(state, message, event => renderer.write(event));
+    const result = await driver.send(state, message, event => renderer.write(event), images);
     renderer.finish();
     stdout.write(`${dim(`usage ${result.usage.inputTokens.toLocaleString("en-US")} input + ${result.usage.outputTokens.toLocaleString("en-US")} output · context ${statusLine(result.status)}`)}\n`);
   } catch (error) {
@@ -454,7 +461,10 @@ export async function runDevCommand(args: string[]): Promise<void> {
   const requestedModel = modelFromCli(takeOption(args, "--model"));
   const name = args.shift();
   if (!name) throw new Error(`DEV chat name is required\n\n${DEV_HELP}`);
+  const imagePaths = takeOptions(args, "--image");
   const message = args.join(" ").trim();
+  if (imagePaths.length && !message) throw new Error("DEV image attachments require a message");
+  const images = loadDevChatImages(imagePaths);
   if (!existsSync(paths.configPath)) {
     throw new Error(
       "DEV profile is not configured. In the window labelled DEV: sign in, run the browser smoke test,"
@@ -469,7 +479,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
   const features = readDevChatExperimentalFeatures(paths);
   await assertLauncherReady(config);
   const transport = config.mode === "full"
-    ? await startDevChatTransport(config, paths.home)
+    ? await startDevChatTransport(config, paths.home, { chatName: name })
     : undefined;
   let driver: DevChatDriver | undefined;
   try {
@@ -487,7 +497,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
       driver.setModel(opened.state, requestedModel);
     }
     printHeader(opened.state, opened.created, driver.status(opened.state), runtimeConfig.mode, features.biggerContext);
-    if (message) await executeMessage(driver, opened.state, message);
+    if (message) await executeMessage(driver, opened.state, message, images);
     else await interactive(driver, opened.state);
   } finally {
     const results = await Promise.allSettled([

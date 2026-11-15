@@ -217,6 +217,8 @@ export function devLauncherEnvironment(
   delete childEnvironment.CODEX_CONTINUOS_INFINITY_DATA_DIR;
   delete childEnvironment.CODEX_WEB_GPT_LAUNCHER_DATA_DIR;
   childEnvironment.CODEX_WEB_GPT_DEV_HOME = paths.home;
+  // Older installed launchers recognize only the namespaced DEV profile key.
+  childEnvironment.CODEX_CONTINUOS_INFINITY_DEV_HOME = paths.home;
   return childEnvironment;
 }
 

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProviderAdapter } from "../src/adapters/base";
-import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserWorker, chatGptImageFilePayloads, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import {
@@ -19,6 +19,7 @@ import {
   validateIsolatedDevExternalGateway,
 } from "../src/config";
 import { defaultDevChatModel, DEV_CHAT_TOOLS, DevChatDriver } from "../src/dev-chat/driver";
+import { loadDevChatImages } from "../src/dev-chat/images";
 import {
   createDevCoherentContextPayload,
   createDevContextFiller,
@@ -40,6 +41,23 @@ function scratch(name: string): string {
 afterEach(() => {
   chatGptTurnSessions.clear();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+test("DEV image input carries real local file bytes into the browser upload payload", () => {
+  const root = scratch("cgw-dev-physical-image");
+  const source = join(root, "sample.gif");
+  const bytes = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=", "base64");
+  writeFileSync(source, bytes);
+  const [image] = loadDevChatImages([source]);
+  expect(image.type).toBe("input_image");
+  const upload = chatGptImageFilePayloads([{ ref: "local-image", imageUrl: image.image_url }]);
+  expect(upload).toMatchObject([{ name: "local-image.gif", mimeType: "image/gif" }]);
+  expect(upload[0]!.buffer).toEqual(bytes);
+
+  const invalid = join(root, "invalid.gif");
+  writeFileSync(invalid, "not an image");
+  expect(() => loadDevChatImages([invalid])).toThrow("does not match its file type");
+  expect(() => loadDevChatImages(Array(11).fill(source))).toThrow("at most 10");
 });
 
 test("remote outer harness owns a turn through the live broker protocol", async () => {
@@ -500,6 +518,54 @@ test("DEV chat accepts the configured external Cloudflare transport and owns its
   }
 });
 
+test("named DEV chats isolate concurrent broker endpoints and preserve stable journal ownership", async () => {
+  const root = scratch("cgw-dev-named-parallel");
+  const devHome = join(root, "dev");
+  const config = {
+    ...defaultConfig("full"),
+    purpose: "dev-harness" as const,
+    mcpTransport: "external-cloudflare" as const,
+    externalGateway: {
+      mcpUrl: "https://gateway.example.test/mcp",
+      healthUrl: "https://gateway.example.test/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+    brokerSocketPath: defaultBrokerEndpoint(devHome),
+  };
+  const options = { status: () => ({ ready: true }) };
+  const active: Array<Awaited<ReturnType<typeof startDevChatTransport>>> = [];
+  let firstSocket = "";
+  try {
+    const [first, second] = await Promise.all([
+      startDevChatTransport(config, devHome, { ...options, chatName: "alpha" }),
+      startDevChatTransport(config, devHome, { ...options, chatName: "beta" }),
+    ]);
+    active.push(first, second);
+    firstSocket = first.config.brokerSocketPath;
+    expect(first.config.brokerSocketPath).not.toBe(config.brokerSocketPath);
+    expect(first.config.brokerSocketPath).not.toBe(second.config.brokerSocketPath);
+    expect(config.brokerSocketPath).toBe(defaultBrokerEndpoint(devHome));
+    expect(await callTurnBroker(first.config.brokerSocketPath, { method: "owner_status" }))
+      .toMatchObject({ protocolVersion: 5 });
+    expect(await callTurnBroker(second.config.brokerSocketPath, { method: "owner_status" }))
+      .toMatchObject({ protocolVersion: 5 });
+    expect(readdirSync(join(devHome, "diagnostics", "broker-calls"))
+      .filter(name => /^[0-9a-f]{24}$/.test(name))).toHaveLength(2);
+    // Another logical chat cannot address or recover this chat's broker by its shared profile endpoint.
+    expect(first.broker.socketPath).toBe(firstSocket);
+  } finally {
+    await Promise.all(active.map(transport => transport.close()));
+  }
+  const reopened = await startDevChatTransport(config, devHome, { ...options, chatName: "alpha" });
+  try {
+    expect(reopened.config.brokerSocketPath).toBe(firstSocket);
+    expect(readdirSync(join(devHome, "diagnostics", "broker-calls"))
+      .filter(name => /^[0-9a-f]{24}$/.test(name))).toHaveLength(2);
+  } finally {
+    await reopened.close();
+  }
+});
+
 test("DEV external Cloudflare gateway rejects the production origin before probing or opening a broker", async () => {
   const root = scratch("cgw-dev-rejects-production-gateway");
   const base = defaultConfig("full");
@@ -529,6 +595,9 @@ test("DEV external Cloudflare gateway rejects the production origin before probi
 
 test("DEV driver uses shared browser methods and its own broker while an unrelated Responses port stays occupied", async () => {
   const root = scratch("cgw-dev-driver");
+  const imageBytes = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=", "base64");
+  const imagePath = join(root, "independent.gif");
+  writeFileSync(imagePath, imageBytes);
   const codexConfig = join(root, "codex", "config.toml");
   mkdirSync(join(root, "codex"), { recursive: true });
   writeFileSync(codexConfig, "openai_base_url = \"http://127.0.0.1:17841/v1\"\n");
@@ -551,10 +620,15 @@ test("DEV driver uses shared browser methods and its own broker while an unrelat
   const worker = ChatGptBrowserWorker.forProvider(devProvider(providerConfig(config)));
   const originalRun = worker.run.bind(worker);
   let browserStarts = 0;
+  let imagePrepared = false;
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     const prepared = await turn.prepare();
     try {
+      const uploaded = chatGptImageFilePayloads(prepared.images);
+      expect(uploaded).toHaveLength(1);
+      expect(uploaded[0]!.buffer).toEqual(imageBytes);
+      imagePrepared = true;
       const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
       if (!token) throw new Error("missing DEV broker token");
       const claimed = await callTurnBroker<{ bindingId: string }>(config.brokerSocketPath, { method: "claim", token });
@@ -586,10 +660,19 @@ test("DEV driver uses shared browser methods and its own broker while an unrelat
   const driver = new DevChatDriver(config, new DevChatStore(join(root, "chats")), factory, root);
   try {
     const state = driver.open("tool-round").state;
-    const result = await driver.send(state, "Use a command tool, then report its receipt.");
+    const result = await driver.send(state, "Use a command tool, then report its receipt.", () => {}, loadDevChatImages([imagePath]));
     expect(result).toMatchObject({ text: "DEV receipt simulated=true", toolCalls: 1 });
     expect(state.input.find(item => (item as { role?: string }).role === "assistant"))
       .toMatchObject({ internal_chat_message_metadata_passthrough: { turn_id: expect.stringContaining("dev_turn_") } });
+    expect(browserStarts).toBe(1);
+    expect(imagePrepared).toBe(true);
+    const oversizedImage = {
+      type: "input_image" as const,
+      detail: "auto" as const,
+      image_url: `data:image/png;base64,${"A".repeat(61 * 1024 * 1024)}`,
+    };
+    await expect(driver.send(state, "Must refuse before reaching the browser.", () => {}, [oversizedImage]))
+      .rejects.toThrow("persistent state limit");
     expect(browserStarts).toBe(1);
     expect(await (await fetch(`http://127.0.0.1:${occupied.port}`)).text()).toBe("live");
     expect(readFileSync(codexConfig, "utf8")).toBe(sentinel);

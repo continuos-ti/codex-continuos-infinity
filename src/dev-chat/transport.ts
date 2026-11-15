@@ -2,8 +2,11 @@ import { TurnBroker } from "../adapters/chatgpt-web/turn-broker";
 import { validateIsolatedDevExternalGateway, type AppConfig } from "../config";
 import { inspectExternalGatewayHealth } from "../doctor";
 import { tunnelStatus } from "../tunnel";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { DEV_CONFIG_PURPOSE } from "./constants";
+import { assertDevChatName } from "./session";
 
 interface DevTransportStatus {
   ready: boolean;
@@ -13,6 +16,8 @@ interface DevTransportStatus {
 
 interface DevTransportDependencies {
   status?: (config: AppConfig) => DevTransportStatus | Promise<DevTransportStatus>;
+  /** Stable chat ownership separates live broker sockets and recovery journals. */
+  chatName?: string;
 }
 
 export interface DevChatTransport {
@@ -67,8 +72,19 @@ export async function startDevChatTransport(
     );
   }
 
-  const broker = TurnBroker.forSocket(config.brokerSocketPath);
-  broker.enableCallJournal(join(devHome, "diagnostics", "broker-calls"));
+  const chatName = dependencies.chatName && assertDevChatName(dependencies.chatName);
+  const identity = chatName && createHash("sha256").update(`${devHome}\u0000${chatName}`).digest("hex").slice(0, 24);
+  const brokerSocketPath = identity
+    ? process.platform === "win32"
+      ? `${config.brokerSocketPath}-${identity}`
+      : join(tmpdir(), `cgw-dev-${identity}.sock`)
+    : config.brokerSocketPath;
+  const scopedConfig = identity ? { ...config, brokerSocketPath } : config;
+  const broker = TurnBroker.forSocket(brokerSocketPath);
+  // Stable per-chat journals preserve the crash fence without serializing unrelated chats.
+  broker.enableCallJournal(identity
+    ? join(devHome, "diagnostics", "broker-calls", identity)
+    : join(devHome, "diagnostics", "broker-calls"));
   await broker.listen();
   let closed = false;
 
@@ -78,5 +94,5 @@ export async function startDevChatTransport(
     await broker.close();
   };
 
-  return { config, broker, close };
+  return { config: scopedConfig, broker, close };
 }
