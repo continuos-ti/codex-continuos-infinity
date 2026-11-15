@@ -192,9 +192,16 @@ test("rejects conflicting identities or execution claims in provider status enve
   assert.equal(observe({ operation_id: originalCallId, provider_epoch: "c".repeat(32),
     result: completed }), "unverified");
   assert.equal(observe({ status: "running", result: completed }), "unverified");
+  assert.equal(observe({ status: "failed", result: completed }), "unverified");
+  assert.equal(observe({ status: 200, result: completed }), "unverified");
+  assert.equal(observe({ status: null, result: completed }), "unverified");
+  assert.equal(observe({ ok: false, result: completed }), "unverified");
+  assert.equal(observe({ success: false, result: completed }), "unverified");
+  assert.equal(observe({ error: "provider failed", result: completed }), "unverified");
   assert.equal(observe({ exit_code: 1, result: completed }), "unverified");
   assert.equal(observe({ ...completed, operation_id: originalCallId }), "completed");
   assert.equal(observe({ job_id: originalCallId, result: completed }), "completed");
+  assert.equal(observe({ status: "completed", error: null, ok: true, result: completed }), "completed");
 });
 
 test("requires the exact native status call before accepting a provider result", () => {

@@ -166,11 +166,17 @@ export function observeBrokerProviderRecoveryChecks(
           && [...echoedIds, ...outerIds].every(value => value === check.originalCallId);
         const outerEpochConsistent = outer?.provider_epoch === undefined
           || outer.provider_epoch === nested?.provider_epoch;
-        const outerStatusConsistent = typeof outer?.status !== "string"
-          || !PROVIDER_STATUSES.has(outer.status) || outer.status === nested?.status;
+        // Any extra status on a wrapper is an independent execution claim. An
+        // unrecognized value (including an error state) cannot silently endorse
+        // a nested "completed" result. Fail closed on disagreement or bad types.
+        const outerStatusConsistent = outer?.status === undefined
+          || outer.status === nested?.status;
         const outerExitConsistent = outer?.exit_code === undefined
           || outer.exit_code === nested?.exit_code;
+        const outerFailureAbsent = outer?.ok !== false && outer?.success !== false
+          && (outer?.error === undefined || outer.error === null);
         if (nested && idsConsistent && outerEpochConsistent && outerStatusConsistent && outerExitConsistent
+          && outerFailureAbsent
           && (providerChanged ? changedEpoch : matchingEpoch)
           && completedWithExitCode
           && typeof nested.status === "string" && PROVIDER_STATUSES.has(nested.status)) {
