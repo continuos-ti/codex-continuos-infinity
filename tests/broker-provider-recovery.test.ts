@@ -340,6 +340,35 @@ test("read-only status polls stop on unverified results, epoch changes and unsaf
   assert.notEqual(followup.request.arguments?.operation_id, statusWithIdentity.request.callId);
 });
 
+test("follow-up status polls require the original provider and read-only status contract to remain valid", () => {
+  const first = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
+  const history = [issued(first), result(first.request.callId, {
+    job_id: originalCallId, provider_epoch: providerEpoch, status: "running",
+  })];
+  assert.equal(extendBrokerProviderRecoveryChecks([first], history, tools).length, 2);
+
+  const changedEpoch = structuredClone(tools);
+  changedEpoch[0]!.parameters["x-codex-provider-epoch"] = "c".repeat(32);
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], history, changedEpoch), [first]);
+
+  const changedScope = structuredClone(tools);
+  (changedScope[0]!.parameters["x-codex-operation-status"] as Record<string, unknown>).effect_scope = "filesystem";
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], history, changedScope), [first]);
+
+  const lostReadOnly = structuredClone(tools);
+  delete lostReadOnly[1]!.parameters["x-codex-read-only"];
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], history, lostReadOnly), [first]);
+
+  const duplicateStatus = [...tools, structuredClone(tools[1]!)];
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], history, duplicateStatus), [first]);
+
+  const changedWaitSchema = structuredClone(tools);
+  (changedWaitSchema[1]!.parameters.properties as Record<string, unknown>).wait_seconds = {
+    type: "integer", minimum: 1, maximum: 30,
+  };
+  assert.deepEqual(extendBrokerProviderRecoveryChecks([first], history, changedWaitSchema), [first]);
+});
+
 test("long-running recovery status remains bounded after twelve unique checks", () => {
   const first = prepareBrokerProviderRecoveryChecks([recoveryCall], tools)[0]!;
   const history: CodexMessage[] = [];

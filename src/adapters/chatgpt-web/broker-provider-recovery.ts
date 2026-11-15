@@ -2,11 +2,14 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { namespacedToolName, type CodexMessage, type CodexTool, type CodexToolCall, type CodexToolResultMessage } from "../../types";
 import type { BrokerRecoveryCall } from "./broker-call-reconciliation";
+import type { BrokerOperationStatusContract } from "./broker-call-journal";
 import { attachBrokerOperationId, brokerOperationStatusForTool, brokerOperationStatusQueryForCall, brokerProviderEpochForTool, brokerToolIsReadOnly } from "./broker-operation-identity";
 import type { BrokerToolRequest } from "./turn-broker";
 
 export interface BrokerProviderRecoveryCheck {
   originalCallId: string;
+  originalTool: string;
+  originalOperationStatus: BrokerOperationStatusContract;
   state: BrokerRecoveryCall["state"];
   effectScope: string;
   providerEpoch: string;
@@ -47,7 +50,8 @@ export function prepareBrokerProviderRecoveryChecks(
         operationStatus: brokerOperationStatusForTool(query.wireName, tools),
         arguments: query.arguments,
       }, tools);
-      checks.push({ originalCallId: call.callId, state: call.state,
+      checks.push({ originalCallId: call.callId, originalTool: call.tool,
+        originalOperationStatus: call.operationStatus!, state: call.state,
         effectScope: query.effectScope, providerEpoch: call.providerEpoch,
         ...(call.operationStatus?.waitSecondsArgument
           ? { waitSecondsArgument: call.operationStatus.waitSecondsArgument } : {}), request });
@@ -237,6 +241,15 @@ export function extendBrokerProviderRecoveryChecks(
       const previous = latest[index]!;
       const observed = observeBrokerProviderRecoveryChecks([previous], messages).observations[0];
       if (observed?.providerStatus !== "running" && observed?.providerStatus !== "starting") continue;
+      // A status contract can change while the native turn is polling. Every new
+      // request must still be authorized by the original operation's live provider.
+      const liveQuery = brokerOperationStatusQueryForCall({
+        callId: previous.originalCallId, tool: previous.originalTool,
+        providerEpoch: previous.providerEpoch,
+        operationStatus: previous.originalOperationStatus,
+      }, [...tools]);
+      if (!liveQuery || liveQuery.wireName !== previous.request.wireName
+        || liveQuery.effectScope !== previous.effectScope) continue;
       const newId = `call_${createHash("sha256").update("broker-provider-status-followup-v1\0")
         .update(initialChecks[index]!.request.callId).update("\0")
         .update(String(attempt)).digest("hex").slice(0, 32)}`;
@@ -246,7 +259,15 @@ export function extendBrokerProviderRecoveryChecks(
       if (previous.waitSecondsArgument && [0, 10].includes(args[previous.waitSecondsArgument] as number)) {
         args[previous.waitSecondsArgument] = providerPollWaitSeconds(previous, tools);
       }
-      const next = { ...previous, request: { ...previous.request, callId: newId, arguments: args } };
+      const nextRequest = { ...previous.request, callId: newId, arguments: args };
+      try {
+        if (!brokerToolIsReadOnly(nextRequest.wireName, [...tools])
+          || !isDeepStrictEqual(attachBrokerOperationId(nextRequest, [...tools]), nextRequest)) continue;
+      } catch {
+        // A changed status provider cannot authorize another read-only poll.
+        continue;
+      }
+      const next = { ...previous, request: nextRequest };
       latest[index] = next;
       allChecks.push(next);
       added++;
