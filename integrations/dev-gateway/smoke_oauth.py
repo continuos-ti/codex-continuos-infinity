@@ -370,6 +370,42 @@ def main() -> int:
         fixture_result = fixture.get("result", {}).get("structuredContent", {})
         require(fixture_result.get("name") == "hello.txt" and "no production connection" in fixture_result.get("content", ""), "fixed DEV fixture tool")
 
+        receipts = [
+            result.get("result", {}).get("structuredContent", {}).get("audit_receipt")
+            for result in (ping, echo, fixture)
+        ]
+        require(all(isinstance(value, str) and len(value) == 32 for value in receipts),
+                "unique DEV tool receipt IDs")
+        require(len(set(receipts)) == 3, "DEV tool receipt IDs are distinct")
+        log_text = (state / "tool-receipts.jsonl").read_text(encoding="utf-8")
+        logged = [json.loads(line) for line in log_text.splitlines()]
+        require([entry["receipt_id"] for entry in logged] == receipts, "persisted DEV tool receipts")
+        require([entry["tool"] for entry in logged] == ["dev_ping", "dev_echo", "dev_read_fixture"],
+                "persisted DEV tool names")
+        require(all(entry["outcome"] == "completed" for entry in logged), "completed tool outcomes")
+        require("oauth-pkce-ok" not in log_text and "no production connection" not in log_text,
+                "DEV tool audit excludes arguments and fixture content")
+
+        fixture_path = state / "fixtures" / "hello.txt"
+        fixture_bytes = fixture_path.read_bytes()
+        fixture_path.unlink()
+        try:
+            missing_fixture = rpc(7, "tools/call", {"name": "dev_read_fixture", "arguments": {"name": "hello.txt"}})
+        finally:
+            fixture_path.write_bytes(fixture_bytes)
+        invalid_result = missing_fixture.get("result", {})
+        require(invalid_result.get("isError") is True, "missing DEV fixture rejected")
+        require("DEV fixture unavailable" in invalid_result.get("content", [{}])[0].get("text", ""),
+                "DEV fixture error message preserved")
+        invalid_receipt = invalid_result.get("structuredContent", {}).get("audit_receipt")
+        require(isinstance(invalid_receipt, str) and len(invalid_receipt) == 32,
+                "invalid DEV tool has audit receipt")
+        appended = [json.loads(line) for line in (state / "tool-receipts.jsonl").read_text(encoding="utf-8").splitlines()]
+        require(len(appended) == 4 and appended[-1]["receipt_id"] == invalid_receipt,
+                "failed DEV receipt persisted")
+        require(appended[-1]["tool"] == "dev_read_fixture" and appended[-1]["outcome"] == "error",
+                "failed DEV outcome persisted")
+
         revoked = client.post(base + "/revoke", data={
             "token": refreshed["refresh_token"],
             "token_type_hint": "refresh_token",
@@ -385,6 +421,7 @@ def main() -> int:
     print("pairing=" + pairing_flow)
     print("trusted_consent_reuse=passed")
     print("tools=dev_ping,dev_echo,dev_read_fixture")
+    print("tool_receipts=durable_correlated_and_sanitized")
     print("production_dispatcher=not_loaded")
     print("secrets=not_logged")
     return 0

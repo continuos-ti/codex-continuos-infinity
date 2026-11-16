@@ -68,6 +68,22 @@ def audit(event: str, request_id: str = "") -> None:
         pass
 
 
+def record_tool_receipt(receipt_id: str, tool_name: str, is_error: bool) -> None:
+    """Durably log a DEV tool outcome without arguments or authentication material."""
+    entry = json.dumps({
+        "receipt_id": receipt_id,
+        "tool": tool_name if tool_name in ("dev_ping", "dev_echo", "dev_read_fixture") else "unknown",
+        "outcome": "error" if is_error else "completed",
+        "timestamp": int(time.time()),
+    }, separators=(",", ":")) + "\n"
+    fd = os.open(STATE / "tool-receipts.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        os.write(fd, entry.encode("utf-8"))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 class Provider(OAuthAuthorizationServerProvider):
     def __init__(self) -> None:
         self.db = sqlite3.connect(STATE / "oauth.sqlite", check_same_thread=False, timeout=10)
@@ -398,30 +414,50 @@ async def list_tools() -> list[Tool]:
 @mcp._mcp_server.call_tool()
 async def call_tool(name: str, arguments: dict | None) -> CallToolResult:
     args = arguments or {}
+    error_message = "Unknown or invalid DEV tool call"
     if name == "dev_ping" and not args:
-        return tool_result({
+        value = {
             "status": "ok", "service": SERVICE_NAME, "mode": "isolated-dev",
             "side_effects": False,
             "production_dispatcher_loaded": any(
                 module in sys.modules for module in ("codex_cf_oauth", "codex_cf_gateway_lab")
             ),
-        })
-    if name == "dev_echo" and set(args) == {"message"}:
+        }
+    elif name == "dev_echo" and set(args) == {"message"}:
         message = args["message"]
         if not isinstance(message, str) or len(message) > 512:
-            return CallToolResult(isError=True, content=[TextContent(type="text", text="Invalid DEV echo input")])
-        return tool_result({"echo": message, "service": SERVICE_NAME, "side_effects": False})
-    if name == "dev_read_fixture" and set(args) == {"name"} and args["name"] == "hello.txt":
+            value = None
+            error_message = "Invalid DEV echo input"
+        else:
+            value = {"echo": message, "service": SERVICE_NAME, "side_effects": False}
+    elif name == "dev_read_fixture" and set(args) == {"name"} and args["name"] == "hello.txt":
         fixture = STATE / "fixtures" / "hello.txt"
-        if not fixture.is_file():
-            return CallToolResult(isError=True, content=[TextContent(type="text", text="DEV fixture unavailable")])
-        content = fixture.read_text(encoding="utf-8")
-        return tool_result({
-            "name": "hello.txt", "content": content,
-            "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            "side_effects": False,
-        })
-    return CallToolResult(isError=True, content=[TextContent(type="text", text="Unknown or invalid DEV tool call")])
+        if fixture.is_file():
+            content = fixture.read_text(encoding="utf-8")
+            value = {
+                "name": "hello.txt", "content": content,
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                "side_effects": False,
+            }
+        else:
+            value = None
+            error_message = "DEV fixture unavailable"
+    else:
+        value = None
+
+    receipt_id = secrets.token_hex(16)
+    try:
+        record_tool_receipt(receipt_id, name, value is None)
+    except OSError:
+        return CallToolResult(isError=True, content=[TextContent(type="text", text="DEV tool audit unavailable")])
+    if value is None:
+        return CallToolResult(
+            isError=True,
+            content=[TextContent(type="text", text=error_message)],
+            structuredContent={"audit_receipt": receipt_id},
+        )
+    value["audit_receipt"] = receipt_id
+    return tool_result(value)
 
 
 HEADERS = {
