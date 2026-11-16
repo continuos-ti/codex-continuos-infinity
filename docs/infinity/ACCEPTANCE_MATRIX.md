@@ -6,6 +6,8 @@ O observador do transporte MCP stdio agora acrescenta `audit_receipt` ao evento 
 
 O GitHub Actions do PR, run `43916179477` do commit `bbcde8e`, concluiu com cinco jobs `completed/success`, incluindo Windows, Ubuntu, macOS, `secret-scan` e `actionlint`. O job macOS confirmou `verify`, empacotamento e `app:smoke` aprovados. Esta evidencia refere-se ao commit remoto anterior a alteracao local do observador. A autorizacao DEV existente continua sendo reutilizada sem novo pareamento.
 
+O GitHub Actions do PR, run `43923783563` do commit `7331f80`, concluiu com **5/5 jobs `completed/success`**. Passaram `verify (windows-latest)`, `verify (ubuntu-24.04)`, `verify (macos-15-intel)`, `actionlint` e `secret-scan`. O Windows aprovou `verify`, `app:package`, `app:smoke`, instalacao/desinstalacao NSIS e atualizacao/rollback entre versoes semanticas em runner descartavel. Ubuntu e macOS aprovaram verificacao, empacotamento e smoke. A correlacao com o gateway DEV ativo e o rebind apos crash completo continuam pendentes de homologacao real.
+
 No Windows local, os quatro testes direcionados de observacao MCP passaram, com 41 assercoes, assim como o TypeScript typecheck e o `bun run verify` integral com exit 0. O launcher aprovou 458 testes, ignorou quatro e registrou zero falhas. O Vite compilou 444 modulos e o smoke terminou com `RELOCATABLE_RUNTIME_SMOKE_OK`. Houve um aviso de chunk acima de 500 KB e uma consulta de catalogo com HTTP 502 durante o smoke. O gateway DEV vivo respondeu HTTP 200 sem anunciar `tool_receipts_version`, por isso o recibo persistido ainda so foi comprovado no gateway efemero de testes.
 
 ### Integridade dos recibos do gateway DEV — 16/11/2026
