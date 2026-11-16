@@ -38,6 +38,9 @@ def remove_temporary_directory(path: Path) -> None:
 
 
 def main() -> int:
+    subprocess.run([
+        sys.executable, "-m", "unittest", "-v", "test_receipt_journal",
+    ], check=True, cwd=str(ROOT))
     port = free_port()
     temporary = Path(tempfile.mkdtemp(prefix="codex-infinity-dev-gateway-"))
     server: subprocess.Popen | None = None

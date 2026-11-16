@@ -37,6 +37,8 @@ from mcp.types import CallToolResult, TextContent, Tool
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 import uvicorn
 
+from receipt_journal import record_tool_receipt
+
 
 SERVICE_NAME = "ContinuosWebIntegracaoDev"
 SCOPE = "codex.control"
@@ -66,22 +68,6 @@ def audit(event: str, request_id: str = "") -> None:
             log.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} event={event} request={digest}\n")
     except OSError:
         pass
-
-
-def record_tool_receipt(receipt_id: str, tool_name: str, is_error: bool) -> None:
-    """Durably log a DEV tool outcome without arguments or authentication material."""
-    entry = json.dumps({
-        "receipt_id": receipt_id,
-        "tool": tool_name if tool_name in ("dev_ping", "dev_echo", "dev_read_fixture") else "unknown",
-        "outcome": "error" if is_error else "completed",
-        "timestamp": int(time.time()),
-    }, separators=(",", ":")) + "\n"
-    fd = os.open(STATE / "tool-receipts.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    try:
-        os.write(fd, entry.encode("utf-8"))
-        os.fsync(fd)
-    finally:
-        os.close(fd)
 
 
 class Provider(OAuthAuthorizationServerProvider):
@@ -447,7 +433,7 @@ async def call_tool(name: str, arguments: dict | None) -> CallToolResult:
 
     receipt_id = secrets.token_hex(16)
     try:
-        record_tool_receipt(receipt_id, name, value is None)
+        record_tool_receipt(STATE, receipt_id, name, value is None)
     except OSError:
         return CallToolResult(isError=True, content=[TextContent(type="text", text="DEV tool audit unavailable")])
     if value is None:

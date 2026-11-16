@@ -1,5 +1,11 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Integridade dos recibos do gateway DEV — 16/11/2026
+
+O registro de recibos do gateway isolado agora conclui escritas parciais antes de reconhecer o resultado, serializa as gravações concorrentes no processo e restaura o comprimento anterior do journal quando uma escrita falha. A sincronização com o disco continua obrigatória antes de devolver `audit_receipt`. Cinco testes dirigidos passaram, cobrindo escrita parcial, interrupção após fragmento, falta de progresso, falha de `fsync` e 24 recibos concorrentes. O smoke hermético OAuth/PKCE/MCP passou integralmente com `DEV_GATEWAY_LOCAL_E2E_OK` e `tool_receipts=durable_correlated_and_sanitized`, usando um estado DEV temporário independente.
+
+Essa validação corresponde ao código-fonte e ao servidor efêmero de teste. O gateway DEV em execução ainda precisa carregar a revisão com `tool_receipts_version=1` para permitir a correlação de um recibo emitido pelo navegador Infinity com o `TurnBroker` original. A autenticação DEV existente foi preservada, sem nova janela ou inserção de chave.
+
 ### Atualização e rollback NSIS com versões semânticas distintas — 15/11/2026
 
 O workflow Windows recebeu um teste de instalação real em runner descartável com versões de pacote diferentes. O script cria a versão candidata apenas durante CI e executa instalação, atualização, rollback, nova atualização e desinstalação, preservando perfis sintéticos e conferindo os manifests dos dois runtimes. O run GitHub Actions `43774641276` do commit `1f6af8f494b366f68bbbeab502f20e6474a8fc43` concluiu com **5/5 jobs aprovados** (Windows, Ubuntu, macOS, `secret-scan` e `actionlint`). A homologação com sessões reais, operações MCP e rollback autenticado continua pendente.
