@@ -61,7 +61,9 @@ export function observeMcpToolCalls(
       if (call) emit({ event: "reply_send_failed", call: call.call, tool: call.tool });
       throw error;
     } finally {
-      if (call && id !== undefined && id !== null) pending.delete(id);
+      // An ambiguous (null) entry must also retire when its response settles.
+      // JSON-RPC IDs may be reused by a later, independent request.
+      if (id !== undefined && id !== null && !("method" in message)) pending.delete(id);
     }
     if (call) {
       try {

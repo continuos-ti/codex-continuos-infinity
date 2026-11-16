@@ -154,3 +154,27 @@ test("MCP observation failures, arbitrary IDs and unknown names never alter tran
   transport.onclose?.();
   expect(closed).toBeTrue();
 });
+
+test("a duplicate MCP request ID is uncorrelated and retired after its reply", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  const transport: Transport = {
+    start: async () => {}, close: async () => {}, onmessage: () => {},
+    send: async () => {},
+  };
+  observeMcpToolCalls(transport, new Set(["dev_echo"]), event => events.push(event));
+  const request = { jsonrpc: "2.0" as const, id: 8, method: "tools/call",
+    params: { name: "dev_echo", arguments: {} } };
+  const reply = { jsonrpc: "2.0" as const, id: 8, result: {} };
+  transport.onmessage?.(request);
+  transport.onmessage?.(request);
+  expect(events.at(-1)).toMatchObject({ event: "uncorrelated_call", reason: "duplicate_id" });
+  await transport.send(reply);
+  expect(events.some(event => event.event === "reply_sent")).toBeFalse();
+  transport.onmessage?.(request);
+  await transport.send(reply);
+  expect(events.filter(event => event.event === "call_received")).toHaveLength(2);
+  expect(events.filter(event => event.event === "reply_sent")).toMatchObject([{
+    call: 2, tool: "dev_echo", outcome: "result",
+  }]);
+  await transport.close();
+});
