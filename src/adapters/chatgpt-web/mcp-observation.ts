@@ -57,7 +57,14 @@ export function observeMcpToolCalls(
     const call = id !== undefined && id !== null && !("method" in message) ? pending.get(id) : undefined;
     try {
       await send(message, options);
-      if (call) {
+    } catch (error) {
+      if (call) emit({ event: "reply_send_failed", call: call.call, tool: call.tool });
+      throw error;
+    } finally {
+      if (call && id !== undefined && id !== null) pending.delete(id);
+    }
+    if (call) {
+      try {
         const result = "result" in message ? message.result : undefined;
         const auditReceipt = structuredAuditReceipt(result);
         emit({
@@ -67,12 +74,11 @@ export function observeMcpToolCalls(
           ...("result" in message ? { is_error: result?.isError === true } : {}),
           ...(auditReceipt ? { audit_receipt: auditReceipt } : {}),
         });
+      } catch {
+        // Observation cannot fail a response that the underlying transport already sent.
+        emit({ event: "reply_sent", call: call.call, tool: call.tool,
+          elapsed_ms: Math.round(performance.now() - call.started), outcome: "uninspectable" });
       }
-    } catch (error) {
-      if (call) emit({ event: "reply_send_failed", call: call.call, tool: call.tool });
-      throw error;
-    } finally {
-      if (call && id !== undefined && id !== null) pending.delete(id);
     }
   };
   const close = transport.onclose;

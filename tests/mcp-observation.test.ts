@@ -99,6 +99,30 @@ test("MCP observations record well-formed DEV receipt IDs without exposing tool 
   }
 });
 
+test("MCP receipt inspection cannot turn a sent response into a transport error", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  let sent = 0;
+  const transport: Transport = {
+    start: async () => {}, close: async () => {},
+    onmessage: () => {},
+    send: async () => { sent += 1; },
+  };
+  observeMcpToolCalls(transport, new Set(["dev_echo"]), event => events.push(event));
+  transport.onmessage?.({ jsonrpc: "2.0", id: 17, method: "tools/call",
+    params: { name: "dev_echo", arguments: {} } });
+  await transport.send({ jsonrpc: "2.0", id: 17, result: {
+    get structuredContent() { throw new Error("private receipt inspection error"); },
+  } });
+  expect(sent).toBe(1);
+  expect(events.filter(event => event.event === "reply_sent")).toMatchObject([{
+    tool: "dev_echo", outcome: "uninspectable",
+  }]);
+  expect(events.some(event => event.event === "reply_send_failed")).toBeFalse();
+  expect(JSON.stringify(events)).not.toContain("private receipt inspection error");
+  await transport.send({ jsonrpc: "2.0", id: 17, result: {} });
+  expect(events.filter(event => event.event === "reply_sent")).toHaveLength(1);
+});
+
 test("MCP observation failures, arbitrary IDs and unknown names never alter transport behavior", async () => {
   const events: Array<Record<string, unknown>> = [];
   const secret = "private-id-and-tool-name";
