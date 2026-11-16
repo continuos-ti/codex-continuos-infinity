@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { createHash } = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -10,10 +11,53 @@ const launcherManifest = JSON.parse(
   fs.readFileSync(path.join(launcherRoot, "package.json"), "utf8"),
 );
 const expectedVersion = launcherManifest.version;
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-smoke-"));
+const portable = process.argv.includes("--portable");
+const verifyUninstall = process.argv.includes("--verify-uninstall");
+const verifyRepair = process.argv.includes("--verify-repair") || verifyUninstall;
+if (verifyUninstall && (portable || process.platform !== "win32"
+  || process.env.CI !== "true" || process.env.GITHUB_ACTIONS !== "true"
+  || process.env.RUNNER_OS !== "Windows")) {
+  throw new Error("NSIS uninstall smoke requires an explicit disposable Windows GitHub Actions runner");
+}
+if (verifyRepair && (process.platform !== "win32" || (!portable && !verifyUninstall))) {
+  throw new Error("Packaged runtime repair smoke requires portable Windows mode or an approved disposable CI runner");
+}
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-package-smoke-"));
 const markerPath = path.join(scratch, "ready.json");
 const coreHome = path.join(scratch, "core-home");
 let macAppBundle;
+
+function sha256File(file) {
+  const digest = createHash("sha256");
+  const fd = fs.openSync(file, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let count;
+    while ((count = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+      digest.update(buffer.subarray(0, count));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return digest.digest("hex");
+}
+
+function verifyArtifactChecksums() {
+  const checksumFile = path.join(artifactsDirectory, "checksums-local.txt");
+  const lines = fs.readFileSync(checksumFile, "utf8").trim().split(/\r?\n/);
+  const names = fs.readdirSync(artifactsDirectory).filter(name =>
+    /\.(?:AppImage|dmg|exe|zip|blockmap)$/i.test(name)).sort();
+  if (lines.length !== names.length || names.length === 0) {
+    throw new Error("Packaged artifact checksum list is incomplete");
+  }
+  for (let index = 0; index < names.length; index++) {
+    const match = /^([a-f0-9]{64})  ([^/\\\r\n]+)$/.exec(lines[index]);
+    if (!match || match[2] !== names[index]
+      || sha256File(path.join(artifactsDirectory, names[index])) !== match[1]) {
+      throw new Error(`Packaged artifact checksum mismatch: ${names[index]}`);
+    }
+  }
+}
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -50,6 +94,62 @@ function windowsInstallLocation() {
   return match[1];
 }
 
+function windowsInstallerRegistrationExists() {
+  const registryKey = `HKCU\\Software\\${launcherManifest.build.nsis.guid}`;
+  const result = spawnSync("reg.exe", ["query", registryKey], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  throw new Error(`Unable to check Windows installer registration: ${result.stderr?.trim() || result.status}`);
+}
+
+function verifyWindowsUninstall(installLocation, executable) {
+  const uninstallers = fs.readdirSync(installLocation)
+    .filter(name => /^Uninstall .+\.exe$/i.test(name));
+  if (uninstallers.length !== 1) {
+    throw new Error(`Expected one NSIS uninstaller in ${installLocation}; found ${uninstallers.length}`);
+  }
+  run(path.join(installLocation, uninstallers[0]), ["/S"], { timeout: 120_000 });
+
+  // NSIS may spawn a temporary uninstaller process after its initial process exits.
+  const deadline = Date.now() + 45_000;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    if (!windowsInstallerRegistrationExists() && !fs.existsSync(executable)) {
+      process.stdout.write(`PACKAGED_LAUNCHER_UNINSTALL_SMOKE_OK ${process.platform}/${process.arch}\n`);
+      return;
+    }
+    Atomics.wait(pause, 0, 0, 250);
+  }
+  throw new Error("NSIS uninstall did not remove the registered install and executable within 45 seconds");
+}
+
+function verifyPackagedRuntimeRepair(command, args, env, installedRuntime) {
+  const entrypoint = path.join(installedRuntime, "app", "cli.js");
+  const originalDigest = sha256File(entrypoint);
+  fs.appendFileSync(entrypoint, "\n// interrupted upgrade fixture\n");
+  if (sha256File(entrypoint) === originalDigest) {
+    throw new Error("Runtime repair fixture did not change the installed payload");
+  }
+  fs.rmSync(markerPath, { force: true });
+  run(command, args, { env, timeout: 90_000 });
+  if (!fs.existsSync(markerPath)) {
+    throw new Error("Packaged launcher did not recover its runtime readiness marker");
+  }
+  const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+  if (marker.ok !== true || marker.runtimeVerified !== true || marker.version !== expectedVersion
+    || sha256File(entrypoint) !== originalDigest) {
+    throw new Error("Packaged launcher did not restore its original runtime after corruption");
+  }
+  validateRuntimeBundle(installedRuntime, {
+    version: expectedVersion, platform: process.platform, arch: process.arch,
+  });
+  process.stdout.write(`PACKAGED_LAUNCHER_RUNTIME_REPAIR_SMOKE_OK ${process.platform}/${process.arch}\n`);
+}
+
 function artifact(pattern, label) {
   const matches = fs.readdirSync(artifactsDirectory)
     .filter((name) => pattern.test(name))
@@ -60,30 +160,62 @@ function artifact(pattern, label) {
   return path.join(artifactsDirectory, matches[0]);
 }
 
+/** Verify the packaged Electron app without installing anything or changing the registry. */
+function extractPortableWindowsLauncher(installer) {
+  const sevenZip = process.env.SEVEN_ZIP_EXE
+    || ["C:\\Program Files\\7-Zip\\7z.exe", "C:\\ProgramData\\chocolatey\\bin\\7z.exe"]
+      .find(candidate => fs.existsSync(candidate))
+    || "7z";
+  const outer = path.join(scratch, "nsis");
+  const appRoot = path.join(scratch, "unpacked");
+  fs.mkdirSync(outer);
+  fs.mkdirSync(appRoot);
+  run(sevenZip, ["e", installer, `-o${outer}`, "-y", "$PLUGINSDIR\\app-64.7z"], { timeout: 120_000 });
+  const payload = path.join(outer, "app-64.7z");
+  if (!fs.existsSync(payload)) throw new Error("NSIS archive has no packaged application payload");
+  run(sevenZip, ["x", payload, `-o${appRoot}`, "-y"], { timeout: 120_000 });
+  return path.join(appRoot, `${launcherManifest.build.productName}.exe`);
+}
+
 function smokeEnvironment() {
   return {
     ...process.env,
     TMPDIR: scratch,
-    CODEX_WEB_GPT_LAUNCHER_DATA_DIR: path.join(scratch, "launcher-data"),
-    CODEX_CHATGPT_WEB_HOME: coreHome,
+    CODEX_CONTINUOS_INFINITY_DATA_DIR: path.join(scratch, "launcher-data"),
+    CODEX_CONTINUOS_INFINITY_HOME: coreHome,
     CODEX_HOME: path.join(scratch, "codex-home"),
     CODEX_WEB_GPT_SMOKE_FILE: markerPath,
   };
 }
 
 try {
+  verifyArtifactChecksums();
   let executable;
+  let installedLocation;
   let command;
   let args;
   const env = smokeEnvironment();
+  const previousState = path.join(coreHome, "previous-profile-state.fixture");
+  const previousRuntime = path.join(coreHome, "versions", "previous-release.fixture");
+  const launcherProfile = path.join(env.CODEX_CONTINUOS_INFINITY_DATA_DIR, "session-preservation.fixture");
+  const codexProfile = path.join(env.CODEX_HOME, "codex-workspace.fixture");
+  if (verifyUninstall) {
+    fs.mkdirSync(previousRuntime, { recursive: true });
+    fs.mkdirSync(path.dirname(launcherProfile), { recursive: true });
+    fs.mkdirSync(path.dirname(codexProfile), { recursive: true });
+    fs.writeFileSync(previousState, "independent-user-settings\n");
+    fs.writeFileSync(path.join(previousRuntime, "checkpoint.txt"), "previous-runtime-checkpoint\n");
+    fs.writeFileSync(launcherProfile, "launcher-session-marker\n");
+    fs.writeFileSync(codexProfile, "codex-workspace-marker\n");
+  }
 
   if (process.platform === "darwin") {
     const archive = artifact(/-mac-(?:arm64|x64)\.zip$/, "macOS launcher archive");
     const stage = path.join(scratch, "stage");
     fs.mkdirSync(stage);
     run("ditto", ["-x", "-k", archive, stage]);
-    macAppBundle = path.join(stage, "Codex Web GPT.app");
-    executable = path.join(macAppBundle, "Contents", "MacOS", "Codex Web GPT");
+    macAppBundle = path.join(stage, "Codex Continuos Infinity.app");
+    executable = path.join(macAppBundle, "Contents", "MacOS", "Codex Continuos Infinity");
     command = executable;
     args = ["--launcher-smoke-test"];
   } else if (process.platform === "linux") {
@@ -100,8 +232,16 @@ try {
     env.APPIMAGE_EXTRACT_AND_RUN = "1";
   } else if (process.platform === "win32") {
     const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-    run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
-    executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
+    if (portable) {
+      executable = extractPortableWindowsLauncher(installer);
+    } else {
+      if (verifyUninstall && windowsInstallerRegistrationExists()) {
+        throw new Error("Refusing NSIS uninstall smoke because this runner already has an Infinity installation");
+      }
+      run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
+      installedLocation = windowsInstallLocation();
+      executable = path.join(installedLocation, `${launcherManifest.build.productName}.exe`);
+    }
     command = executable;
     args = ["--launcher-smoke-test"];
   } else {
@@ -141,7 +281,24 @@ try {
     || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
     throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
   }
-  process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
+  if (verifyRepair) verifyPackagedRuntimeRepair(command, args, env, installedRuntime);
+  process.stdout.write(`${portable && process.platform === "win32"
+    ? "PACKAGED_LAUNCHER_PORTABLE_SMOKE_OK" : "PACKAGED_LAUNCHER_SMOKE_OK"} ${process.platform}/${process.arch}\n`);
+  if (verifyUninstall) {
+    verifyWindowsUninstall(installedLocation, executable);
+    if (fs.readFileSync(previousState, "utf8") !== "independent-user-settings\n"
+      || fs.readFileSync(path.join(previousRuntime, "checkpoint.txt"), "utf8")
+        !== "previous-runtime-checkpoint\n"
+      || fs.readFileSync(launcherProfile, "utf8") !== "launcher-session-marker\n"
+      || fs.readFileSync(codexProfile, "utf8") !== "codex-workspace-marker\n"
+      || !fs.existsSync(installedRuntime)) {
+      throw new Error("NSIS uninstall changed the isolated user profile or durable runtime");
+    }
+    validateRuntimeBundle(installedRuntime, {
+      version: expectedVersion, platform: process.platform, arch: process.arch,
+    });
+    process.stdout.write(`PACKAGED_LAUNCHER_PROFILE_PRESERVATION_OK ${process.platform}/${process.arch}\n`);
+  }
 } finally {
   try {
     if (macAppBundle) {

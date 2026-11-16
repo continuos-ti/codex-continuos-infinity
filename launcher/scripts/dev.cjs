@@ -1,4 +1,5 @@
 const { spawn, spawnSync } = require("node:child_process");
+const { watch } = require("node:fs");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -7,11 +8,10 @@ const viteBin = path.join(path.dirname(vitePackage), "bin", "vite.js");
 const electronBin = require("electron");
 const bun = process.env.CODEX_WEB_GPT_BUN || process.execPath;
 
-const helperBuild = spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
-  cwd: path.resolve(root, ".."),
-  env: process.env,
-  stdio: "inherit",
+const helperBuildCommand = () => spawnSync(bun, ["run", "scripts/build-browser-helper.ts"], {
+  cwd: path.resolve(root, ".."), env: process.env, stdio: "inherit",
 });
+const helperBuild = helperBuildCommand();
 if (helperBuild.error) throw helperBuild.error;
 if (helperBuild.status !== 0) process.exit(helperBuild.status ?? 1);
 
@@ -23,10 +23,46 @@ const vite = spawn(process.execPath, [viteBin], {
 
 let electron;
 let stopped = false;
+let helperBuildTimer;
+const helperWatchers = [];
+
+const scheduleHelperRebuild = () => {
+  if (stopped) return;
+  clearTimeout(helperBuildTimer);
+  helperBuildTimer = setTimeout(() => {
+    if (stopped) return;
+    const result = helperBuildCommand();
+    if (result.error || result.status !== 0) {
+      console.error("[launcher-dev] Browser helper rebuild failed; previous bundle remains available",
+        result.error ?? `exit code ${result.status}`);
+    }
+  }, 300);
+};
+
+const watchHelperSources = (target, recursive) => {
+  try {
+    const watcher = watch(target, { recursive }, (_event, filename) => {
+      if (filename === null || /\.(?:[cm]?js|tsx?|json)$/i.test(String(filename))) {
+        scheduleHelperRebuild();
+      }
+    });
+    watcher.on("error", error => {
+      console.error("[launcher-dev] Browser helper source watcher failed", error);
+    });
+    helperWatchers.push(watcher);
+  } catch (error) {
+    console.error("[launcher-dev] Browser helper source watcher unavailable", error);
+  }
+};
+watchHelperSources(path.resolve(root, "..", "src"), true);
+// Watch the directory because editors may replace the build script's inode on save.
+watchHelperSources(path.resolve(root, "..", "scripts"), false);
 
 const stop = () => {
   if (stopped) return;
   stopped = true;
+  clearTimeout(helperBuildTimer);
+  for (const watcher of helperWatchers) watcher.close();
   electron?.kill("SIGTERM");
   vite.kill("SIGTERM");
 };

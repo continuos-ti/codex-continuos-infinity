@@ -1,10 +1,23 @@
 import { TurnBroker } from "../adapters/chatgpt-web/turn-broker";
-import type { AppConfig } from "../config";
-import { tunnelStatus, type TunnelRuntimeStatus } from "../tunnel";
+import { validateIsolatedDevExternalGateway, type AppConfig } from "../config";
+import { inspectExternalGatewayHealth } from "../doctor";
+import { tunnelStatus } from "../tunnel";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { DEV_CONFIG_PURPOSE } from "./constants";
+import { assertDevChatName } from "./session";
+
+interface DevTransportStatus {
+  ready: boolean;
+  detail?: string;
+  ok?: boolean;
+}
 
 interface DevTransportDependencies {
-  status?: (config: AppConfig) => TunnelRuntimeStatus;
+  status?: (config: AppConfig) => DevTransportStatus | Promise<DevTransportStatus>;
+  /** Stable chat ownership separates live broker sockets and recovery journals. */
+  chatName?: string;
 }
 
 export interface DevChatTransport {
@@ -17,30 +30,61 @@ function assertDevTransportConfig(config: AppConfig): void {
   if (config.purpose !== DEV_CONFIG_PURPOSE) {
     throw new Error("Repository DEV transport requires an isolated dev-harness configuration");
   }
-  if (config.mode !== "full" || !config.tunnel) {
+  if (config.mode !== "full") {
+    throw new Error("Repository DEV chat requires a completed Full harness configuration");
+  }
+  if (config.mcpTransport === "external-cloudflare") {
+    if (!config.externalGateway) {
+      throw new Error("Repository DEV chat requires an external Cloudflare gateway configuration");
+    }
+    validateIsolatedDevExternalGateway(config.externalGateway);
+  } else if (!config.tunnel) {
     throw new Error("Repository DEV chat requires completed Full harness tunnel credentials");
   }
 }
 
 /**
- * Attach a named repository DEV chat to the broker endpoint owned by the already-running isolated
- * launcher tunnel. The CLI owns only its turn broker; the launcher owns tunnel supervision.
+ * Attach a named repository DEV chat to its isolated broker after validating the configured MCP
+ * transport. The CLI owns only its turn broker; the launcher owns transport supervision.
  */
 export async function startDevChatTransport(
   config: AppConfig,
-  _devRoot: string,
+  devHome: string,
   dependencies: DevTransportDependencies = {},
 ): Promise<DevChatTransport> {
   assertDevTransportConfig(config);
-  const inspect = dependencies.status ?? tunnelStatus;
-  const runtime = inspect(config);
-  if (!runtime.ok || !runtime.ready) {
+  let runtime: DevTransportStatus;
+  if (dependencies.status) {
+    runtime = await dependencies.status(config);
+  } else if (config.mcpTransport === "external-cloudflare") {
+    const inspected = await inspectExternalGatewayHealth(config.externalGateway!);
+    runtime = {
+      ready: inspected.ready,
+      ok: inspected.ready,
+      ...(!inspected.ready ? { detail: inspected.detail } : {}),
+    };
+  } else {
+    runtime = tunnelStatus(config);
+  }
+  if (!runtime.ready || runtime.ok === false) {
     throw new Error(
-      `The launcher-owned DEV MCP tunnel is not ready: ${runtime.detail}. Open the DEV launcher and complete MCP setup first`,
+      `The configured DEV MCP transport is not ready: ${runtime.detail ?? "no readiness detail"}. Open the DEV launcher and complete MCP setup first`,
     );
   }
 
-  const broker = TurnBroker.forSocket(config.brokerSocketPath);
+  const chatName = dependencies.chatName && assertDevChatName(dependencies.chatName);
+  const identity = chatName && createHash("sha256").update(`${devHome}\u0000${chatName}`).digest("hex").slice(0, 24);
+  const brokerSocketPath = identity
+    ? process.platform === "win32"
+      ? `${config.brokerSocketPath}-${identity}`
+      : join(tmpdir(), `cgw-dev-${identity}.sock`)
+    : config.brokerSocketPath;
+  const scopedConfig = identity ? { ...config, brokerSocketPath } : config;
+  const broker = TurnBroker.forSocket(brokerSocketPath);
+  // Stable per-chat journals preserve the crash fence without serializing unrelated chats.
+  broker.enableCallJournal(identity
+    ? join(devHome, "diagnostics", "broker-calls", identity)
+    : join(devHome, "diagnostics", "broker-calls"));
   await broker.listen();
   let closed = false;
 
@@ -50,5 +94,5 @@ export async function startDevChatTransport(
     await broker.close();
   };
 
-  return { config, broker, close };
+  return { config: scopedConfig, broker, close };
 }

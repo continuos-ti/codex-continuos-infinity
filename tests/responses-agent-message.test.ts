@@ -5,7 +5,7 @@ import { parseRequest } from "../src/responses/parser";
 import { extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 
 const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
-const turnToken = "turn_12345678901234567890123456789012";
+const turnToken = "turn_00000000000000000000000000000002";
 
 function request() {
   return parseRequest({

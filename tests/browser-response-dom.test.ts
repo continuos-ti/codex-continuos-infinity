@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
 import type { Locator } from "playwright-core";
-import { ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptVisibleTraceTracker, CHATGPT_COMPLETION_SETTLE_MS } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptVisibleTraceTracker, CHATGPT_COMPLETION_SETTLE_MS, chatGptSilentTurnActivityFingerprint } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptHtmlToMarkdown, ChatGptMarkdownBuffer, ChatGptMarkdownConsistencyError, type ChatGptMarkdownSegment } from "../src/adapters/chatgpt-web/markdown";
 
 const smokeHtml = readFileSync(new URL("./fixtures/chatgpt-dil-smoke.html", import.meta.url), "utf8");
@@ -89,6 +89,25 @@ const followupFixture = (root = 'data-markdown-text-style="assistant-message"') 
 </div><div aria-hidden="true" class="pointer-events-none start-0 top-0 w-max">
 <div><span>Clarify the result</span><span>Shorten the report</span></div>
 </div></div></div></div><button data-testid="copy-turn-action-button" aria-label="Copy"></button></section>`;
+
+test("the response DOM detects an early in-place edit while final-turn action is absent", async () => {
+  const longAnswer = "A".repeat(420) + " shared ending";
+  const html = followupFixture()
+    .replace("<p>The report is complete.</p>", `<p>${longAnswer}</p>`)
+    .replace('<button data-testid="copy-turn-action-button" aria-label="Copy"></button>', "");
+  const [before, after] = await snapshots(html, [document => {
+    const paragraph = document.querySelector('[data-markdown-text-style="assistant-message"] p')!;
+    paragraph.textContent = "B" + paragraph.textContent!.slice(1);
+  }]);
+  expect(before!.completionActionVisible).toBeFalse();
+  expect(after!.completionActionVisible).toBeFalse();
+  expect(before!.visibleText).toBe(longAnswer);
+  expect(after!.visibleText.length).toBe(before!.visibleText.length);
+  expect(after!.visibleText.slice(-256)).toBe(before!.visibleText.slice(-256));
+  expect(chatGptSilentTurnActivityFingerprint(after!.visibleText, after!.traceBlocks)).not.toBe(
+    chatGptSilentTurnActivityFingerprint(before!.visibleText, before!.traceBlocks),
+  );
+});
 
 test("suggested follow-up sizing copies stay out of the answer", async () => {
   for (const root of ['class="markdown"', 'data-markdown-text-style="assistant-message"']) {
@@ -707,6 +726,53 @@ test("a known answer node cannot move its source range and be emitted again", as
   expect(buffer.observe(before!.markdownSegments, 0)).toBe("First paragraph.");
   expect(buffer.observe(shifted!.markdownSegments, 1)).toBe("");
   expect(() => buffer.finish()).toThrow(ChatGptMarkdownConsistencyError);
+});
+
+test("remounted Mermaid preview shells do not break alignment while separate Mermaid code stays intact (#974)", async () => {
+  const mermaidPreview = `<div class="group/app-widget relative" data-chatgpt-mermaid-preview="" data-search-result-target="">
+    <div data-block-actions="true" data-markdown-copy="exclude">
+      <button type="button" aria-label="Diagram options"></button>
+      <button type="button" aria-label="Expand diagram"></button>
+    </div>
+    <div data-code-block-preview-pane="mermaid"><div><svg><text>Node A</text></svg></div></div>
+  </div>`;
+  const html = `<section id="turn"><div class="markdown">
+    <p>It keeps each worker within its context window.</p>
+    <h2>1. Architecture</h2>
+    ${mermaidPreview}
+    <pre><code class="language-mermaid">graph TD;\nA--&gt;B;</code></pre>
+    <h2>2. Recursive task decomposition</h2>
+    <p>Committed explanation.</p>
+    <p>Final paragraph.</p>
+  </div></section>`;
+  const [initial, remounted] = await snapshots(html, [doc => {
+    const existing = doc.querySelector("[data-chatgpt-mermaid-preview]")!;
+    const replacement = existing.cloneNode(true);
+    const duplicate = existing.cloneNode(true);
+    existing.replaceWith(replacement, duplicate);
+  }]);
+  const buffer = new ChatGptMarkdownBuffer(undefined, 0);
+  const streamed = buffer.observe(initial!.markdownSegments, 0);
+  expect(streamed).toContain(String.raw`## 1\. Architecture`);
+  expect(streamed).toContain("```mermaid\ngraph TD;\nA-->B;\n```");
+  expect(streamed).toContain(String.raw`## 2\. Recursive task decomposition` + "\n\nCommitted explanation.");
+  expect(buffer.observe(remounted!.markdownSegments, 1)).toBe("");
+  expect(buffer.finish().markdown).toBe(
+    "It keeps each worker within its context window.\n\n"
+    + String.raw`## 1\. Architecture` + "\n\n"
+    + "```mermaid\ngraph TD;\nA-->B;\n```\n\n"
+    + String.raw`## 2\. Recursive task decomposition` + "\n\n"
+    + "Committed explanation.\n\n"
+    + "Final paragraph.",
+  );
+
+  const codeView = await snapshot(`<section id="turn"><div class="markdown">
+    <div data-chatgpt-mermaid-preview="">
+      <div data-block-actions="true" data-markdown-copy="exclude">Diagram options</div>
+      <div data-markdown-copy="code-block"><code class="language-mermaid">flowchart LR\nX--&gt;Y</code></div>
+    </div>
+  </div></section>`);
+  expect(chatGptHtmlToMarkdown(codeView.fullHtml)).toBe("```mermaid\nflowchart LR\nX-->Y\n```");
 });
 
 test("repeated text cannot rebind a known node to another committed source range", async () => {

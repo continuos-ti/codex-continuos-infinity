@@ -4,7 +4,7 @@ import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import type { CodexParsedRequest } from "../src/types";
 
 const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
-const turnToken = "turn_12345678901234567890123456789012";
+const turnToken = "turn_00000000000000000000000000000002";
 
 function parsed(): CodexParsedRequest {
   return {

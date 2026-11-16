@@ -1,6 +1,46 @@
 import { expect, test } from "bun:test";
 import { chatGptModelFamilyMatches, selectChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
 import { chatGptUsageModelFromAnnouncements } from "../src/adapters/chatgpt-web/limits";
+import { activateChatGptEffortMenu } from "../src/chatgpt-ui/model-picker";
+
+test("a click timeout after opening the owned effort menu is reconciled without another click", async () => {
+  let open = false;
+  let clicks = 0;
+  const menu = { isVisible: async () => open };
+  const slider = { count: async () => 1 };
+  const sliderContainer = {
+    isVisible: async () => open,
+    locator: () => slider,
+  };
+  const control = {
+    getAttribute: async (attribute: string) => {
+      if (attribute === "aria-controls") return "picker";
+      if (attribute === "aria-expanded") return open ? "true" : "false";
+      return null;
+    },
+    click: async () => {
+      clicks++;
+      open = true;
+      const error = new Error("click timed out after the menu opened");
+      error.name = "TimeoutError";
+      throw error;
+    },
+  };
+  const page = {
+    locator: (selector: string) => selector.startsWith("[id=") ? menu : {
+      filter: () => sliderContainer,
+    },
+    keyboard: { press: async () => { throw new Error("unexpected second action"); } },
+  };
+  const result = await activateChatGptEffortMenu(
+    page as unknown as Parameters<typeof activateChatGptEffortMenu>[0],
+    control as unknown as Parameters<typeof activateChatGptEffortMenu>[1],
+  );
+  expect(result.method).toBe("click");
+  expect(result.menu === menu).toBeTrue();
+  expect(result.slider === slider).toBeTrue();
+  expect(clicks).toBe(1);
+});
 
 test("model selection recognizes Latest in the launcher languages without accepting other model names", async () => {
   for (const [label, accepted] of [
@@ -23,6 +63,12 @@ test("model selection recognizes Latest in the launcher languages without accept
 
 test("family confirmation verifies the exact Sol or Pro version, including the old Latest picker", () => {
   expect(chatGptModelFamilyMatches(["5.6 High, 3 of 5."], "5.6", "high")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Alta, 3 de 3."], "6", "high")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Média, 2 de 3."], "6", "medium")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Extra Alta, 4 de 5."], "6", "xhigh")).toBe(true);
+  expect(chatGptModelFamilyMatches(["6 Alta, 3 de 3."], "6", "medium")).toBe(false);
+  expect(chatGptModelFamilyMatches(["5.6 Alta, 3 de 3."], "6", "high")).toBe(false);
+
   expect(chatGptModelFamilyMatches(["5.6 Extra High, 4 of 5."], "6", "xhigh")).toBe(false);
   expect(chatGptModelFamilyMatches(["6 Medium, 2 of 3.", "Medium"], "6", "medium")).toBe(true);
   expect(chatGptModelFamilyMatches(["GPT-6 Sol Extra High, 4 of 5."], "6", "xhigh")).toBe(true);

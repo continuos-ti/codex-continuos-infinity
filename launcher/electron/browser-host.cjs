@@ -50,12 +50,13 @@ const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
 
 function recordTurnActivity(tab, now = Date.now()) {
   const state = tab.approvalPending ? "approval"
-    : tab.turnProgress?.activeToolCalls > 0 ? "tools" : tab.turnProgress?.stage ?? "unknown";
+    : tab.turnProgress?.activeToolCalls === null || tab.turnProgress === undefined ? "unknown"
+    : tab.turnProgress.activeToolCalls > 0 ? "tools" : tab.turnProgress.stage;
   tab.activity = {
     state,
     since: tab.activity?.state === state ? tab.activity.since : now,
     updatedAt: now,
-    activeToolCalls: tab.turnProgress?.activeToolCalls ?? 0,
+    activeToolCalls: tab.turnProgress?.activeToolCalls ?? null,
   };
 }
 
@@ -171,7 +172,37 @@ function navigationErrorForLog(error) {
   if (typeof error.code === "string" || typeof error.code === "number") {
     detail.errorCode = error.code;
   }
+  if (typeof error.navigationErrorCode === "number") {
+    detail.navigationErrorCode = error.navigationErrorCode;
+  }
+  if (typeof error.rendererReason === "string") {
+    detail.rendererReason = error.rendererReason;
+  }
+  if (error.navigationState && typeof error.navigationState === "object") {
+    const state = error.navigationState;
+    const observed = state.observed && typeof state.observed === "object" ? state.observed : {};
+    detail.navigationState = {
+      urlOrigin: typeof state.urlOrigin === "string" ? state.urlOrigin : "unavailable",
+      destroyed: state.destroyed === true,
+      isLoading: typeof state.isLoading === "boolean" ? state.isLoading : null,
+      isLoadingMainFrame: typeof state.isLoadingMainFrame === "boolean" ? state.isLoadingMainFrame : null,
+      observed: {
+        didStartLoading: observed.didStartLoading === true,
+        domReady: observed.domReady === true,
+        didFinishLoad: observed.didFinishLoad === true,
+        didStopLoading: observed.didStopLoading === true,
+        didFailLoad: observed.didFailLoad === true,
+        rendererGone: observed.rendererGone === true,
+        loadPromiseResolved: observed.loadPromiseResolved === true,
+      },
+    };
+  }
   return detail;
+}
+
+function navigationErrorMessageForLog(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\b(?:https?|file|data|blob):\S+/gi, "[URL omitted]");
 }
 
 function isAbortedNavigationError(error) {
@@ -262,10 +293,49 @@ function loadCommittedBrowserSurface(
   }
   return new Promise((resolve, reject) => {
     let settled = false;
+    const observed = {
+      didStartLoading: false,
+      domReady: false,
+      didFinishLoad: false,
+      didStopLoading: false,
+      didFailLoad: false,
+      rendererGone: false,
+      loadPromiseResolved: false,
+    };
+    const navigationState = () => {
+      let urlOrigin = "unavailable";
+      try {
+        urlOrigin = navigationOriginForLog(contents.getURL());
+      } catch {}
+      let destroyed = true;
+      try {
+        destroyed = contents.isDestroyed();
+      } catch {}
+      let isLoading = null;
+      try {
+        if (typeof contents.isLoading === "function") isLoading = contents.isLoading();
+      } catch {}
+      let isLoadingMainFrame = null;
+      try {
+        if (typeof contents.isLoadingMainFrame === "function") {
+          isLoadingMainFrame = contents.isLoadingMainFrame();
+        }
+      } catch {}
+      return { urlOrigin, destroyed, isLoading, isLoadingMainFrame, observed: { ...observed } };
+    };
+    const navigationError = (message, code, extra = {}) => {
+      const error = new Error(message);
+      error.code = code;
+      error.navigationState = navigationState();
+      Object.assign(error, extra);
+      return error;
+    };
     const cleanup = () => {
       clearTimeout(timeout);
-      contents.off("did-stop-loading", onReady);
-      contents.off("did-finish-load", onReady);
+      contents.off("did-start-loading", onStartLoading);
+      contents.off("dom-ready", onDomReady);
+      contents.off("did-stop-loading", onStopLoading);
+      contents.off("did-finish-load", onFinishLoad);
       contents.off("did-fail-load", onFailed);
       contents.off("render-process-gone", onRendererGone);
       contents.off("destroyed", onDestroyed);
@@ -279,37 +349,76 @@ function loadCommittedBrowserSurface(
     };
     const onReady = () => {
       if (contents.isDestroyed()) {
-        finish(new Error("Browser closed during idle document bootstrap"));
+        finish(navigationError("Browser closed during idle document bootstrap", "BROWSER_IDLE_DOCUMENT_DESTROYED"));
         return;
       }
       if (contents.getURL() === url) finish();
     };
-    const onFailed = (_event, errorCode, errorDescription, failedUrl, mainFrame) => {
+    const onStartLoading = () => { observed.didStartLoading = true; };
+    const onDomReady = () => { observed.domReady = true; };
+    const onFinishLoad = () => {
+      observed.didFinishLoad = true;
+      onReady();
+    };
+    const onStopLoading = () => {
+      observed.didStopLoading = true;
+      onReady();
+    };
+    const onFailed = (_event, errorCode, errorDescription, _failedUrl, mainFrame) => {
       if (!mainFrame) return;
-      finish(new Error(
-        `Browser idle document failed: ${errorDescription} (${errorCode}) at ${failedUrl}`,
+      observed.didFailLoad = true;
+      finish(navigationError(
+        `Browser idle document failed: ${errorDescription} (${errorCode})`,
+        "BROWSER_IDLE_DOCUMENT_LOAD_FAILED",
+        { navigationErrorCode: errorCode },
       ));
     };
     const onRendererGone = (_event, details) => {
-      finish(new Error(`Browser renderer stopped during idle document bootstrap: ${details.reason}`));
+      observed.rendererGone = true;
+      finish(navigationError(
+        `Browser renderer stopped during idle document bootstrap: ${details.reason}`,
+        "BROWSER_IDLE_DOCUMENT_RENDERER_GONE",
+        { rendererReason: details.reason },
+      ));
     };
-    const onDestroyed = () => finish(new Error("Browser closed during idle document bootstrap"));
+    const onDestroyed = () => finish(navigationError(
+      "Browser closed during idle document bootstrap",
+      "BROWSER_IDLE_DOCUMENT_DESTROYED",
+    ));
     const timeout = setTimeout(() => {
-      finish(new Error(`Browser idle document did not commit within ${timeoutMs}ms`));
+      finish(navigationError(
+        `Browser idle document did not commit within ${timeoutMs}ms`,
+        "BROWSER_IDLE_DOCUMENT_TIMEOUT",
+      ));
       if (!contents.isDestroyed()) contents.stop();
     }, timeoutMs);
     timeout.unref?.();
-    contents.on("did-stop-loading", onReady);
-    contents.on("did-finish-load", onReady);
+    contents.on("did-start-loading", onStartLoading);
+    contents.on("dom-ready", onDomReady);
+    contents.on("did-stop-loading", onStopLoading);
+    contents.on("did-finish-load", onFinishLoad);
     contents.on("did-fail-load", onFailed);
     contents.on("render-process-gone", onRendererGone);
     contents.on("destroyed", onDestroyed);
     try {
-      Promise.resolve(contents.loadURL(url)).then(onReady, error => {
-        finish(error instanceof Error ? error : new Error(String(error)));
+      Promise.resolve(contents.loadURL(url)).then(() => {
+        observed.loadPromiseResolved = true;
+        onReady();
+      }, error => {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (typeof failure.code !== "string" && typeof failure.code !== "number") {
+          failure.code = "BROWSER_IDLE_DOCUMENT_LOAD_REJECTED";
+        }
+        if (!failure.navigationState) failure.navigationState = navigationState();
+        finish(failure);
       });
     } catch (error) {
-      finish(error instanceof Error ? error : new Error(String(error)));
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (typeof failure.code !== "string" && typeof failure.code !== "number") {
+        failure.code = "BROWSER_IDLE_DOCUMENT_LOAD_REJECTED";
+      }
+      if (!failure.navigationState) failure.navigationState = navigationState();
+      finish(failure);
     }
   });
 }
@@ -325,7 +434,7 @@ class BrowserHost {
     helper,
     logger,
     loginWithPasskey,
-    partition = "persist:codex-web-gpt-chatgpt",
+    partition = "persist:codex-continuos-infinity-chatgpt",
     profile = "production",
     publishState,
     showWindow = () => {},
@@ -352,8 +461,8 @@ class BrowserHost {
       throw new Error("Browser host profile is invalid");
     }
     const expectedPartition = profile === "development"
-      ? "persist:codex-web-gpt-dev-chatgpt"
-      : "persist:codex-web-gpt-chatgpt";
+      ? "persist:codex-continuos-infinity-dev-chatgpt"
+      : "persist:codex-continuos-infinity-chatgpt";
     if (partition !== expectedPartition) throw new Error("Browser host partition does not match its profile");
     this.partition = partition;
     this.profile = profile;
@@ -444,7 +553,8 @@ class BrowserHost {
     this.bindWebContents();
     this.initializationReady = this.initializePrimaryView().catch((error) => {
       this.logger.error("browser.initialization_failed", {
-        message: error instanceof Error ? error.message : String(error),
+        message: navigationErrorMessageForLog(error),
+        ...navigationErrorForLog(error),
       });
       this.setState({ status: "error", message: "Embedded browser failed to initialize" });
       throw error;
@@ -643,11 +753,11 @@ class BrowserHost {
       signal?.throwIfAborted();
       tab.initializingSurface = false;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       this.logger.error("browser.tab_initialization_failed", {
         tabId: tab.id,
         traceId: tab.traceId,
-        message,
+        message: navigationErrorMessageForLog(error),
+        ...navigationErrorForLog(error),
       });
       // Destroy the exact pending document too: abandoning its promise alone leaves renderer
       // work running and lets a late ownership mark race a future browser turn.
@@ -1537,7 +1647,8 @@ class BrowserHost {
       if (tab.interactionMode !== "automatic" || !progress || typeof progress !== "object"
         || Object.keys(progress).length !== 2
         || !["preparing", "sending", "chatgpt"].includes(progress.stage)
-        || !Number.isSafeInteger(progress.activeToolCalls) || progress.activeToolCalls < 0) {
+        || (progress.activeToolCalls !== null
+          && (!Number.isSafeInteger(progress.activeToolCalls) || progress.activeToolCalls < 0))) {
         throw new Error("Browser turn progress is invalid");
       }
       tab.turnProgress = { stage: progress.stage, activeToolCalls: progress.activeToolCalls };
@@ -2928,6 +3039,36 @@ class BrowserHost {
     });
   }
 
+  async resetEmbeddedBrowserData() {
+    return await this.withManualOperation("embedded browser data reset", async () => {
+      if (this.authView) this.closeAuthView(this.authView, true, false);
+      const contents = this.view?.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error("Embedded ChatGPT browser is unavailable");
+      const tabs = [...this.turnTabs.values()];
+      const liveContents = [contents, ...tabs.map(tab => tab.view.webContents)]
+        .filter(candidate => candidate && !candidate.isDestroyed());
+      await Promise.all(liveContents.map(candidate => candidate.loadURL(IDLE_BROWSER_URL)));
+      await contents.session.clearStorageData();
+      await contents.session.clearCache();
+      contents.session.flushStorageData();
+      await contents.session.cookies.flushStore();
+      for (const tab of tabs) this.removeTurnTab(tab, true);
+      this.writeDescriptor();
+      this.primaryNavigationError = null;
+      this.authNavigationError = null;
+      this.reauthenticationRequired = false;
+      this.setState({
+        authenticated: false,
+        loading: false,
+        message: "Embedded browser data was reset. Sign in to ChatGPT",
+        status: "signed-out",
+        url: IDLE_BROWSER_URL,
+      });
+      this.logger.info("browser.session_reset");
+      return this.snapshot();
+    });
+  }
+
   refreshAuthentication() {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     if (this.sessionRefreshOperation) return this.sessionRefreshOperation;
@@ -3340,6 +3481,7 @@ module.exports = {
   MANUAL_SUBMIT_TIMEOUT_MS,
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
+  navigationErrorMessageForLog,
   navigationOriginForLog,
   NEW_CHAT_URL,
 };

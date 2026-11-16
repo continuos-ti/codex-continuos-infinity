@@ -13,28 +13,64 @@ import { VERSION } from "./version";
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
+export type McpTransport = "openai-tunnel" | "external-cloudflare";
+export interface ExternalGatewayConfig {
+  mcpUrl: string;
+  healthUrl: string;
+  expectedService: string;
+}
+export const DEFAULT_CLOUDFLARE_GATEWAY: Readonly<ExternalGatewayConfig> = Object.freeze({
+  mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+  healthUrl: "https://codex-native2.continuos.com.br/health",
+  expectedService: "ContinuosWebIntegracao",
+});
+
+export function validateExternalGateway(value: ExternalGatewayConfig): ExternalGatewayConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("External Cloudflare gateway configuration is missing");
+  }
+  for (const key of ["mcpUrl", "healthUrl"] as const) {
+    if (typeof value[key] !== "string") throw new Error(`Invalid externalGateway.${key}`);
+    let url: URL;
+    try { url = new URL(value[key]); } catch { throw new Error(`Invalid externalGateway.${key}`); }
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash
+      || url.pathname === "/" || url.href !== value[key]) {
+      throw new Error(`externalGateway.${key} must be a canonical HTTPS endpoint without credentials, query or fragment`);
+    }
+  }
+  if (typeof value.expectedService !== "string"
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value.expectedService)) {
+    throw new Error("Invalid externalGateway.expectedService");
+  }
+  return value;
+}
+
+/** DEV must never authenticate a connector against the production Cloudflare gateway. */
+export function validateIsolatedDevExternalGateway(value: ExternalGatewayConfig): ExternalGatewayConfig {
+  const gateway = validateExternalGateway(value);
+  const mcp = new URL(gateway.mcpUrl);
+  const health = new URL(gateway.healthUrl);
+  const production = new URL(DEFAULT_CLOUDFLARE_GATEWAY.mcpUrl);
+  if (mcp.origin === production.origin || health.origin === production.origin) {
+    throw new Error(
+      `DEV external Cloudflare gateway must use a dedicated hostname; production gateway ${production.hostname} is forbidden`,
+    );
+  }
+  if (mcp.origin !== health.origin) {
+    throw new Error("DEV external Cloudflare MCP and health endpoints must share one dedicated hostname");
+  }
+  return gateway;
+}
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**
  * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
  * contract therefore has a new identity instead of mutating the retired connector in place.
  */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
-export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
+export const CHATGPT_CONNECTOR_NAME = "ContinuosWebIntegracao";
+export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV Web`;
+const LEGACY_DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
 export const ZERO_RISK_CHATGPT_CONNECTOR_NAME = "Codex Zero Risk";
-export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native"] as const;
-
-export function isLegacyChatGptConnectorName(value: string): boolean {
-  return (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value);
-}
-
-export function legacyChatGptConnectorMigrationMessage(legacyName: string): string {
-  return `Legacy ChatGPT connector ${JSON.stringify(legacyName)} was found, but this release requires`
-    + ` a newly created connector named ${JSON.stringify(CHATGPT_CONNECTOR_NAME)}. Create`
-    + ` ${JSON.stringify(CHATGPT_CONNECTOR_NAME)} against the same tunnel with Authentication set to None;`
-    + ` do not rename or refresh ${JSON.stringify(legacyName)}.`;
-}
-
 export function validateConnectorNameSuffix(value: unknown): string {
   if (typeof value !== "string" || value.length > 74
     || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(value)
@@ -46,6 +82,7 @@ export function validateConnectorNameSuffix(value: unknown): string {
 }
 
 function validateCurrentConnectorName(value: unknown): string {
+  if (value === CHATGPT_CONNECTOR_NAME || value === DEV_CHATGPT_CONNECTOR_NAME) return value;
   if (typeof value !== "string" || !value.startsWith("Codex ")) {
     throw new Error("Plugin names must start with Codex followed by a space");
   }
@@ -68,7 +105,6 @@ export function resolveInteractionConnectorIdentities(
   const defaultAutomatic = profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
   let automaticAppName = existing.automaticAppName ?? defaultAutomatic;
   let manualAppName = existing.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  if (isLegacyChatGptConnectorName(automaticAppName)) automaticAppName = defaultAutomatic;
   if (suffix !== undefined) {
     const name = `Codex ${validateConnectorNameSuffix(suffix)}`;
     if (interactionMode === "manual") manualAppName = name;
@@ -130,6 +166,8 @@ export interface AppConfig {
   controlToken: string;
   runtimeCommand: string[];
   acknowledgedUnofficialAt?: string;
+  mcpTransport?: McpTransport;
+  externalGateway?: ExternalGatewayConfig;
   tunnel?: TunnelConfig;
   automaticTunnel?: TunnelConfig;
   manualTunnel?: TunnelConfig;
@@ -154,8 +192,9 @@ export function expandUserPath(value: string): string {
 }
 
 export function getConfigDir(): string {
-  const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
-  return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
+  const configured = process.env.CODEX_CONTINUOS_INFINITY_HOME?.trim()
+    || process.env.CODEX_CHATGPT_WEB_HOME?.trim();
+  return resolve(expandUserPath(configured || join(homedir(), ".codex-continuos-infinity")));
 }
 
 export function getConfigPath(): string {
@@ -255,7 +294,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     composerPredictionsEnabled: true,
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: false,
-    useTemporaryChats: true,
+    useTemporaryChats: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -417,6 +456,14 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
     throw new Error(`Invalid configuration purpose in ${path}`);
   }
+  if (parsed.purpose === "dev-harness") {
+    if (parsed.appName === LEGACY_DEV_CHATGPT_CONNECTOR_NAME) {
+      parsed.appName = DEV_CHATGPT_CONNECTOR_NAME;
+    }
+    if (parsed.automaticAppName === LEGACY_DEV_CHATGPT_CONNECTOR_NAME) {
+      parsed.automaticAppName = DEV_CHATGPT_CONNECTOR_NAME;
+    }
+  }
   if (typeof parsed.releaseVersion !== "string" || !parsed.releaseVersion.trim()) throw new Error(`Missing releaseVersion in ${path}`);
   if (parsed.mode !== "browser-only" && parsed.mode !== "full") throw new Error(`Invalid runtime mode in ${path}`);
   const subagentProtocol = parsed.subagentProtocol ?? "compatibility-v1";
@@ -458,7 +505,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
     throw new Error(`Invalid automaticAppName in ${path}`);
   }
-  if (!isLegacyChatGptConnectorName(automaticAppName)) validateCurrentConnectorName(automaticAppName);
+  validateCurrentConnectorName(automaticAppName);
   validateCurrentConnectorName(manualAppName);
   if (automaticAppName === manualAppName) {
     throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);
@@ -484,6 +531,25 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`brokerSocketPath must be an absolute Unix socket path in ${path}`);
   }
   if (!/^[A-Za-z0-9_-]{40,}$/.test(parsed.controlToken!)) throw new Error(`Invalid controlToken in ${path}`);
+  const transport = parsed.mcpTransport ?? "openai-tunnel";
+  if (transport !== "openai-tunnel" && transport !== "external-cloudflare") {
+    throw new Error(`Invalid mcpTransport in ${path}`);
+  }
+  if (parsed.mode === "browser-only" && (parsed.mcpTransport || parsed.externalGateway)) {
+    throw new Error(`Browser-only configuration cannot enable MCP transport in ${path}`);
+  }
+  if (parsed.mode === "full" && transport === "external-cloudflare") {
+    if (browserInteractionMode !== "automatic" || parsed.tunnel || parsed.automaticTunnel) {
+      throw new Error(`External Cloudflare requires Automatic mode without an active OpenAI tunnel in ${path}`);
+    }
+    validateExternalGateway(parsed.externalGateway!);
+  } else if (parsed.externalGateway !== undefined) {
+    if (parsed.mode !== "full" || browserInteractionMode !== "manual"
+      || transport !== "openai-tunnel") {
+      throw new Error(`externalGateway can only be retained for Automatic while Zero Risk is active in ${path}`);
+    }
+    validateExternalGateway(parsed.externalGateway);
+  }
   const validateTunnel = (tunnel: TunnelConfig | undefined, label: string): void => {
     if (!tunnel || typeof tunnel !== "object") throw new Error(`${label} is missing in ${path}`);
     for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"] as const) {
@@ -506,7 +572,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     }
   };
   if (parsed.mode === "full") {
-    validateTunnel(parsed.tunnel, "tunnel");
+    if (transport === "openai-tunnel") validateTunnel(parsed.tunnel, "tunnel");
     if (parsed.automaticTunnel !== undefined) validateTunnel(parsed.automaticTunnel, "automaticTunnel");
     if (parsed.manualTunnel !== undefined) validateTunnel(parsed.manualTunnel, "manualTunnel");
     if (parsed.automaticTunnel && parsed.manualTunnel
@@ -514,10 +580,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
       throw new Error(`Automatic and Zero Risk must use different Tunnel IDs in ${path}`);
     }
     const activeTunnel = browserInteractionMode === "manual" ? parsed.manualTunnel : parsed.automaticTunnel;
-    if ((parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
+    if (transport === "openai-tunnel" && (parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
       throw new Error(`Active browser interaction mode has no tunnel configuration in ${path}`);
     }
-    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(parsed.tunnel)) {
+    if (transport === "openai-tunnel" && activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(parsed.tunnel)) {
       throw new Error(`Active tunnel does not match browserInteractionMode in ${path}; rerun MCP setup`);
     }
   }
@@ -584,6 +650,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     automaticAppName,
     manualAppName,
     browserInteractionMode,
+    ...(parsed.mode === "full" ? { mcpTransport: transport } : {}),
     subagentProtocol,
     solAvailable,
     proAvailable,
@@ -591,7 +658,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     composerPredictionsEnabled,
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
-    useTemporaryChats: parsed.useTemporaryChats !== false,
+    useTemporaryChats: parsed.useTemporaryChats === true,
     zeroRiskProEnabled,
   } as AppConfig;
 }

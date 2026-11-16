@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } fr
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { defaultBrokerEndpoint } from "../src/config";
+import { CHATGPT_CONNECTOR_NAME, defaultBrokerEndpoint } from "../src/config";
 import { VERSION } from "../src/version";
 
 const require = createRequire(import.meta.url);
@@ -69,7 +69,7 @@ const config = {
   host: "127.0.0.1",
   port,
   contextWindow: 256_000,
-  appName: "Codex Native",
+  appName: CHATGPT_CONNECTOR_NAME,
   browserHost: "managed-chrome",
   chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   storageStatePath: join(appHome, "browser", "storage-state.json"),
@@ -85,7 +85,8 @@ writeFileSync(join(appHome, "config.json"), `${JSON.stringify(config, null, 2)}\
 writeFileSync(config.storageStatePath, "{}\n", { mode: 0o600 });
 
 const env = { ...process.env, CODEX_CHATGPT_WEB_HOME: appHome, CODEX_HOME: codexHome };
-const child = Bun.spawn([...runtimeCommand, "serve"], { env, stdout: "pipe", stderr: "pipe" });
+// Surface isolated smoke-runtime startup failures instead of hiding the child diagnostics.
+const child = Bun.spawn([...runtimeCommand, "serve"], { env, stdout: "inherit", stderr: "inherit" });
 let stoppedGracefully = false;
 try {
   const deadline = Date.now() + 10_000;

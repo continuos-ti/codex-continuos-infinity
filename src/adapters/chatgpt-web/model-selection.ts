@@ -69,9 +69,20 @@ export function chatGptModelFamilyMatches(
     const state = parseChatGptModelAnnouncement(text);
     return state ? [state] : [];
   });
+  const canonicalMode = (text: string): string => {
+    const folded = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+    const localized: Record<string, string> = {
+      "alta": "high", "alto": "high",
+      "media": "medium", "medio": "medium",
+      "instantanea": "instant", "instantaneo": "instant",
+      "extra alta": "extra high", "extra alto": "extra high",
+      "muito alta": "extra high", "muito alto": "extra high",
+    };
+    return localized[folded] ?? folded;
+  };
   return states.length > 0 && states.every(state => state.version === family
     && (!state.name || state.name === expectedName)
-    && (state.mode.toLowerCase() === expectedMode
+    && (canonicalMode(state.mode) === expectedMode
       || family === "6" && effort === "max" && state.name === "astra" && /^max$/i.test(state.mode)));
 }
 
@@ -83,17 +94,25 @@ export async function assertChatGptModelFamily(
   settleMs = 0,
 ): Promise<void> {
   const deadline = Date.now() + settleMs;
+  let lastProof = { optionCount: 0, checked: false, effortCorrect: false, descriptionCorrect: false };
+  let lastDescriptions: string[] = [];
   do {
     const option = await familyOption(menu, family, effort);
-    const checked = await option.count() === 1 && await option.getAttribute("aria-checked") === "true";
+    const optionCount = await option.count();
+    const checked = optionCount === 1 && await option.getAttribute("aria-checked") === "true";
     const state = parseChatGptEffortSliderState(
       await menu.slider.getAttribute("aria-valuemin"), await menu.slider.getAttribute("aria-valuemax"),
       await menu.slider.getAttribute("aria-valuenow"),
     );
     const descriptions = await readChatGptModelAnnouncements(menu.slider);
-    if (checked && state && state.value === state.min + effortIndex && chatGptModelFamilyMatches(descriptions, family, effort)) return;
+    lastDescriptions = descriptions.map(s => s.slice(0, 140));
+    const effortCorrect = Boolean(state && state.value === state.min + effortIndex);
+    const descriptionCorrect = chatGptModelFamilyMatches(descriptions, family, effort);
+    lastProof = { optionCount, checked, effortCorrect, descriptionCorrect };
+    if (checked && effortCorrect && descriptionCorrect) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (true);
+  console.warn("[chatgpt-web] model family proof failed", JSON.stringify({ family, effort, ...lastProof, modelAnnouncements: lastDescriptions }));
   throw familyError(family);
 }

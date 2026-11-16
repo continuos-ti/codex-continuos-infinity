@@ -48,6 +48,15 @@ const appDir = join(output, "app");
 const runtimeDir = join(output, "runtime");
 const binDir = join(output, "bin");
 
+if (lstatSync(output, { throwIfNoEntry: false })) {
+  const executableWithinOutput = relative(realpathSync(output), realpathSync(process.execPath));
+  if (executableWithinOutput === ""
+    || (executableWithinOutput !== ".." && !executableWithinOutput.startsWith(`..${sep}`)
+      && !isAbsolute(executableWithinOutput))) {
+    throw new Error("Cannot rebuild the runtime bundle while the running Bun executable is inside its output directory. Use Bun from outside that directory or an isolated worktree.");
+  }
+}
+
 rmSync(output, { recursive: true, force: true });
 mkdirSync(appDir, { recursive: true });
 mkdirSync(runtimeDir, { recursive: true });

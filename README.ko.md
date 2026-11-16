@@ -1,15 +1,23 @@
+# Codex Continuos Infinity
+
+This fork by Continuos I.T. is based on `miuuyy/codex-chatgpt-web` under the MIT license. The current development version is `6.1.18-continuos.1`. Native MCP integration, event-driven recovery, a distinct user profile and independent release artifacts are under validation. See `docs/infinity` for architecture, installation, known limits and rollback. Public Infinity releases will be available after validation.
+
+---
+
+## Upstream documentation (retained for reference)
+
 <p align="center">
   <img src="assets/readme/hero.svg" width="960" alt="웹 모델로 전환해도, Codex는 그대로. 내 ChatGPT 플랜. 내 작업 흐름. 모델의 가능성을 최대한.">
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.18/codex-web-gpt-6.1.18-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/miuuyy/codex-chatgpt-web/releases/latest">모든 릴리스</a>
+  <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">macOS Intel</a> · <a href="https://github.com/continuos-ti/codex-continuos-infinity/releases">모든 릴리스</a>
 </p>
 
 <p align="center">
@@ -46,16 +54,18 @@ Full harness 모드는 MCP를 통해 ChatGPT를 현재 작업의 파일, 터미�
 
 업데이트 전에 런처를 종료하세요. 아래 설치 프로그램은 플랫폼과 아키텍처를 선택하고 공개된 체크섬을 검증하며 ChatGPT 프로필과 런처 설정을 보존합니다.
 
+이 명령은 Infinity 릴리스가 게시된 후 사용할 수 있습니다. 첫 릴리스 전에는 아래 개발 지침에 따라 소스에서 빌드하세요.
+
 **macOS / Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/continuos-ti/codex-continuos-infinity/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 </details>
@@ -124,9 +134,9 @@ inbound 포트를 열거나 라우터 포트 포워딩을 설정할 필요가 �
 변경한 뒤에는 Codex를 다시 시작하고 새 작업을 시작하세요.
 
 ```bash
-codex-chatgpt-web subagents status
-codex-chatgpt-web subagents compatibility-v1
-codex-chatgpt-web subagents native
+codex-continuos-infinity subagents status
+codex-continuos-infinity subagents compatibility-v1
+codex-continuos-infinity subagents native
 ```
 
 </details>
@@ -168,8 +178,8 @@ Full 모드를 활성화하기 전에 전체 [아키텍처](docs/architecture.md
 <a id="development"></a>
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
-cd codex-chatgpt-web && \
+git clone https://github.com/continuos-ti/codex-continuos-infinity.git && \
+cd codex-continuos-infinity && \
 bun run app
 ```
 

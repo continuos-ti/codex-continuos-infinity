@@ -279,7 +279,11 @@ test("DEV setup child environment removes launcher-rebound production aliases", 
   assert.deepEqual(fixture.host.devSetupEnvironment({
     KEEP_ME: "yes",
     CODEX_CHATGPT_WEB_HOME: "/dev",
+    CODEX_CONTINUOS_INFINITY_HOME: "/production/infinity",
+    CODEX_CONTINUOS_INFINITY_DEV_HOME: "/stale-dev",
     CODEX_HOME: "/dev/codex-home",
+    CODEX_CHATGPT_WEB_TRUSTED_CODEX_HOMES: '["/production/codex-home"]',
+    CODEX_CONTINUOS_INFINITY_DATA_DIR: "/production/browser",
     CODEX_WEB_GPT_DEV_HOME: "/stale-dev",
     CODEX_WEB_GPT_LAUNCHER_DATA_DIR: "/dev/launcher",
   }), {
@@ -325,12 +329,58 @@ test("DEV MCP setup reuses only DEV-home credentials and targets its distinct co
         "--browser-host-descriptor",
         "/dev/runtime/launcher-browser.json",
         "--automatic-browser-interaction",
+        "--mcp-transport",
+        "openai-tunnel",
         "--acknowledge-unofficial",
       ],
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("DEV MCP setup configures an external Cloudflare gateway without production routes", async () => {
+  const fixture = devHostFor(null);
+  const gateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "CustomMcpGateway",
+  };
+  await fixture.host.setupDevMcp({ mcpTransport: "external-cloudflare", externalGateway: gateway });
+  assert.deepEqual(fixture.invocation(), {
+    name: "dev-mcp-setup",
+    args: [
+      "dev", "setup", "--full", "--browser-host-descriptor", "/dev/runtime/launcher-browser.json",
+      "--automatic-browser-interaction", "--mcp-transport", "external-cloudflare",
+      "--acknowledge-unofficial", "--external-mcp-url", gateway.mcpUrl,
+      "--external-health-url", gateway.healthUrl, "--external-service", gateway.expectedService,
+    ],
+  });
+  for (const invalid of [
+    { interactionMode: "manual", mcpTransport: "external-cloudflare" },
+    { mcpTransport: "external-cloudflare", runtimeKey: "privatekey" },
+    { mcpTransport: "unknown" },
+  ]) {
+    assert.throws(() => fixture.host.setupDevMcp(invalid), /requires Automatic mode|Unsupported DEV MCP transport/);
+  }
+});
+
+test("DEV switches from Zero Risk back to Automatic with its retained Cloudflare gateway", async () => {
+  const gateway = {
+    mcpUrl: "https://gateway.example.org/mcp",
+    healthUrl: "https://gateway.example.org/health",
+    expectedService: "CustomMcpGateway",
+  };
+  const fixture = devHostFor({
+    mode: "full", purpose: "dev-harness", mcpTransport: "openai-tunnel",
+    browserInteractionMode: "manual", externalGateway: gateway,
+  }, "manual");
+  await fixture.host.setBrowserInteractionMode("automatic");
+  assert.equal(fixture.invocation().name, "browser-interaction-mode");
+  assert.equal(fixture.invocation().args.includes("--mcp-transport"), true);
+  assert.equal(fixture.invocation().args.includes("external-cloudflare"), true);
+  assert.equal(fixture.invocation().args.includes("--replace-codex-route"), false);
+  assert.equal(fixture.invocation().args.includes("--restart-service"), false);
 });
 
 test("DEV doctor requires live tunnel readiness without probing a Responses listener", async () => {
@@ -360,6 +410,85 @@ test("DEV doctor requires live tunnel readiness without probing a Responses list
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("DEV doctor checks external Cloudflare health without requiring OpenAI tunnel credentials", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp",
+      healthUrl: "https://gateway.example.org/health",
+      expectedService: "CustomMcpGateway",
+    },
+  });
+  let healthCalls = 0;
+  fixture.host.supervisor.readTunnelHealth = async (config) => {
+    healthCalls += 1;
+    assert.equal(config.mcpTransport, "external-cloudflare");
+    return { ready: true, detail: "ready" };
+  };
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, true);
+  assert.equal(healthCalls, 1);
+  assert.deepEqual(report.checks.map(check => [check.id, check.status]), [
+    ["dev-profile", "ok"],
+    ["dev-external-cloudflare-configuration", "ok"],
+    ["dev-external-cloudflare-isolation", "ok"],
+    ["dev-external-cloudflare-health", "ok"],
+    ["responses-listener", "ok"],
+  ]);
+  assert.equal(report.checks.some(check => check.id === "dev-tunnel-credentials"), false);
+});
+
+test("DEV external Cloudflare doctor does not claim healthy when its gateway is unreachable", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp",
+      healthUrl: "https://gateway.example.org/health",
+      expectedService: "CustomMcpGateway",
+    },
+  });
+  fixture.host.supervisor.readTunnelHealth = async () => ({ ready: false, detail: "gateway unreachable" });
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, false);
+  const health = report.checks.find(check => check.id === "dev-external-cloudflare-health");
+  assert.equal(health.status, "error");
+  assert.equal(health.detail, "gateway unreachable");
+});
+
+test("DEV external Cloudflare doctor fails closed on incomplete gateway config", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp", healthUrl: "", expectedService: "CustomMcpGateway",
+    },
+  });
+  fixture.host.supervisor.readTunnelHealth = async () => {
+    assert.fail("Invalid external gateway must not be probed");
+  };
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.find(check => check.id === "dev-external-cloudflare-configuration").status, "error");
+  assert.equal(report.checks.some(check => check.id === "dev-external-cloudflare-health"), false);
+});
+
+test("DEV doctor rejects the production Cloudflare gateway before probing it", async () => {
+  const fixture = devHostFor({
+    purpose: "dev-harness", mode: "full", mcpTransport: "external-cloudflare",
+    browserInteractionMode: "automatic", externalGateway: {
+      mcpUrl: "https://codex-native2.continuos.com.br/mcp",
+      healthUrl: "https://codex-native2.continuos.com.br/health",
+      expectedService: "ContinuosWebIntegracao",
+    },
+  });
+  fixture.host.supervisor.readTunnelHealth = async () => {
+    assert.fail("Production gateway must never be probed from the DEV profile");
+  };
+  const report = await fixture.host.devDoctor();
+  assert.equal(report.ok, false);
+  assert.equal(report.checks.find(check => check.id === "dev-external-cloudflare-isolation").status, "error");
+  assert.equal(report.checks.some(check => check.id === "dev-external-cloudflare-health"), false);
 });
 
 test("production doctor parses its structured unhealthy report from exit status one", async () => {
@@ -394,7 +523,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
   const fixture = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: CURRENT_CONNECTOR_NAME,
     releaseVersion: "1.1.1",
     solAvailable: true,
     extraHighAvailable: false, proAvailable: false,
@@ -545,7 +674,7 @@ test("launcher update transaction leaves current and externally owned runtimes u
   const currentFull = hostFor({
     mode: "full",
     browserHost: "launcher",
-    appName: "Codex Native2",
+    appName: CURRENT_CONNECTOR_NAME,
     releaseVersion: "1.1.3",
   });
   const external = hostFor({ mode: "browser-only", browserHost: "managed-chrome", releaseVersion: "1.1.1" });
@@ -602,6 +731,8 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
       "/runtime/launcher-browser.json",
       "--automatic-browser-interaction",
       "--replace-codex-route",
+      "--mcp-transport",
+      "openai-tunnel",
       "--acknowledge-unofficial",
       "--restart-service",
     ]);
@@ -629,6 +760,35 @@ test("new MCP setup uses the fixed connector without a CLI name override", async
   ]);
   assert.equal(fixture.invocation().args.includes("--app-name"), false);
   assert.equal(fixture.host.setupConnectorName(), CURRENT_CONNECTOR_NAME);
+});
+
+test("external Cloudflare MCP setup has an explicit transport and no OpenAI credentials", async () => {
+  const fixture = hostFor(null);
+  await fixture.host.setupMcp({ mcpTransport: "external-cloudflare", interactionMode: "automatic" });
+  assert.deepEqual(fixture.invocation().args, [
+    "setup", "--full", "--browser-host-descriptor", "/runtime/launcher-browser.json",
+    "--automatic-browser-interaction", "--mcp-transport", "external-cloudflare",
+    "--replace-codex-route", "--acknowledge-unofficial", "--restart-service",
+  ]);
+  const existing = hostFor({
+    mode: "full", appName: "ContinuosWebIntegracao", browserHost: "launcher",
+    releaseVersion: "1.1.2", browserInteractionMode: "automatic", mcpTransport: "external-cloudflare",
+    externalGateway: {
+      mcpUrl: "https://gateway.example.org/mcp",
+      healthUrl: "https://gateway.example.org/health",
+      expectedService: "CustomMcpGateway",
+    },
+  });
+  assert.equal(existing.host.mcpCredentialsConfigured(), true);
+  await existing.host.upgradeManagedRuntime();
+  const upgradeArgs = existing.invocation().args;
+  assert.deepEqual(upgradeArgs.slice(upgradeArgs.indexOf("--mcp-transport"), upgradeArgs.indexOf("--external-service") + 2), [
+    "--mcp-transport", "external-cloudflare", "--external-mcp-url", "https://gateway.example.org/mcp",
+    "--external-health-url", "https://gateway.example.org/health", "--external-service", "CustomMcpGateway",
+  ]);
+  assert.throws(() => fixture.host.setupMcp({
+    mcpTransport: "external-cloudflare", runtimeKey: "private-key",
+  }), /without OpenAI tunnel credentials/);
 });
 
 test("MCP credential replacement remains explicit and requires a complete new pair", async () => {
@@ -844,22 +1004,25 @@ test("integration removal rejects a command that leaves an inactive journal behi
 });
 
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
-  const full = hostFor({ mode: "full", appName: "Codex Native2" });
-  assert.equal(full.host.mcpConnectorName(), "Codex Native2");
-  assert.equal(full.host.browserConnectorName(), "Codex Native2");
+  const full = hostFor({ mode: "full", appName: CURRENT_CONNECTOR_NAME });
+  assert.equal(full.host.mcpConnectorName(), CURRENT_CONNECTOR_NAME);
+  assert.equal(full.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const defaultName = hostFor(null);
   assert.equal(defaultName.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const legacyFull = hostFor({ mode: "full", appName: "Codex Native" });
-  assert.equal(legacyFull.host.browserConnectorName(), "Codex Native2");
+  assert.equal(legacyFull.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   assert.throws(
     () => legacyFull.host.mcpConnectorName(),
-    /still targets legacy ChatGPT connector.*create that connector as a new ChatGPT plugin/,
+    /runtime connector identity is obsolete/,
   );
+  const legacyNative2 = hostFor({ mode: "full", appName: "Codex Native2" });
+  assert.throws(() => legacyNative2.host.mcpConnectorName(), /runtime connector identity is obsolete/);
+  assert.equal(legacyNative2.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   const invalidFull = hostFor({ mode: "full", appName: "   " });
   assert.throws(() => invalidFull.host.mcpConnectorName(), /Connector name is invalid/);
   assert.throws(() => invalidFull.host.browserConnectorName(), /Connector name is invalid/);
   const browserOnly = hostFor({ mode: "browser-only", appName: "Codex Native" });
-  assert.equal(browserOnly.host.browserConnectorName(), "Codex Native2");
+  assert.equal(browserOnly.host.browserConnectorName(), CURRENT_CONNECTOR_NAME);
   assert.throws(() => browserOnly.host.mcpConnectorName(), /MCP runtime is not configured/);
   const dev = devHostFor({ mode: "full", appName: "Codex Native2" });
   assert.equal(dev.host.browserConnectorName(), DEV_CONNECTOR_NAME);

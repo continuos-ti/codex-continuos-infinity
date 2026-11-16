@@ -8,7 +8,10 @@ export function chatGptResponseStructures(roots: Element[]) {
       + '[role="alert"], [data-testid="regenerate-thread-error-button"]');
     const nodes = new Set<Element>([root]);
     let truncated = selected.length > 64;
-    for (const candidate of [...selected].slice(0, 64)) {
+    // A long assistant turn can contain hundreds of Markdown blocks. Keep the
+    // newest candidates so terminal alerts and completion controls are not
+    // discarded by earlier blocks when diagnostics reach their size limit.
+    for (const candidate of [...selected].slice(-64)) {
       let node: Element | null = candidate;
       let depth = 0;
       for (; node && root.contains(node) && depth < 20; node = node.parentElement, depth++) {

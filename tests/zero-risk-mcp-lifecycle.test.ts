@@ -267,6 +267,74 @@ describe("Zero Risk turn broker lifecycle", () => {
 });
 
 describe("Zero Risk public MCP ABI", () => {
+  test("replayed start and completion protocol IDs return their original acknowledgements", async () => {
+    const socketPath = endpoint("safe-rpc-replay");
+    const broker = TurnBroker.forSocket(socketPath);
+    const requestId = await broker.registerSafe(environment(), nonceA, 60_000, "safe-replay");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ["src/cli.ts", "mcp", "--contract", "safe", "--broker-socket", socketPath],
+      cwd: process.cwd(),
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "safe-rpc-replay-test", version: "1" });
+    try {
+      await client.connect(transport);
+      broker.confirmSafeTurnSent(requestId, nonceA);
+      const replies = new Map<number, unknown[]>();
+      const waiters = new Map<number, Array<(response: any) => void>>();
+      const originalOnMessage = transport.onmessage;
+      transport.onmessage = message => {
+        if (!("id" in message) || (message.id !== 931 && message.id !== 932)) {
+          originalOnMessage?.(message);
+          return;
+        }
+        const id = message.id;
+        const waiter = waiters.get(id)?.shift();
+        if (waiter) waiter(message);
+        else replies.set(id, [...(replies.get(id) ?? []), message]);
+      };
+      const receive = (id: number): Promise<any> => {
+        const queued = replies.get(id);
+        if (queued?.length) return Promise.resolve(queued.shift());
+        return Promise.race([
+          new Promise(resolve => waiters.set(id, [...(waiters.get(id) ?? []), resolve])),
+          Bun.sleep(5_000).then(() => { throw new Error(`Missing Zero Risk MCP response ${id}`); }),
+        ]);
+      };
+      const send = (id: number, name: string, args: Record<string, unknown>) => transport.send({
+        jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args },
+      });
+
+      await Promise.all([
+        send(931, "codex_turn_start", { request_id: requestId }),
+        send(931, "codex_turn_start", { request_id: requestId }),
+      ]);
+      const [firstStart, secondStart] = await Promise.all([receive(931), receive(931)]);
+      expect(firstStart.result).toEqual(secondStart.result);
+      expect(firstStart.result.structuredContent).toEqual({ started: true, duplicate: false });
+
+      const completion = broker.waitForSafeCompletion(requestId);
+      await Promise.all([
+        send(932, "codex_turn_complete", { request_id: requestId, final_answer: "safe final" }),
+        send(932, "codex_turn_complete", { request_id: requestId, final_answer: "safe final" }),
+      ]);
+      const [firstComplete, secondComplete] = await Promise.all([receive(932), receive(932)]);
+      expect(firstComplete.result).toEqual(secondComplete.result);
+      expect(firstComplete.result.structuredContent).toEqual({ completed: true, duplicate: false });
+      expect(await completion).toBe("safe final");
+
+      await send(932, "codex_turn_complete", { request_id: requestId, final_answer: "changed" });
+      const collision = await receive(932);
+      expect(collision.result?.isError ?? Boolean(collision.error)).toBe(true);
+      expect(JSON.stringify(collision)).toContain("reused for a different tool or arguments");
+    } finally {
+      await client.close().catch(() => {});
+      broker.revoke(requestId);
+      await broker.close();
+    }
+  }, 15_000);
+
   test("exposes start and completion while hiding the bridge namespace", async () => {
     const socketPath = endpoint("stdio-contract");
     const broker = TurnBroker.forSocket(socketPath);

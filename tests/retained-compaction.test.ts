@@ -177,7 +177,9 @@ test("a compaction control token cannot claim the ordinary Codex tool environmen
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-compaction-capability-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   try {
-    const transaction = await broker.beginCompactionTransaction("trace_capability", 1_000);
+    // The timeout protects the real handoff, but this test checks authority isolation.
+    // Allow for Windows CI scheduling delays between the two protocol calls.
+    const transaction = await broker.beginCompactionTransaction("trace_capability", 10_000);
     await expect(callTurnBroker(broker.socketPath, {
       method: "claim",
       token: transaction.token,
@@ -285,12 +287,14 @@ test("active compaction delivers the current result and converts every later MCP
       method: "claim",
       token,
     });
+    // This checks compaction routing, not the peer-close boundary. On Bun/Windows,
+    // waiting for named-pipe EOF after a complete response can stall indefinitely.
     const current = callTurnBroker<BrokerToolResult>(broker.socketPath, {
       method: "invoke",
       bindingId: claimed.bindingId,
       wireName: "exec_command",
       arguments: { cmd: "pwd" },
-    });
+    }, null, AbortSignal.timeout(10_000));
     const [request] = await broker.nextToolBatch(token);
     let progressEvents = 0;
     broker.requestCompaction(token, {
@@ -309,7 +313,7 @@ test("active compaction delivers the current result and converts every later MCP
       bindingId: claimed.bindingId,
       wireName: "exec_command",
       arguments: { cmd: "git status --short" },
-    })).resolves.toMatchObject({
+    }, null, AbortSignal.timeout(10_000))).resolves.toMatchObject({
       content: [{ type: "text", text: "compact now" }],
       isError: true,
     });
@@ -344,7 +348,7 @@ test("active compaction drains an MCP call already queued without an outer Codex
       bindingId: claimed.bindingId,
       wireName: "exec_command",
       arguments: { cmd: "must-not-run" },
-    });
+    }, null, AbortSignal.timeout(10_000));
     await Bun.sleep(25);
     const interrupted = broker.requestCompaction(token, {
       content: [{ type: "text", text: "compact instead" }],

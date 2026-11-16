@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -121,11 +121,25 @@ describe("reversible native Codex route integration", () => {
     expect(() => restoreFileSnapshot(snapshot)).toThrow("symlink changed");
     expect(readFileSync(target, "utf8")).toBe("original\n");
     expect(readFileSync(other, "utf8")).toBe("other\n");
-    for (const invalidTarget of [directory, join(root, "missing.toml"), alias]) {
-      rmSync(alias);
-      symlinkSync(invalidTarget, alias);
+    // Bun on Windows also cannot remove a self-referential link (ELOOP), even
+    // when removing its enclosing fixture directory. Exercise that case on
+    // Unix; on Windows the dangling link exercises the same ENOENT guard.
+    const invalidKinds = process.platform === "win32"
+      ? ["directory", "missing"] as const
+      : ["directory", "missing", "self"] as const;
+    for (const kind of invalidKinds) {
+      // On Windows, Bun's fs APIs can report ENOENT for a dangling symbolic
+      // link, including unlink/rm of the link. Isolate these cases by root.
+      const { root: invalidRoot, codexHome: invalidHome } = fixture();
+      const invalidAlias = join(invalidHome, "config.toml");
+      const invalidDirectory = join(invalidRoot, "directory");
+      mkdirSync(invalidDirectory);
+      const invalidTarget = kind === "directory" ? invalidDirectory
+        : kind === "missing" ? join(invalidRoot, "missing.toml") : invalidAlias;
+      symlinkSync(invalidTarget, invalidAlias);
       expect(() => preflightCodexIntegration(nativeConfig("browser-only"))).toThrow();
-      expect(lstatSync(alias).isSymbolicLink()).toBe(true);
+      expect(readdirSync(invalidHome, { withFileTypes: true })
+        .some(entry => entry.name === "config.toml" && entry.isSymbolicLink())).toBe(true);
     }
   });
 

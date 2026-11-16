@@ -10,16 +10,32 @@ const {
   validateSidebarState,
 } = require("../electron/state.cjs");
 
-test("predictions and Temporary Chat start on and preserve an explicit opt-out after reopening", () => {
+test("predictions start on, saved chats default on, and Temporary Chat opt-in survives reopening", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-prediction-state-"));
   const file = path.join(root, "state.json");
   try {
     const store = createStateStore(file);
     assert.equal(store.read().composerPredictionsEnabled, true);
-    assert.equal(store.read().useTemporaryChats, true);
-    store.update({ composerPredictionsEnabled: false, useTemporaryChats: false });
+    assert.equal(store.read().useTemporaryChats, false);
+    store.update({ composerPredictionsEnabled: false, useTemporaryChats: true });
     assert.equal(createStateStore(file).read().composerPredictionsEnabled, false);
-    assert.equal(createStateStore(file).read().useTemporaryChats, false);
+    assert.equal(createStateStore(file).read().useTemporaryChats, true);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("legacy launcher state without Temporary Chat preference defaults to saved chats", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-legacy-chat-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    const previous = createStateStore(file).update({ language: "ja", onboardingComplete: true });
+    delete previous.useTemporaryChats;
+    fs.writeFileSync(file, JSON.stringify(previous));
+    const store = createStateStore(file);
+    assert.equal(store.read().useTemporaryChats, false);
+    assert.equal(store.read().language, "ja");
+    assert.equal(store.read().onboardingComplete, true);
+    store.update({ useTemporaryChats: true });
+    assert.equal(createStateStore(file).read().useTemporaryChats, true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -80,7 +96,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useTemporaryChats: true,
+      useTemporaryChats: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
@@ -111,7 +127,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useTemporaryChats: true,
+      useTemporaryChats: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
@@ -193,7 +209,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       composerPredictionsEnabled: true,
       experimentalSkillAttachments: false,
       experimentalFreshConversationPerTurn: false,
-      useTemporaryChats: true,
+      useTemporaryChats: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,

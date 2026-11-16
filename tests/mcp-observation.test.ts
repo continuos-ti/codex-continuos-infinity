@@ -62,6 +62,67 @@ test("MCP observations separate pre-handler validation and returned tool errors 
   }
 });
 
+test("MCP observations record well-formed DEV receipt IDs without exposing tool content", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const events: Array<Record<string, unknown>> = [];
+  const secret = "private-fixture-message-and-session-token";
+  const receipt = "0123456789abcdef0123456789abcdef";
+  const server = new McpServer({ name: "receipt-observation-test", version: "1" });
+  server.registerTool("dev_echo", { inputSchema: { valid: z.boolean(), fail: z.boolean() } },
+    async ({ valid, fail }) => ({
+      content: [{ type: "text", text: secret }],
+      structuredContent: {
+        audit_receipt: valid ? receipt : secret,
+        message: secret,
+      },
+      ...(fail ? { isError: true } : {}),
+    }));
+  observeMcpToolCalls(serverTransport, new Set(["dev_echo"]), event => events.push(event));
+  await server.connect(serverTransport);
+  const client = new Client({ name: "receipt-client", version: "1" });
+  try {
+    await client.connect(clientTransport);
+    const accepted = await client.callTool({ name: "dev_echo", arguments: { valid: true, fail: false } });
+    const refused = await client.callTool({ name: "dev_echo", arguments: { valid: true, fail: true } });
+    const untrusted = await client.callTool({ name: "dev_echo", arguments: { valid: false, fail: true } });
+    expect(accepted.structuredContent).toMatchObject({ audit_receipt: receipt });
+    expect(refused.isError).toBeTrue();
+    const replies = events.filter(event => event.event === "reply_sent");
+    expect(replies.map(event => event.audit_receipt)).toEqual([receipt, receipt, undefined]);
+    expect(replies.map(event => event.is_error)).toEqual([false, true, true]);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(JSON.stringify(events)).not.toContain("message");
+    expect(untrusted.structuredContent).toMatchObject({ audit_receipt: secret });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP receipt inspection cannot turn a sent response into a transport error", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  let sent = 0;
+  const transport: Transport = {
+    start: async () => {}, close: async () => {},
+    onmessage: () => {},
+    send: async () => { sent += 1; },
+  };
+  observeMcpToolCalls(transport, new Set(["dev_echo"]), event => events.push(event));
+  transport.onmessage?.({ jsonrpc: "2.0", id: 17, method: "tools/call",
+    params: { name: "dev_echo", arguments: {} } });
+  await transport.send({ jsonrpc: "2.0", id: 17, result: {
+    get structuredContent() { throw new Error("private receipt inspection error"); },
+  } });
+  expect(sent).toBe(1);
+  expect(events.filter(event => event.event === "reply_sent")).toMatchObject([{
+    tool: "dev_echo", outcome: "uninspectable",
+  }]);
+  expect(events.some(event => event.event === "reply_send_failed")).toBeFalse();
+  expect(JSON.stringify(events)).not.toContain("private receipt inspection error");
+  await transport.send({ jsonrpc: "2.0", id: 17, result: {} });
+  expect(events.filter(event => event.event === "reply_sent")).toHaveLength(1);
+});
+
 test("MCP observation failures, arbitrary IDs and unknown names never alter transport behavior", async () => {
   const events: Array<Record<string, unknown>> = [];
   const secret = "private-id-and-tool-name";
@@ -92,4 +153,28 @@ test("MCP observation failures, arbitrary IDs and unknown names never alter tran
   expect(events).toHaveLength(count);
   transport.onclose?.();
   expect(closed).toBeTrue();
+});
+
+test("a duplicate MCP request ID is uncorrelated and retired after its reply", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  const transport: Transport = {
+    start: async () => {}, close: async () => {}, onmessage: () => {},
+    send: async () => {},
+  };
+  observeMcpToolCalls(transport, new Set(["dev_echo"]), event => events.push(event));
+  const request = { jsonrpc: "2.0" as const, id: 8, method: "tools/call",
+    params: { name: "dev_echo", arguments: {} } };
+  const reply = { jsonrpc: "2.0" as const, id: 8, result: {} };
+  transport.onmessage?.(request);
+  transport.onmessage?.(request);
+  expect(events.at(-1)).toMatchObject({ event: "uncorrelated_call", reason: "duplicate_id" });
+  await transport.send(reply);
+  expect(events.some(event => event.event === "reply_sent")).toBeFalse();
+  transport.onmessage?.(request);
+  await transport.send(reply);
+  expect(events.filter(event => event.event === "call_received")).toHaveLength(2);
+  expect(events.filter(event => event.event === "reply_sent")).toMatchObject([{
+    call: 2, tool: "dev_echo", outcome: "result",
+  }]);
+  await transport.close();
 });

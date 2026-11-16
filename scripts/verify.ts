@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { verifyWindowsLocalManifest } from "./verify-windows-local-manifest";
 
 const root = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
@@ -18,6 +19,7 @@ async function run(args: string[]): Promise<void> {
 }
 
 try {
+  console.log(`WINDOWS_LOCAL_MANIFEST_OK files=${verifyWindowsLocalManifest()}`);
   await run(["run", "check-version"]);
   await run(["run", "audit"]);
   await run(["run", "launcher:audit"]);

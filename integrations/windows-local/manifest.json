@@ -1,0 +1,114 @@
+{
+    "schemaVersion":  1,
+    "integration":  "windows-local-durable-identity",
+    "version":  "1.0.3",
+    "generatedAt":  "2026-11-13",
+    "provider":  "Windows Local",
+    "tools":  [
+                  "windows_screenshot",
+                  "windows_focus",
+                  "windows_click",
+                  "windows_type",
+                  "windows_key",
+                  "windows_scroll",
+                  "windows_drag",
+                  "windows_command",
+                  "windows_command_result"
+              ],
+    "schemaExtensions":  {
+                             "operationId":  "x-codex-operation-id",
+                             "providerEpoch":  "x-codex-provider-epoch",
+                             "operationStatus":  "x-codex-operation-status",
+                             "readOnly":  "x-codex-read-only"
+                         },
+    "state":  {
+                  "database":  "%LOCALAPPDATA%\\WindowsLocalRemote\\command-jobs.sqlite3",
+                  "override":  "WINDOWS_LOCAL_REMOTE_STATE",
+                  "screenshotIdPersisted":  true,
+                  "jobIdPersisted":  true,
+                  "providerEpochPersisted":  true,
+                  "screenshotPixelsPersisted":  false,
+                  "screenshotTtlSeconds":  60,
+                  "outputTailBytes":  64000
+              },
+    "replayPolicy":  "No automatic replay. unknown, not_found, epoch_required and provider_changed never authorize replay.",
+    "effectScope":  "The tracked PowerShell wrapper process. Detached processes and external services require resource-specific reconciliation.",
+    "installState":  "staged-not-applied-to-real-provider",
+    "validation":  {
+                       "pythonTests":  29,
+                       "adapterTests":  18,
+                       "journalContractTests":  2,
+                       "dryRunAgainstRealProviderSource":  "passed",
+                       "fixtureApplyAndRollback":  "passed",
+                       "realProviderRestart":  "pending",
+                       "stagingMcpRestartE2E":  "passed"
+                   },
+    "files":  [
+                  {
+                      "path":  "durable_command_jobs.py",
+                      "role":  "provider-ledger",
+                      "packaged":  true,
+                      "sha256":  "f6c6092d252753e4c50a554dc5fe0e6848ff2a71fd0afc8f2256ad884646a48d"
+                  },
+                  {
+                      "path":  "apply-durable-command-jobs.ps1",
+                      "role":  "installer-and-rollback",
+                      "packaged":  true,
+                      "sha256":  "1b51409e813c51335639415023bc39aee066d95d79589a589334ff43a2fbf343"
+                  },
+                  {
+                      "path":  "README.md",
+                      "role":  "integration-documentation",
+                      "packaged":  true,
+                      "sha256":  "5ad74a802bf6649c3c32175b416be037edc7f05c4016dc95583522f2bd009304"
+                  },
+                  {
+                      "path":  "tests/test_durable_command_jobs.py",
+                      "role":  "provider-tests",
+                      "packaged":  false,
+                      "sha256":  "ef9770cbf89542b907c1c1a529093e717eda81c782e2291f52f59097754d481f"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/broker-operation-identity.ts",
+                      "role":  "bridge-identity-adapter",
+                      "packaged":  false,
+                      "sha256":  "22a6bec6e8882b26fa82bc48c6bb4c7cd371c16687b09e6171b81ad66a7a5b2d"
+                  },
+                  {
+                      "path":  "../../tests/broker-operation-identity.test.ts",
+                      "role":  "bridge-identity-tests",
+                      "packaged":  false,
+                      "sha256":  "eced263da3245c16713ccdae41ece990108ce99f6687e1946bb552afa7891641"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/broker-call-journal.ts",
+                      "role":  "bridge-journal-contract",
+                      "packaged":  false,
+                      "sha256":  "7e758a7ea57b4d08d8589e27e8e155dd5300c540b4f633dab3a65b5aad91cdd6"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/broker-call-reconciliation.ts",
+                      "role":  "bridge-recovery-contract",
+                      "packaged":  false,
+                      "sha256":  "069f4b2cff8e8b66fed8f6bb2b47f808562852936e70690661f0232e6f17b3ce"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/turn-broker.ts",
+                      "role":  "bridge-dispatch-binding",
+                      "packaged":  false,
+                      "sha256":  "4e9abc65362d886888ae40e56834ef685c131a7be966b06a301fe1767161e3f7"
+                  },
+                  {
+                      "path":  "../../tests/broker-call-journal.test.ts",
+                      "role":  "bridge-journal-tests",
+                      "packaged":  false,
+                      "sha256":  "476e722578de8fc9455ccedc5bd39f1a6df5749211cf52f7a285721172a469ad"
+                  },
+                  {
+                      "path":  "../../src/adapters/chatgpt-web/index.ts",
+                      "role":  "bridge-recovery-query-handoff",
+                      "packaged":  false,
+                      "sha256":  "d9bd5585afe55baa510f1f96439b5fb9ffba25960b7a4b2d6b51bc1b2c2b96de"
+                  }
+              ]
+}

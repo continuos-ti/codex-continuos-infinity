@@ -5,9 +5,9 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 
-const REPOSITORY = "miuuyy/codex-chatgpt-web";
+const { REPOSITORY, PRODUCT_NAME, ARTIFACT_PREFIX } = require("./brand.cjs");
 const RELEASE_API_URL = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
-const USER_AGENT = "codex-web-gpt-launcher-updater";
+const USER_AGENT = "codex-continuos-infinity-updater";
 const MAX_REDIRECTS = 5;
 // A launcher started at sign-in can run its only check before the network is up, or while a new
 // release is still uploading its assets. Retry failures a few times; success is still checked once.
@@ -45,13 +45,13 @@ function releaseVersion(tagName) {
 
 function releaseAssetName(version, platform = process.platform, arch = process.arch) {
   if (platform === "darwin" && ["arm64", "x64"].includes(arch)) {
-    return `codex-web-gpt-${version}-mac-${arch}.zip`;
+    return `${ARTIFACT_PREFIX}-${version}-mac-${arch}.zip`;
   }
   if (platform === "win32" && arch === "x64") {
-    return `codex-web-gpt-${version}-win-x64.exe`;
+    return `${ARTIFACT_PREFIX}-${version}-win-x64.exe`;
   }
   if (platform === "linux" && ["x64", "arm64"].includes(arch)) {
-    return `codex-web-gpt-${version}-linux-${arch}.AppImage`;
+    return `${ARTIFACT_PREFIX}-${version}-linux-${arch}.AppImage`;
   }
   return null;
 }
@@ -214,7 +214,7 @@ function findMacApplication(root) {
   const appEntry = entries.find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
   if (!appEntry) throw new Error("The macOS update archive does not contain an application bundle");
   const application = path.join(root, appEntry.name);
-  const executable = path.join(application, "Contents", "MacOS", "Codex Web GPT");
+  const executable = path.join(application, "Contents", "MacOS", PRODUCT_NAME);
   if (!fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
     throw new Error("The macOS update archive is incomplete");
   }
@@ -222,13 +222,13 @@ function findMacApplication(root) {
 }
 
 function linuxUpdateInstallation() {
-  const guidance = "Quit Codex Web GPT, run install-launcher.sh from the README once, then reopen the installed app. Your settings and browser profile are preserved.";
-  const target = process.env.CODEX_WEB_GPT_APPIMAGE?.trim()
+  const guidance = "Quit Codex Continuos Infinity, run install-launcher.sh from the README once, then reopen the installed app. Your settings and browser profile are preserved.";
+  const target = process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE?.trim()
     || process.env.APPIMAGE?.trim();
   if (!target || !path.isAbsolute(target)) {
     throw new Error(`The running Linux AppImage path is unavailable. ${guidance}`);
   }
-  const wrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
+  const wrapper = process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE?.trim();
   if (!wrapper || !path.isAbsolute(wrapper)) {
     throw new Error(`Linux auto-update requires the stable install-launcher.sh wrapper. ${guidance}`);
   }
@@ -423,7 +423,7 @@ function createUpdateController({
     const available = candidate;
     pending = (async () => {
       transition({ status: "downloading", version: available.version });
-      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-update-"));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-continuos-infinity-update-"));
       try {
         const checksums = await deps.downloadText(available.checksumsUrl);
         const expected = expectedChecksum(checksums, available.assetName);

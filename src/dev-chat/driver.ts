@@ -15,6 +15,7 @@ import type { AppConfig } from "../config";
 import { parseRequest } from "../responses/parser";
 import { compactRequest, responseRequest, routeChatGptWebRequest } from "../server";
 import { namespacedToolName, type AdapterEvent, type CodexProviderConfig } from "../types";
+import type { DevChatImage } from "./images";
 import {
   createDevCoherentContextPayload,
   createDevContextFiller,
@@ -161,7 +162,7 @@ function turnMetadata(threadId: string, turnId: string, cwd: string): string {
   });
 }
 
-function currentTurnItems(cwd: string, turnId: string, message: string): unknown[] {
+function currentTurnItems(cwd: string, turnId: string, message: string, images: readonly DevChatImage[] = []): unknown[] {
   const itemMetadata = { turn_id: turnId };
   return [
     {
@@ -175,7 +176,7 @@ function currentTurnItems(cwd: string, turnId: string, message: string): unknown
       type: "message",
       id: id("msg_dev_user"),
       role: "user",
-      content: [{ type: "input_text", text: message }],
+      content: [{ type: "input_text", text: message }, ...images],
       internal_chat_message_metadata_passthrough: itemMetadata,
     },
   ];
@@ -480,13 +481,17 @@ export class DevChatDriver {
     state: DevChatState,
     message: string,
     emit: (event: DevChatEvent) => void = () => {},
+    images: readonly DevChatImage[] = [],
   ): Promise<DevChatTurnResult> {
     const prompt = message.trim();
     if (!prompt) throw new Error("DEV chat message must not be empty");
     const turnId = id("dev_turn");
     let compactions = 0;
     let pendingCompactions = 0;
-    let workingInput = [...state.input, ...currentTurnItems(this.cwd, turnId, prompt)];
+    let workingInput = [...state.input, ...currentTurnItems(this.cwd, turnId, prompt, images)];
+    if (images.length && Buffer.byteLength(JSON.stringify({ ...state, input: workingInput }, null, 2)) > 60 * 1024 * 1024) {
+      throw new Error("DEV chat image history exceeds its persistent state limit; compact the chat before uploading");
+    }
     let context = this.statusForInput(state, turnId, workingInput);
 
     if (this.shouldAutoCompact(state, context) && state.input.length > 0) {
@@ -494,7 +499,10 @@ export class DevChatDriver {
       state.compactions += 1;
       compactions += 1;
       this.store.save(state);
-      workingInput = [...state.input, ...currentTurnItems(this.cwd, turnId, prompt)];
+      workingInput = [...state.input, ...currentTurnItems(this.cwd, turnId, prompt, images)];
+      if (images.length && Buffer.byteLength(JSON.stringify({ ...state, input: workingInput }, null, 2)) > 60 * 1024 * 1024) {
+        throw new Error("DEV chat image history exceeds its persistent state limit after compaction");
+      }
       context = this.statusForInput(state, turnId, workingInput);
     }
     if (this.shouldAutoCompact(state, context)) {

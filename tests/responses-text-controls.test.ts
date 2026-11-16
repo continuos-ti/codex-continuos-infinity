@@ -9,7 +9,7 @@ import { parseRequest } from "../src/responses/parser";
 import type { AdapterEvent, CodexProviderConfig } from "../src/types";
 
 const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
-const turnToken = "turn_12345678901234567890123456789012";
+const turnToken = "turn_00000000000000000000000000000002";
 const parse = (text: unknown) => parseRequest({
   model: CHATGPT_WEB_MODEL_ID,
   stream: true,

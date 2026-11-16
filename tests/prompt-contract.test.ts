@@ -84,7 +84,7 @@ test("multipart JSON shields the rich user renderer's delimiters while preservin
   parsed.context.systemPrompt = [content];
   parsed.context.messages[1]!.content = content;
   const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
-  const token = "turn_12345678901234567890123456789012";
+  const token = "turn_00000000000000000000000000000002";
   const inline = compileChatGptWebPrompt(parsed, capabilities, token);
   const inlineJson = inline.text.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)![1]!;
   expect(inlineJson).toContain("https://example.com");
@@ -124,7 +124,7 @@ test("history handle cleanup works on decoded text and preserves native call ide
 });
 
 test("Full-mode Pro prompts pass one stable turn token directly to native actions", () => {
-  const token = "turn_12345678901234567890123456789012";
+  const token = "turn_00000000000000000000000000000002";
   const parsed = request("max");
   parsed.context.messages[1]!.content = `Diagnose an invalid binding_id safety failure without replaying ${token}`;
   const compiled = compileChatGptWebPrompt(
@@ -162,7 +162,7 @@ test("Full-mode Pro prompts pass one stable turn token directly to native action
 });
 
 test("Pro preserves the same native Codex delegation contract as Extra High", () => {
-  const token = "turn_12345678901234567890123456789012";
+  const token = "turn_00000000000000000000000000000002";
   const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
   const pro = compileChatGptWebPrompt(request("max"), capabilities, token);
   const extraHigh = compileChatGptWebPrompt(request("xhigh"), capabilities, token);
@@ -194,7 +194,7 @@ test("read-only prompts resume without exposing a bind capability", () => {
 });
 
 test("Bigger Context sends six semantic record envelopes and starts work from the final part", () => {
-  const token = "turn_12345678901234567890123456789012";
+  const token = "turn_00000000000000000000000000000002";
   const parsed = request("high");
   parsed.context.systemPrompt = ["system-one", "system-two"];
   parsed.context.messages.push(
@@ -643,7 +643,7 @@ test("persisted one-pixel image sentinels are not attached to ChatGPT", () => {
 test("the replayed context never carries a finished turn's broker handles", () => {
   const staleToken = "turn_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const staleBinding = "binding_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-  const token = "turn_12345678901234567890123456789012";
+  const token = "turn_00000000000000000000000000000002";
   const replayed: CodexParsedRequest = {
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
@@ -703,7 +703,7 @@ test("uses the public Instant name without leaking the browser menu alias into t
 });
 
 test("keeps large contexts intact in the inline text envelope", () => {
-  const token = "turn_12345678901234567890123456789012";
+  const token = "turn_00000000000000000000000000000002";
   const largeContent = "x".repeat(600_000);
   const large = request("high");
   large.context.messages.push({

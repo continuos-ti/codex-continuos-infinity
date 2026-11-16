@@ -3,9 +3,42 @@ import { readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_COMPOSER_SELECTOR } from "../src/chatgpt-ui/composer";
-import { CHATGPT_EFFORT_CONTROL_SELECTOR } from "../src/chatgpt-ui/model-picker";
+import { activateChatGptEffortMenu, CHATGPT_EFFORT_CONTROL_SELECTOR } from "../src/chatgpt-ui/model-picker";
 import { detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 import { assertChatGptModelFamily } from "../src/adapters/chatgpt-web/model-selection";
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a click timeout reuses the opened, owned model menu without clicking again", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<button id="control" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">High</button>
+      <div id="picker" role="menu" hidden><div data-model-reasoning-effort-slider>
+        <span role="slider" aria-valuemin="0" aria-valuemax="2" aria-valuenow="2"></span>
+      </div></div><script>
+      window.clickCount = 0;
+      document.getElementById('control').onclick = event => {
+        window.clickCount++;
+        document.getElementById('control').setAttribute('aria-expanded', 'true');
+        document.getElementById('picker').hidden = false;
+      };
+      </script>`);
+    const realControl = page.locator("#control");
+    const syntheticControl = {
+      getAttribute: realControl.getAttribute.bind(realControl),
+      click: async (options: { timeout: number }) => {
+        await realControl.click(options);
+        const timeout = new Error("timed out after opening picker");
+        timeout.name = "TimeoutError";
+        throw timeout;
+      },
+    } as unknown as Parameters<typeof activateChatGptEffortMenu>[1];
+    const activation = await activateChatGptEffortMenu(page, syntheticControl, { settleMs: 100 });
+    expect(activation.method).toBe("click");
+    expect(await activation.menu.isVisible()).toBeTrue();
+    expect(await activation.slider.count()).toBe(1);
+    expect(await page.evaluate(() => (window as any).clickCount)).toBe(1);
+  } finally { await browser.close(); }
+}, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-5.6 Pro verifies the split model/effort header before Send (#875)", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });

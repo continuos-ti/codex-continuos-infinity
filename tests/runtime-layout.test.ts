@@ -119,6 +119,27 @@ test.each([
   });
 });
 
+test("existing DEV profiles select the authenticated DEV Web connector on load", () => {
+  const root = join(tmpdir(), `codex-continuos-infinity-dev-identity-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const existing = defaultConfig("browser-only");
+  existing.purpose = "dev-harness";
+  existing.appName = "ContinuosWebIntegracao DEV";
+  existing.automaticAppName = "ContinuosWebIntegracao DEV";
+  writeFileSync(join(root, "config.json"), `${JSON.stringify(existing)}\n`);
+
+  expect(loadConfig()).toMatchObject({
+    appName: DEV_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: DEV_CHATGPT_CONNECTOR_NAME,
+  });
+  expect(loadConfigForSetup()).toMatchObject({
+    appName: DEV_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: DEV_CHATGPT_CONNECTOR_NAME,
+  });
+});
+
 test("setup repairs a legacy automatic connector name that collides with Zero Risk", () => {
   const root = join(tmpdir(), `codex-chatgpt-web-connector-collision-${process.pid}-${Date.now()}`);
   roots.push(root);
@@ -149,7 +170,7 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    appName: "Codex Native",
+    appName: CHATGPT_CONNECTOR_NAME,
     chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     storageStatePath: join(root, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(root),
@@ -309,17 +330,17 @@ test("retired chat preferences are removed without changing current configuratio
   expect(() => loadConfig()).toThrow("experimentalFreshConversationPerTurn");
 });
 
-test("Temporary Chat defaults on and preserves an explicit opt-out across config reloads", () => {
+test("saved chats default on and explicit Temporary Chat choices survive config reloads", () => {
   const root = join(tmpdir(), `codex-temporary-config-${process.pid}-${Date.now()}`);
   roots.push(root);
   process.env.CODEX_CHATGPT_WEB_HOME = root;
   mkdirSync(root, { recursive: true });
   const path = join(root, "config.json");
   const original: Record<string, unknown> = { ...defaultConfig("browser-only"), useSavedChats: false };
-  expect(original.useTemporaryChats).toBe(true);
+  expect(original.useTemporaryChats).toBe(false);
   delete original.useTemporaryChats;
   writeFileSync(path, JSON.stringify(original));
-  expect(loadConfig().useTemporaryChats).toBe(true);
+  expect(loadConfig().useTemporaryChats).toBe(false);
   for (const useTemporaryChats of [true, false]) {
     writeFileSync(path, JSON.stringify({ ...original, useTemporaryChats }));
     for (const loaded of [loadConfig(), loadConfigForSetup()]) {
@@ -395,7 +416,7 @@ test("the whole name after Codex is editable and only the selected mode changes"
     const manual = resolveInteractionConnectorIdentities("manual", "production", names, "Manual");
     expect(manual.automaticAppName).toBe(names.automaticAppName);
     expect(manual.appName).toBe("Codex Manual");
-    expect(resolveInteractionConnectorIdentities("automatic", "production", manual).appName).toBe(names.automaticAppName);
+    expect(resolveInteractionConnectorIdentities("automatic", "production", manual).appName).toBe(manual.automaticAppName);
   }
   for (const suffix of [null, 5, "", "x".repeat(75), " Work", "Work ", "x\ny", "x`y", "x@y", "--flag"]) {
     expect(() => validateConnectorNameSuffix(suffix)).toThrow("part after Codex");

@@ -18,10 +18,10 @@ const {
 } = require("../electron/update.cjs");
 
 test("Linux auto-update fails closed without the stable installer wrapper", () => {
-  const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
-  const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-  process.env.CODEX_WEB_GPT_APPIMAGE = "/opt/codex/Codex Web GPT.AppImage";
-  delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
+  const previousAppImage = process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE;
+  const previousWrapper = process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE;
+  process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE = "/opt/codex/Codex Continuos Infinity.AppImage";
+  delete process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE;
   try {
     assert.throws(() => buildJob({
       version: "1.2.0",
@@ -33,15 +33,15 @@ test("Linux auto-update fails closed without the stable installer wrapper", () =
       logPath: "/tmp/update.log",
     }), /requires the stable install-launcher\.sh wrapper/);
   } finally {
-    if (previousAppImage === undefined) delete process.env.CODEX_WEB_GPT_APPIMAGE;
-    else process.env.CODEX_WEB_GPT_APPIMAGE = previousAppImage;
-    if (previousWrapper === undefined) delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-    else process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = previousWrapper;
+    if (previousAppImage === undefined) delete process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE;
+    else process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE = previousAppImage;
+    if (previousWrapper === undefined) delete process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE;
+    else process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE = previousWrapper;
   }
 });
 
 test("unsupported Linux launches reject updates before downloading or changing state", async () => {
-  const keys = ["CODEX_WEB_GPT_APPIMAGE", "APPIMAGE", "CODEX_WEB_GPT_LAUNCHER_EXECUTABLE"];
+  const keys = ["CODEX_CONTINUOS_INFINITY_APPIMAGE", "APPIMAGE", "CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE"];
   const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   try {
     for (const [appImage, wrapper] of [
@@ -51,8 +51,8 @@ test("unsupported Linux launches reject updates before downloading or changing s
       ["/opt/codex/app.AppImage", "relative-launcher"],
     ]) {
       for (const key of keys) delete process.env[key];
-      if (appImage !== undefined) process.env.CODEX_WEB_GPT_APPIMAGE = appImage;
-      if (wrapper !== undefined) process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = wrapper;
+      if (appImage !== undefined) process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE = appImage;
+      if (wrapper !== undefined) process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE = wrapper;
       const calls = [];
       const states = [];
       const controller = createUpdateController({
@@ -61,9 +61,9 @@ test("unsupported Linux launches reject updates before downloading or changing s
         dependencies: {
           fetchRelease: async () => ({
             tag_name: "v1.2.0",
-            assets: ["codex-web-gpt-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
+            assets: ["codex-continuos-infinity-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
               name,
-              browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
+              browser_download_url: `https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/${name}`,
             })),
           }),
           downloadText: async () => { calls.push("checksums"); throw new Error("Unexpected download"); },
@@ -90,11 +90,11 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.1.4", "1.1.4"), 0);
   assert.equal(compareVersions("1.1.3", "1.1.4"), -1);
   assert.equal(compareVersions("1.2.0", "1.1.99"), 1);
-  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-web-gpt-1.2.0-mac-arm64.zip");
-  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-web-gpt-1.2.0-mac-x64.zip");
-  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.exe");
-  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-web-gpt-1.2.0-linux-x64.AppImage");
-  assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), "codex-web-gpt-1.2.0-linux-arm64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "arm64"), "codex-continuos-infinity-1.2.0-mac-arm64.zip");
+  assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-continuos-infinity-1.2.0-mac-x64.zip");
+  assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-continuos-infinity-1.2.0-win-x64.exe");
+  assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-continuos-infinity-1.2.0-linux-x64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), "codex-continuos-infinity-1.2.0-linux-arm64.AppImage");
   assert.equal(releaseAssetName("1.2.0", "linux", "arm"), null);
   assert.equal(releaseAssetName("1.2.0", "linux", "ia32"), null);
 });
@@ -105,11 +105,11 @@ test("checksums and release URLs bind the exact expected asset", () => {
   assert.throws(() => expectedChecksum(`${hash}  other.zip\n`, "launcher.zip"), /no entry/);
   assert.equal(
     validateReleaseAssetUrl(
-      "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+      "https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/launcher.zip",
       "1.2.0",
       "launcher.zip",
     ),
-    "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/launcher.zip",
+    "https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/launcher.zip",
   );
   assert.throws(
     () => validateReleaseAssetUrl("https://example.com/launcher.zip", "1.2.0", "launcher.zip"),
@@ -119,10 +119,10 @@ test("checksums and release URLs bind the exact expected asset", () => {
 
 test("macOS bundle resolution never guesses outside Contents/MacOS", () => {
   assert.equal(
-    macApplicationPath("/Applications/Codex Web GPT.app/Contents/MacOS/Codex Web GPT"),
-    "/Applications/Codex Web GPT.app",
+    macApplicationPath("/Applications/Codex Continuos Infinity.app/Contents/MacOS/Codex Continuos Infinity"),
+    "/Applications/Codex Continuos Infinity.app",
   );
-  assert.throws(() => macApplicationPath("/tmp/Codex Web GPT"), /Could not resolve/);
+  assert.throws(() => macApplicationPath("/tmp/Codex Continuos Infinity"), /Could not resolve/);
 });
 
 test("startup check runs once and exposes only a newer complete release", async () => {
@@ -144,12 +144,12 @@ test("startup check runs once and exposes only a newer complete release", async 
           tag_name: "v1.2.0",
           assets: [
             {
-              name: "codex-web-gpt-1.2.0-linux-x64.AppImage",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-x64.AppImage",
+              name: "codex-continuos-infinity-1.2.0-linux-x64.AppImage",
+              browser_download_url: "https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/codex-continuos-infinity-1.2.0-linux-x64.AppImage",
             },
             {
               name: "checksums.txt",
-              browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+              browser_download_url: "https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/checksums.txt",
             },
           ],
         };
@@ -165,9 +165,9 @@ test("startup check runs once and exposes only a newer complete release", async 
 test("a failed startup check is retried on a bounded schedule; a successful one is not repeated", async () => {
   const release = {
     tag_name: "v1.2.0",
-    assets: ["codex-web-gpt-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
+    assets: ["codex-continuos-infinity-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
       name,
-      browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
+      browser_download_url: `https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/${name}`,
     })),
   };
   const controllerFor = (retryDelaysMs, fetchRelease, logged = []) => createUpdateController({
@@ -222,9 +222,9 @@ test("preview and draft releases stay hidden until promoted, regardless of the v
         dependencies: {
           fetchRelease: async () => ({
             tag_name: `v${tag}`, ...flags,
-            assets: [`codex-web-gpt-${tag}-linux-x64.AppImage`, "checksums.txt"].map(name => ({
+            assets: [`codex-continuos-infinity-${tag}-linux-x64.AppImage`, "checksums.txt"].map(name => ({
               name,
-              browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v${tag}/${name}`,
+              browser_download_url: `https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v${tag}/${name}`,
             })),
           }),
         },
@@ -241,7 +241,7 @@ test("preview and draft releases stay hidden until promoted, regardless of the v
 for (const arch of ["x64", "arm64"]) {
   test(`verified Linux ${arch} update is handed to one detached worker`, async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-update-test-"));
-    const oldAppImage = path.join(root, "versions", "1.1.4", "Codex Web GPT.AppImage");
+    const oldAppImage = path.join(root, "versions", "1.1.4", "Codex Continuos Infinity.AppImage");
     const wrapper = path.join(root, "bin", "codex-web-gpt");
     fs.mkdirSync(path.dirname(oldAppImage), { recursive: true });
     fs.mkdirSync(path.dirname(wrapper), { recursive: true });
@@ -250,10 +250,10 @@ for (const arch of ["x64", "arm64"]) {
     const assetBody = Buffer.from("new appimage");
     const hash = require("node:crypto").createHash("sha256").update(assetBody).digest("hex");
     let spawned = null;
-    const previousAppImage = process.env.CODEX_WEB_GPT_APPIMAGE;
-    const previousWrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-    process.env.CODEX_WEB_GPT_APPIMAGE = oldAppImage;
-    process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = wrapper;
+    const previousAppImage = process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE;
+    const previousWrapper = process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE;
+    process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE = oldAppImage;
+    process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE = wrapper;
     try {
       const controller = createUpdateController({
         currentVersion: "1.1.4",
@@ -268,16 +268,16 @@ for (const arch of ["x64", "arm64"]) {
             tag_name: "v1.2.0",
             assets: [
               {
-                name: `codex-web-gpt-1.2.0-linux-${arch}.AppImage`,
-                browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/codex-web-gpt-1.2.0-linux-${arch}.AppImage`,
+                name: `codex-continuos-infinity-1.2.0-linux-${arch}.AppImage`,
+                browser_download_url: `https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/codex-continuos-infinity-1.2.0-linux-${arch}.AppImage`,
               },
               {
                 name: "checksums.txt",
-                browser_download_url: "https://github.com/miuuyy/codex-chatgpt-web/releases/download/v1.2.0/checksums.txt",
+                browser_download_url: "https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v1.2.0/checksums.txt",
               },
             ],
           }),
-          downloadText: async () => `${hash}  codex-web-gpt-1.2.0-linux-${arch}.AppImage\n`,
+          downloadText: async () => `${hash}  codex-continuos-infinity-1.2.0-linux-${arch}.AppImage\n`,
           downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
           sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
           spawnWorker: (runtime, worker, job) => {
@@ -299,10 +299,10 @@ for (const arch of ["x64", "arm64"]) {
       assert.equal(fs.existsSync(launch.tempRoot), false);
       assert.deepEqual(controller.getState(), { status: "available", version: "1.2.0" });
     } finally {
-      if (previousAppImage === undefined) delete process.env.CODEX_WEB_GPT_APPIMAGE;
-      else process.env.CODEX_WEB_GPT_APPIMAGE = previousAppImage;
-      if (previousWrapper === undefined) delete process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE;
-      else process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = previousWrapper;
+      if (previousAppImage === undefined) delete process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE;
+      else process.env.CODEX_CONTINUOS_INFINITY_APPIMAGE = previousAppImage;
+      if (previousWrapper === undefined) delete process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE;
+      else process.env.CODEX_CONTINUOS_INFINITY_LAUNCHER_EXECUTABLE = previousWrapper;
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -314,8 +314,8 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-worker-test-"));
   const jobRoot = path.join(root, "job");
   const versionsRoot = path.join(root, "versions");
-  const oldTarget = path.join(versionsRoot, "1.1.4", "Codex Web GPT.AppImage");
-  const newTarget = path.join(versionsRoot, "1.2.0", "Codex Web GPT.AppImage");
+  const oldTarget = path.join(versionsRoot, "1.1.4", "Codex Continuos Infinity.AppImage");
+  const newTarget = path.join(versionsRoot, "1.2.0", "Codex Continuos Infinity.AppImage");
   const wrapper = path.join(root, "bin", "codex-web-gpt");
   const marker = path.join(root, "launched");
   const source = path.join(jobRoot, "update.AppImage");
@@ -348,7 +348,7 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.existsSync(newTarget), true);
     assert.equal(fs.existsSync(path.dirname(oldTarget)), false);
-    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/Codex Web GPT\.AppImage/);
+    assert.match(fs.readFileSync(wrapper, "utf8"), /versions\/1\.2\.0\/Codex Continuos Infinity\.AppImage/);
     assert.doesNotMatch(fs.readFileSync(wrapper, "utf8"), /APPIMAGE_EXTRACT_AND_RUN/);
     assert.equal(fs.existsSync(path.join(versionsRoot, "run-appimage")), true);
     const deadline = Date.now() + 3_000;
@@ -473,7 +473,7 @@ test("update asset streaming preserves bytes and refuses to overwrite a file", a
 
 test("GitHub rate-limit errors retain only bounded reset headers", async t => {
   t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
-  const url = "https://api.github.com/repos/miuuyy/codex-chatgpt-web/releases/latest";
+  const url = "https://api.github.com/repos/continuos-ti/codex-continuos-infinity/releases/latest";
   for (const [status, headers, retryAt] of [
     [403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1200" }, 1_201_000],
     [429, { "retry-after": ["30"] }, 1_031_000],
@@ -523,8 +523,8 @@ test("update checks wait for GitHub reset and manual rechecks do not duplicate o
   const second = controller.checkNow();
   assert.equal(first, second);
   assert.equal(calls, 3);
-  finish({ tag_name: "v6.1.17", assets: ["codex-web-gpt-6.1.17-mac-arm64.zip", "checksums.txt"].map(name => ({
-    name, browser_download_url: `https://github.com/miuuyy/codex-chatgpt-web/releases/download/v6.1.17/${name}`,
+  finish({ tag_name: "v6.1.17", assets: ["codex-continuos-infinity-6.1.17-mac-arm64.zip", "checksums.txt"].map(name => ({
+    name, browser_download_url: `https://github.com/continuos-ti/codex-continuos-infinity/releases/download/v6.1.17/${name}`,
   })) });
   await first;
   assert.deepEqual(controller.getState(), { status: "available", version: "6.1.17" });

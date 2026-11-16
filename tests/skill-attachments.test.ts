@@ -9,7 +9,7 @@ import { estimateCompiledChatGptWebInputTokens, estimateCompiledChatGptWebMessag
 import { skillFileTokens } from "../src/adapters/chatgpt-web/skill-attachments";
 
 const capabilities = { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true };
-const token = "turn_12345678901234567890123456789012";
+const token = "turn_00000000000000000000000000000002";
 const text = (name = "testing", body = "Read references/checks.md. Verify café 日本語.") =>
   `<skill>\n<name>${name}</name>\n<path>/workspace/skills/${name}/SKILL.md</path>\n${body}\n</skill>`;
 const input = (content: string, kinds = ["skills.selected_skill_instructions"]) => ({
