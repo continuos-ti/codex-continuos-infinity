@@ -185,9 +185,11 @@ export function observeBrokerProviderRecoveryChecks(
         // the status body itself. Those flags must be checked in both envelopes.
         const nestedFailureAbsent = (nested?.ok === undefined || nested.ok === true)
           && (nested?.success === undefined || nested.success === true)
+          && (nested?.isError === undefined || nested.isError === false)
           && (nested?.error === undefined || nested.error === null);
         const outerFailureAbsent = (outer?.ok === undefined || outer.ok === true)
           && (outer?.success === undefined || outer.success === true)
+          && (outer?.isError === undefined || outer.isError === false)
           && (outer?.error === undefined || outer.error === null);
         if (nested && idsConsistent && outerEpochConsistent && outerStatusConsistent && outerExitConsistent
           && nestedFailureAbsent && outerFailureAbsent
