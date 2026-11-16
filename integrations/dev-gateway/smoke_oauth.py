@@ -81,6 +81,7 @@ def main() -> int:
         health_data = health.json()
         require(health_data.get("service") == "ContinuosWebIntegracaoDev", "health identity")
         require(health_data.get("mode") == "isolated-dev" and health_data.get("side_effects") is False, "health isolation")
+        require(health_data.get("tool_receipts_version") == 1, "health receipt contract version")
 
         metadata = client.get(base + "/.well-known/oauth-authorization-server")
         require(metadata.status_code == 200, "authorization metadata", metadata.status_code)

@@ -593,6 +593,7 @@ async def health(request):
     return JSONResponse({
         "status": "ok", "service": SERVICE_NAME, "mode": "isolated-dev",
         "side_effects": False,
+        "tool_receipts_version": 1,
     }, headers={"Cache-Control": "no-store"})
 
 
