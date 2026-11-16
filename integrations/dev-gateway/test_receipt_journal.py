@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -76,6 +78,38 @@ class ReceiptJournalTests(unittest.TestCase):
         self.assertEqual({entry["receipt_id"] for entry in entries}, set(receipts))
         self.assertEqual(len(entries), len(receipts))
         self.assertTrue(all(entry["outcome"] == "error" for entry in entries))
+
+    def test_partial_writes_remain_separate_across_processes(self) -> None:
+        # Slow, fragmented writes force overlapping append attempts without a file lock.
+        code = """
+import os
+from pathlib import Path
+import sys
+import time
+import receipt_journal
+
+real_write = os.write
+def fragmented_write(fd, data):
+    written = real_write(fd, data[:3])
+    time.sleep(0.001)
+    return written
+receipt_journal.os.write = fragmented_write
+for index in range(4):
+    receipt_journal.record_tool_receipt(Path(sys.argv[1]), f"{int(sys.argv[2]):016x}{index:016x}", "dev_echo", False)
+"""
+        children = [subprocess.Popen(
+            [sys.executable, "-c", code, str(self.state), str(index)],
+            cwd=Path(__file__).resolve().parent,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        ) for index in range(5)]
+        for child in children:
+            _stdout, stderr = child.communicate(timeout=20)
+            self.assertEqual(child.returncode, 0, stderr)
+
+        entries = self.read_entries()
+        self.assertEqual(len(entries), 20)
+        self.assertEqual(len({entry["receipt_id"] for entry in entries}), 20)
+        self.assertTrue(all(entry["tool"] == "dev_echo" for entry in entries))
 
 
 if __name__ == "__main__":
