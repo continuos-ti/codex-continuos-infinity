@@ -480,6 +480,15 @@ def pairing_already_completed() -> HTMLResponse:
     )
 
 
+def expired_pairing_notice() -> HTMLResponse:
+    return HTMLResponse(
+        "DEV authorization request expired. Close this tab and reconnect the DEV connector "
+        "from ChatGPT. If the previously approved consent is still valid for this client, "
+        "the new authorization will complete without another pairing key.",
+        status_code=400, headers=HEADERS,
+    )
+
+
 def pairing_completed(entry: dict | None) -> bool:
     return bool(entry and (entry.get("completed_redirect") or (
         entry.get("completed") is True and entry.get("expires_at", 0) > time.time()
@@ -509,7 +518,7 @@ async def pair(request):
     if pairing_completed(entry):
         return pairing_already_completed()
     if not entry or entry["expires_at"] < time.time():
-        return HTMLResponse("DEV authorization request expired. Start a new connector authorization.", status_code=400, headers=HEADERS)
+        return expired_pairing_notice()
     if entry["attempts"] >= 5:
         return HTMLResponse("Too many attempts. Start a new DEV authorization.", status_code=429, headers=HEADERS)
     return pairing_form(nonce)
@@ -531,7 +540,7 @@ async def pair_submit(request):
             return pairing_already_completed()
         if not entry or entry["expires_at"] < time.time():
             audit("dev_pair_expired", nonce)
-            return HTMLResponse("DEV authorization request expired.", status_code=400, headers=HEADERS)
+            return expired_pairing_notice()
         if entry["attempts"] >= 5:
             return HTMLResponse("Too many attempts. Start a new DEV authorization.", status_code=429, headers=HEADERS)
         entry["attempts"] += 1
@@ -545,7 +554,7 @@ async def pair_submit(request):
         entry = provider.get("pending", nonce_hash)
         if not entry or entry["expires_at"] < time.time():
             audit("dev_pair_expired", nonce)
-            return HTMLResponse("DEV authorization request expired.", status_code=400, headers=HEADERS)
+            return expired_pairing_notice()
         if pairing_completed(entry):
             audit("dev_pair_already_completed", nonce)
             return pairing_already_completed()

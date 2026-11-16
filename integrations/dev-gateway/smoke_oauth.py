@@ -247,6 +247,31 @@ def main() -> int:
             expired_marker_page = client.get(pair_url)
             require(expired_marker_page.status_code == 400,
                     "expired completion marker no longer accepted", expired_marker_page.status_code)
+            # An older, unapproved request may expire after this client has already
+            # been paired. Its error page must not suggest repeating the pairing.
+            stale_request_id = parse_qs(urlparse(cleanup_authorize.headers["location"]).query)["request_id"][0]
+            stale_hash = hashlib.sha256(stale_request_id.encode()).hexdigest()
+            with sqlite3.connect(state / "oauth.sqlite", timeout=10) as db:
+                stale_row = db.execute(
+                    "SELECT data FROM entries WHERE kind='pending' AND key=?", (stale_hash,)
+                ).fetchone()
+                require(stale_row is not None, "previously pending DEV authorization exists")
+                stale_entry = json.loads(stale_row[0])
+                stale_entry["expires_at"] = 0
+                db.execute("UPDATE entries SET data=? WHERE kind='pending' AND key=?",
+                           (json.dumps(stale_entry), stale_hash))
+            stale_page = client.get(base + "/pair", params={"request_id": stale_request_id})
+            stale_submit = client.post(base + "/pair/submit", data={
+                "request_id": stale_request_id, "pairing_key": wrong_key,
+            })
+            for response in (stale_page, stale_submit):
+                require(response.status_code == 400 and "DEV authorization request expired" in response.text,
+                        "stale pairing request expires", response.status_code)
+                require("previously approved consent" in response.text
+                        and "without another pairing key" in response.text,
+                        "expired pairing notice explains consent reuse")
+                require("name=\"pairing_key\"" not in response.text and pairing_key not in response.text,
+                        "expired pairing notice does not display pairing form or secret")
         else:
             callback = authorize_location
             pairing_flow = "existing-trusted-consent"
