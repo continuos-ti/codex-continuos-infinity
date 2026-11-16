@@ -62,6 +62,43 @@ test("MCP observations separate pre-handler validation and returned tool errors 
   }
 });
 
+test("MCP observations record well-formed DEV receipt IDs without exposing tool content", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const events: Array<Record<string, unknown>> = [];
+  const secret = "private-fixture-message-and-session-token";
+  const receipt = "0123456789abcdef0123456789abcdef";
+  const server = new McpServer({ name: "receipt-observation-test", version: "1" });
+  server.registerTool("dev_echo", { inputSchema: { valid: z.boolean(), fail: z.boolean() } },
+    async ({ valid, fail }) => ({
+      content: [{ type: "text", text: secret }],
+      structuredContent: {
+        audit_receipt: valid ? receipt : secret,
+        message: secret,
+      },
+      ...(fail ? { isError: true } : {}),
+    }));
+  observeMcpToolCalls(serverTransport, new Set(["dev_echo"]), event => events.push(event));
+  await server.connect(serverTransport);
+  const client = new Client({ name: "receipt-client", version: "1" });
+  try {
+    await client.connect(clientTransport);
+    const accepted = await client.callTool({ name: "dev_echo", arguments: { valid: true, fail: false } });
+    const refused = await client.callTool({ name: "dev_echo", arguments: { valid: true, fail: true } });
+    const untrusted = await client.callTool({ name: "dev_echo", arguments: { valid: false, fail: true } });
+    expect(accepted.structuredContent).toMatchObject({ audit_receipt: receipt });
+    expect(refused.isError).toBeTrue();
+    const replies = events.filter(event => event.event === "reply_sent");
+    expect(replies.map(event => event.audit_receipt)).toEqual([receipt, receipt, undefined]);
+    expect(replies.map(event => event.is_error)).toEqual([false, true, true]);
+    expect(JSON.stringify(events)).not.toContain(secret);
+    expect(JSON.stringify(events)).not.toContain("message");
+    expect(untrusted.structuredContent).toMatchObject({ audit_receipt: secret });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 test("MCP observation failures, arbitrary IDs and unknown names never alter transport behavior", async () => {
   const events: Array<Record<string, unknown>> = [];
   const secret = "private-id-and-tool-name";

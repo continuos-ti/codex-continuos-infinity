@@ -1,5 +1,14 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
+/** Forward only the DEV gateway's documented receipt shape, without asserting origin. */
+function structuredAuditReceipt(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || !("structuredContent" in result)) return undefined;
+  const structured = result.structuredContent;
+  if (!structured || typeof structured !== "object" || !("audit_receipt" in structured)) return undefined;
+  const receipt = structured.audit_receipt;
+  return typeof receipt === "string" && /^[0-9a-f]{32}$/.test(receipt) ? receipt : undefined;
+}
+
 /** The model override only; prompts, names, items and other tool arguments stay private. */
 export function subagentModelObservation(wireName: string, args?: Record<string, unknown>) {
   if (!/^(multi_agent_v[12]|collaboration)__spawn_agent$/.test(wireName)) return undefined;
@@ -50,11 +59,13 @@ export function observeMcpToolCalls(
       await send(message, options);
       if (call) {
         const result = "result" in message ? message.result : undefined;
+        const auditReceipt = structuredAuditReceipt(result);
         emit({
           event: "reply_sent", call: call.call, tool: call.tool,
           elapsed_ms: Math.round(performance.now() - call.started),
           outcome: "error" in message ? "protocol_error" : "result",
           ...("result" in message ? { is_error: result?.isError === true } : {}),
+          ...(auditReceipt ? { audit_receipt: auditReceipt } : {}),
         });
       }
     } catch (error) {

@@ -1,5 +1,13 @@
 # Matriz de aceite do Codex Continuos Infinity
 
+### Observabilidade de recibos MCP e CI — 16/11/2026
+
+O observador do transporte MCP stdio agora acrescenta `audit_receipt` ao evento `reply_sent` quando `structuredContent.audit_receipt` possui exatamente 32 caracteres hexadecimais minusculos. O evento conserva o identificador local da chamada, o nome reconhecido da ferramenta e o resultado de transporte, sem registrar argumentos ou conteudo da resposta. O teste dirigido cobre respostas com e sem erro, recibo malformado e ausencia de vazamento de conteudo. Isso permite relacionar recibos observados no transporte a registros persistidos quando ambos estiverem disponiveis, mas a verificacao do formato nao autentica a origem do recibo. A correlacao ponta a ponta com o gateway DEV vivo e o `TurnBroker` continua pendente.
+
+O GitHub Actions do PR, run `43916179477` do commit `bbcde8e`, concluiu com cinco jobs `completed/success`, incluindo Windows, Ubuntu, macOS, `secret-scan` e `actionlint`. O job macOS confirmou `verify`, empacotamento e `app:smoke` aprovados. Esta evidencia refere-se ao commit remoto anterior a alteracao local do observador. A autorizacao DEV existente continua sendo reutilizada sem novo pareamento.
+
+No Windows local, os quatro testes direcionados de observacao MCP passaram, com 41 assercoes, assim como o TypeScript typecheck e o `bun run verify` integral com exit 0. O launcher aprovou 458 testes, ignorou quatro e registrou zero falhas. O Vite compilou 444 modulos e o smoke terminou com `RELOCATABLE_RUNTIME_SMOKE_OK`. Houve um aviso de chunk acima de 500 KB e uma consulta de catalogo com HTTP 502 durante o smoke. O gateway DEV vivo respondeu HTTP 200 sem anunciar `tool_receipts_version`, por isso o recibo persistido ainda so foi comprovado no gateway efemero de testes.
+
 ### Integridade dos recibos do gateway DEV — 16/11/2026
 
 O registro de recibos do gateway isolado agora conclui escritas parciais antes de reconhecer o resultado, serializa as gravações concorrentes no processo e restaura o comprimento anterior do journal quando uma escrita falha. A sincronização com o disco continua obrigatória antes de devolver `audit_receipt`. Cinco testes dirigidos passaram, cobrindo escrita parcial, interrupção após fragmento, falta de progresso, falha de `fsync` e 24 recibos concorrentes. O smoke hermético OAuth/PKCE/MCP passou integralmente com `DEV_GATEWAY_LOCAL_E2E_OK` e `tool_receipts=durable_correlated_and_sanitized`, usando um estado DEV temporário independente.
